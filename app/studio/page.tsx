@@ -19,6 +19,11 @@ import { SocialPublishTab } from '@/components/tabs/SocialPublishTab';
 import { AgencyAffiliateTab } from '@/components/tabs/AgencyAffiliateTab';
 import { ExportModal } from '@/components/ExportModal';
 import { PricingModal } from '@/components/PricingModal';
+import { TimelineVersionModal } from '@/components/TimelineVersionModal';
+import { CanonicalRenderSpec, EditorCommand } from '@/lib/editor/types';
+import { createDefaultRenderSpec, splitClipAt, deleteClip, trimClip } from '@/lib/editor/timelineEngine';
+import { EditorCommandManager, createEditorCommand } from '@/lib/editor/commandHistory';
+import { parseAIEditCommand } from '@/lib/editor/aiEditCommands';
 import { 
   SubtitleStyle, 
   ViralClip, 
@@ -67,7 +72,9 @@ import {
   Database,
   Save,
   Check,
-  Loader2
+  Loader2,
+  History,
+  X
 } from 'lucide-react';
 
 export default function StudioPage() {
@@ -91,6 +98,12 @@ export default function StudioPage() {
   const [currentTime, setCurrentTime] = useState<number>(0);
   const [activeCuts, setActiveCuts] = useState<EditOperation[]>([]);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [isVersionModalOpen, setIsVersionModalOpen] = useState(false);
+  const [isAICommandModalOpen, setIsAICommandModalOpen] = useState(false);
+  const [aiCommandInput, setAICommandInput] = useState('');
+  const [isAICommandRunning, setIsAICommandRunning] = useState(false);
+  const [canonicalSpec, setCanonicalSpec] = useState<CanonicalRenderSpec | null>(null);
+  const commandManagerRef = useRef<EditorCommandManager | null>(null);
 
   // Active Tool for Editor (Workflow inspired by modern AI Video SaaS)
   const [activeTool, setActiveTool] = useState<
@@ -367,6 +380,173 @@ export default function StudioPage() {
     setActiveCuts((prev) => [...prev.filter((c) => c.id !== brollOp.id), brollOp]);
   };
 
+  // Initialize CanonicalRenderSpec whenever videoUrl and metadata are ready (Phase 1 & 2)
+  useEffect(() => {
+    if (videoUrl && !canonicalSpec) {
+      const spec = createDefaultRenderSpec({
+        projectId,
+        sourceUrl: videoUrl,
+        durationSeconds: activeClip?.duration || 30,
+        words,
+        defaultStyle: subtitleStyle,
+      });
+      setCanonicalSpec(spec);
+      commandManagerRef.current = new EditorCommandManager(spec);
+    }
+  }, [videoUrl, projectId]);
+
+  // Execute an EditorCommand via Command Manager (Phase 6)
+  const executeCommand = (cmd: EditorCommand) => {
+    if (!commandManagerRef.current && canonicalSpec) {
+      commandManagerRef.current = new EditorCommandManager(canonicalSpec);
+    }
+    if (commandManagerRef.current) {
+      const nextSpec = commandManagerRef.current.executeCommand(cmd);
+      setCanonicalSpec(nextSpec);
+      setLastSavedAt(new Date());
+
+      // Propagate changes to active studio UI state
+      if (nextSpec.cuts) {
+        setActiveCuts(
+          nextSpec.cuts.map((c) => ({
+            id: c.id,
+            type: 'CUT' as const,
+            start: c.start,
+            end: c.end,
+            label: c.reason || c.type,
+            enabled: true,
+            reason: c.type === 'manual' ? 'manual_cut' : c.type,
+          }))
+        );
+      }
+      if (nextSpec.captions?.style) {
+        setSubtitleStyle(nextSpec.captions.style);
+      }
+      if (nextSpec.canvas?.aspectRatio) {
+        setVisualSettings((prev) => ({ ...prev, aspectRatio: nextSpec.canvas.aspectRatio }));
+      }
+    }
+  };
+
+  const handleUndo = () => {
+    if (commandManagerRef.current?.canUndo()) {
+      const prevSpec = commandManagerRef.current.undo();
+      if (prevSpec) {
+        setCanonicalSpec(prevSpec);
+        if (prevSpec.cuts) {
+          setActiveCuts(
+            prevSpec.cuts.map((c) => ({
+              id: c.id,
+              type: 'CUT' as const,
+              start: c.start,
+              end: c.end,
+              label: c.reason || c.type,
+              enabled: true,
+              reason: c.type === 'manual' ? 'manual_cut' : c.type,
+            }))
+          );
+        }
+      }
+    }
+  };
+
+  const handleRedo = () => {
+    if (commandManagerRef.current?.canRedo()) {
+      const nextSpec = commandManagerRef.current.redo();
+      if (nextSpec) {
+        setCanonicalSpec(nextSpec);
+        if (nextSpec.cuts) {
+          setActiveCuts(
+            nextSpec.cuts.map((c) => ({
+              id: c.id,
+              type: 'CUT' as const,
+              start: c.start,
+              end: c.end,
+              label: c.reason || c.type,
+              enabled: true,
+              reason: c.type === 'manual' ? 'manual_cut' : c.type,
+            }))
+          );
+        }
+      }
+    }
+  };
+
+  const handleSplit = (splitTime: number) => {
+    if (!canonicalSpec) return;
+    const current = canonicalSpec;
+    const videoTrack = current.tracks.find((t) => t.type === 'VIDEO');
+    const targetClip = videoTrack?.clips[0];
+    if (!targetClip) return;
+
+    const cmd = createEditorCommand({
+      type: 'SPLIT_CLIP',
+      description: `Split clip at ${splitTime.toFixed(1)}s`,
+      execute: (spec) => splitClipAt(spec, targetClip.id, splitTime),
+      undo: () => current,
+    });
+    executeCommand(cmd);
+  };
+
+  const handleDeleteSelectedClip = (clipId: string) => {
+    if (!canonicalSpec) return;
+    const current = canonicalSpec;
+    const cmd = createEditorCommand({
+      type: 'DELETE_CLIP',
+      description: `Delete clip ${clipId}`,
+      execute: (spec) => deleteClip(spec, clipId),
+      undo: () => current,
+    });
+    executeCommand(cmd);
+  };
+
+  const handleRunAICommand = (instruction: string) => {
+    if (!canonicalSpec || !instruction.trim()) return;
+    setIsAICommandRunning(true);
+    try {
+      const plan = parseAIEditCommand(instruction, canonicalSpec);
+      const current = canonicalSpec;
+      const cmd = createEditorCommand({
+        type: 'DYNAMIC_CAPTIONS',
+        description: plan.summary,
+        execute: (spec) => plan.apply(spec),
+        undo: () => current,
+      });
+      executeCommand(cmd);
+      setIsAICommandModalOpen(false);
+      setAICommandInput('');
+    } finally {
+      setIsAICommandRunning(false);
+    }
+  };
+
+  // Studio-wide keyboard shortcuts (Phase 33): Cmd+Z (undo), Cmd+Shift+Z (redo), Cmd+S (versions), S (split)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
+        return;
+      }
+      const isCmd = e.metaKey || e.ctrlKey;
+      if (isCmd && e.key === 'z') {
+        e.preventDefault();
+        if (e.shiftKey) {
+          handleRedo();
+        } else {
+          handleUndo();
+        }
+      } else if (isCmd && (e.key === 's' || e.key === 'S')) {
+        e.preventDefault();
+        setIsVersionModalOpen(true);
+      } else if (!isCmd && (e.key === 's' || e.key === 'S')) {
+        e.preventDefault();
+        handleSplit(currentTime);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [canonicalSpec, currentTime, activeClip]);
+
   const aiToolsList = [
     { id: 'style', label: 'Style', icon: Palette, desc: 'Preset Badges & Fonts' },
     { id: 'captions', label: 'Captions', icon: Type, desc: 'Words & Highlight Star' },
@@ -434,23 +614,34 @@ export default function StudioPage() {
         <div className="hidden md:flex items-center gap-1 bg-slate-100/90 border border-slate-200/80 p-1 rounded-xl shadow-xs">
           <button
             type="button"
-            className="p-1.5 rounded-lg text-slate-500 hover:text-slate-900 hover:bg-white transition-colors"
+            onClick={handleUndo}
+            className="p-1.5 rounded-lg text-slate-500 hover:text-slate-900 hover:bg-white transition-colors cursor-pointer"
             title="Undo (⌘Z)"
           >
             <Undo2 className="w-3.5 h-3.5" />
           </button>
           <button
             type="button"
-            className="p-1.5 rounded-lg text-slate-500 hover:text-slate-900 hover:bg-white transition-colors"
+            onClick={handleRedo}
+            className="p-1.5 rounded-lg text-slate-500 hover:text-slate-900 hover:bg-white transition-colors cursor-pointer"
             title="Redo (⇧⌘Z)"
           >
             <Redo2 className="w-3.5 h-3.5" />
           </button>
+          <button
+            type="button"
+            onClick={() => setIsVersionModalOpen(true)}
+            className="p-1.5 rounded-lg text-slate-500 hover:text-slate-900 hover:bg-white transition-colors cursor-pointer"
+            title="Timeline Versions & Checkpoints (⌘S)"
+          >
+            <History className="w-3.5 h-3.5 text-slate-600" />
+          </button>
           <div className="w-px h-3.5 bg-slate-300 mx-1" />
           <button
             type="button"
-            onClick={() => setActiveTool('moments')}
+            onClick={() => setIsAICommandModalOpen(true)}
             className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-red-50 text-red-700 hover:bg-red-100 border border-red-200/70 text-xs font-bold transition-colors cursor-pointer"
+            title="Run AI Edit Commands"
           >
             <Bot className="w-3.5 h-3.5 text-red-600" />
             <span>AI Assistant</span>
@@ -769,6 +960,10 @@ export default function StudioPage() {
                 cuts={activeCuts}
                 words={words}
                 reframeTrack={reframeTrack || visualSettings.reframeTrack}
+                onSplit={handleSplit}
+                onDeleteClip={handleDeleteSelectedClip}
+                selectedClipId={activeClipId}
+                onSelectClip={(id) => setActiveClipId(id)}
               />
             </div>
 
@@ -776,6 +971,109 @@ export default function StudioPage() {
         )}
 
       </main>
+
+      {/* Timeline Version Control Modal (Phase 7) */}
+      {canonicalSpec && (
+        <TimelineVersionModal
+          isOpen={isVersionModalOpen}
+          onClose={() => setIsVersionModalOpen(false)}
+          projectId={projectId}
+          currentSpec={canonicalSpec}
+          onRestoreVersion={(restoredSpec) => {
+            setCanonicalSpec(restoredSpec);
+            if (restoredSpec.cuts) {
+              setActiveCuts(
+                restoredSpec.cuts.map((c) => ({
+                  id: c.id,
+                  type: 'CUT' as const,
+                  start: c.start,
+                  end: c.end,
+                  label: c.reason || c.type,
+                  enabled: true,
+                  reason: c.type === 'manual' ? 'manual_cut' : c.type,
+                }))
+              );
+            }
+            if (restoredSpec.captions?.style) {
+              setSubtitleStyle(restoredSpec.captions.style);
+            }
+          }}
+        />
+      )}
+
+      {/* AI Edit Command Dialog (Phase 25 & 26) */}
+      {isAICommandModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-in fade-in select-none">
+          <div className="bg-white rounded-3xl border border-slate-200 shadow-2xl max-w-lg w-full p-6 space-y-4 text-slate-900">
+            <div className="flex items-center justify-between border-b border-slate-200 pb-3">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-xl bg-red-50 text-red-600 flex items-center justify-center border border-red-200">
+                  <Bot className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-extrabold text-slate-900">AI Studio Assistant</h3>
+                  <p className="text-[11px] text-slate-500">Natural language structured editing operations</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsAICommandModalOpen(false)}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-600">
+              Transform your timeline with natural language. Every action produces an undoable operation:
+            </p>
+
+            <div className="flex flex-wrap gap-1.5">
+              {[
+                'Remove dead air',
+                'Remove fillers',
+                'Focus speaker',
+                'Add B-roll',
+                'Dynamic captions',
+                '30 sec short',
+                'Enable ducking',
+              ].map((cmd) => (
+                <button
+                  key={cmd}
+                  type="button"
+                  onClick={() => handleRunAICommand(cmd)}
+                  className="px-2.5 py-1 rounded-xl bg-slate-100 hover:bg-red-50 hover:text-red-700 text-slate-700 text-xs font-semibold border border-slate-200/90 transition-colors cursor-pointer shadow-2xs"
+                >
+                  {cmd}
+                </button>
+              ))}
+            </div>
+
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                handleRunAICommand(aiCommandInput);
+              }}
+              className="flex gap-2 pt-2"
+            >
+              <input
+                type="text"
+                placeholder="e.g. Cut dead air and highlight keyword captions"
+                value={aiCommandInput}
+                onChange={(e) => setAICommandInput(e.target.value)}
+                className="flex-1 px-3 py-2.5 rounded-xl border border-slate-200 text-xs focus:ring-1 focus:ring-red-500 focus:border-red-500 outline-hidden"
+              />
+              <button
+                type="submit"
+                disabled={isAICommandRunning || !aiCommandInput.trim()}
+                className="px-4 py-2.5 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white font-bold text-xs rounded-xl shadow-xs transition-colors cursor-pointer"
+              >
+                {isAICommandRunning ? 'Applying...' : 'Apply'}
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* Export Modal with Real FFmpeg Render Pipeline */}
       <ExportModal

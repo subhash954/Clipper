@@ -44,6 +44,8 @@ export interface VideoPreviewPlayerRef {
   getVideoElement: () => HTMLVideoElement | null;
   getCanvasElement: () => HTMLCanvasElement | null;
   seekTo: (time: number) => void;
+  togglePlay: () => void;
+  stepFrames: (frames: number) => void;
 }
 
 /**
@@ -118,6 +120,7 @@ export const VideoPreviewPlayer = forwardRef<VideoPreviewPlayerRef, VideoPreview
     const [duration, setDuration] = useState(0);
     const [isMuted, setIsMuted] = useState(false);
     const [previewModeOnly, setPreviewModeOnly] = useState(true);
+    const [showSafeArea, setShowSafeArea] = useState(true);
     const [isAspectMenuOpen, setIsAspectMenuOpen] = useState(false);
     const lastActiveWordRef = useRef<string | null>(null);
 
@@ -126,6 +129,16 @@ export const VideoPreviewPlayer = forwardRef<VideoPreviewPlayerRef, VideoPreview
       propAspectRatio || visualSettings.aspectRatio || propReframeTrack?.aspectRatio || '9:16';
     const activeReframeTrack = propReframeTrack || visualSettings.reframeTrack;
     const aspectConfig = ASPECT_RATIO_CONFIGS[activeAspectRatio] || ASPECT_RATIO_CONFIGS['9:16'];
+
+    const stepFrames = (frames: number) => {
+      if (videoRef.current) {
+        const frameTime = 1 / 30; // 30 fps
+        const newTime = Math.max(0, Math.min(duration || 30, videoRef.current.currentTime + frames * frameTime));
+        videoRef.current.currentTime = newTime;
+        setCurrentTime(newTime);
+        onTimeUpdate?.(newTime);
+      }
+    };
 
     useImperativeHandle(ref, () => ({
       getVideoElement: () => videoRef.current,
@@ -139,7 +152,55 @@ export const VideoPreviewPlayer = forwardRef<VideoPreviewPlayerRef, VideoPreview
           secondaryVideoRef.current.currentTime = time;
         }
       },
+      togglePlay: () => togglePlay(),
+      stepFrames: (frames: number) => stepFrames(frames),
     }));
+
+    // Keyboard navigation (Phase 4 & Phase 33): Space, J/K/L, ArrowLeft/ArrowRight
+    useEffect(() => {
+      const handleKeyDown = (e: KeyboardEvent) => {
+        const target = e.target as HTMLElement;
+        if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
+          return;
+        }
+
+        if (e.code === 'Space') {
+          e.preventDefault();
+          togglePlay();
+        } else if (e.key === 'k' || e.key === 'K') {
+          e.preventDefault();
+          if (videoRef.current && !videoRef.current.paused) {
+            videoRef.current.pause();
+            setIsPlaying(false);
+          }
+        } else if (e.key === 'j' || e.key === 'J') {
+          e.preventDefault();
+          if (videoRef.current) {
+            const nextT = Math.max(0, videoRef.current.currentTime - 2.0);
+            videoRef.current.currentTime = nextT;
+            setCurrentTime(nextT);
+            onTimeUpdate?.(nextT);
+          }
+        } else if (e.key === 'l' || e.key === 'L') {
+          e.preventDefault();
+          if (videoRef.current) {
+            const nextT = Math.min(duration || 30, videoRef.current.currentTime + 2.0);
+            videoRef.current.currentTime = nextT;
+            setCurrentTime(nextT);
+            onTimeUpdate?.(nextT);
+          }
+        } else if (e.key === 'ArrowLeft') {
+          e.preventDefault();
+          stepFrames(-1);
+        } else if (e.key === 'ArrowRight') {
+          e.preventDefault();
+          stepFrames(1);
+        }
+      };
+
+      window.addEventListener('keydown', handleKeyDown);
+      return () => window.removeEventListener('keydown', handleKeyDown);
+    }, [isPlaying, duration, onTimeUpdate]);
 
     // Dynamic subject position calculation for Auto Reframe
     const relativeTime = Math.max(0, currentTime - clipStartTime);
@@ -388,17 +449,32 @@ export const VideoPreviewPlayer = forwardRef<VideoPreviewPlayerRef, VideoPreview
             </button>
           </div>
 
-          {/* Aspect Ratio Badge & Selector */}
-          <div className="relative">
+          {/* Aspect Ratio Badge & Selector + Safe Area Toggle */}
+          <div className="flex items-center gap-1.5">
             <button
               type="button"
-              onClick={() => setIsAspectMenuOpen(!isAspectMenuOpen)}
-              className="px-3 py-1.5 rounded-xl bg-white hover:bg-slate-50 border border-slate-200/90 text-xs font-bold text-red-600 flex items-center gap-1.5 cursor-pointer shadow-xs"
+              onClick={() => setShowSafeArea(!showSafeArea)}
+              className={`px-2.5 py-1.5 rounded-xl border text-xs font-bold flex items-center gap-1.5 cursor-pointer shadow-xs transition-colors ${
+                showSafeArea
+                  ? 'bg-cyan-50 border-cyan-200 text-cyan-700'
+                  : 'bg-white border-slate-200/90 text-slate-500 hover:bg-slate-50'
+              }`}
+              title="Toggle Safe Area Overlay for YouTube Shorts, Reels, TikTok (Phase 13)"
             >
-              <Smartphone className="w-3.5 h-3.5 text-red-600" />
-              <span>{activeAspectRatio}</span>
-              <ChevronDown className="w-3 h-3 text-slate-400" />
+              <Eye className="w-3.5 h-3.5 text-cyan-600" />
+              <span className="hidden sm:inline">Safe Area</span>
             </button>
+
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setIsAspectMenuOpen(!isAspectMenuOpen)}
+                className="px-3 py-1.5 rounded-xl bg-white hover:bg-slate-50 border border-slate-200/90 text-xs font-bold text-red-600 flex items-center gap-1.5 cursor-pointer shadow-xs"
+              >
+                <Smartphone className="w-3.5 h-3.5 text-red-600" />
+                <span>{activeAspectRatio}</span>
+                <ChevronDown className="w-3 h-3 text-slate-400" />
+              </button>
 
             {isAspectMenuOpen && (
               <div className="absolute right-0 mt-1 w-36 rounded-xl bg-white border border-slate-200 shadow-xl py-1 z-50 animate-in fade-in">
@@ -424,6 +500,7 @@ export const VideoPreviewPlayer = forwardRef<VideoPreviewPlayerRef, VideoPreview
             )}
           </div>
         </div>
+      </div>
 
         {/* Viewport Container with Dynamic Aspect Ratio */}
         <div
@@ -509,6 +586,30 @@ export const VideoPreviewPlayer = forwardRef<VideoPreviewPlayerRef, VideoPreview
               height={aspectConfig.height}
               className="absolute inset-0 w-full h-full pointer-events-none z-10"
             />
+
+            {/* Caption Safe Areas Overlay (Phase 13) */}
+            {showSafeArea && activeAspectRatio === '9:16' && (
+              <div className="absolute inset-0 pointer-events-none z-15 border-2 border-cyan-400/40 select-none">
+                {/* Top safe zone */}
+                <div className="absolute top-0 left-0 right-0 h-[14%] border-b border-dashed border-cyan-400/60 bg-cyan-500/10 flex items-start justify-center p-1">
+                  <span className="text-[8px] font-mono text-cyan-300 font-bold bg-black/70 px-1.5 py-0.5 rounded">
+                    TOP SAFE ZONE (Platform Headers)
+                  </span>
+                </div>
+                {/* Bottom safe zone */}
+                <div className="absolute bottom-0 left-0 right-0 h-[22%] border-t border-dashed border-cyan-400/60 bg-cyan-500/10 flex items-end justify-center p-1">
+                  <span className="text-[8px] font-mono text-cyan-300 font-bold bg-black/70 px-1.5 py-0.5 rounded">
+                    BOTTOM SAFE ZONE (Captions / Sound Title)
+                  </span>
+                </div>
+                {/* Right sidebar action safe zone */}
+                <div className="absolute top-[14%] bottom-[22%] right-0 w-[18%] border-l border-dashed border-cyan-400/60 bg-cyan-500/10 flex items-center justify-center p-1">
+                  <span className="text-[7px] font-mono text-cyan-300 font-bold bg-black/70 px-1 py-0.5 rounded rotate-90">
+                    ACTIONS
+                  </span>
+                </div>
+              </div>
+            )}
 
             {/* Center Tap Play Button */}
             {!isPlaying && (!youtubeId || !useYouTubeEmbed) && (

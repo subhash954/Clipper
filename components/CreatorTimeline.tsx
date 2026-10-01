@@ -12,6 +12,13 @@ import {
   Sparkles,
   Layers,
   Crosshair,
+  ZoomIn,
+  ZoomOut,
+  Maximize2,
+  Trash2,
+  Split,
+  Eye,
+  Filter,
 } from 'lucide-react';
 
 interface CreatorTimelineProps {
@@ -21,7 +28,15 @@ interface CreatorTimelineProps {
   cuts?: EditOperation[];
   words?: WordTimestamp[];
   reframeTrack?: ReframeTrack;
+  onSplit?: (splitTime: number) => void;
+  onDeleteClip?: (clipId: string) => void;
+  selectedClipId?: string | null;
+  onSelectClip?: (clipId: string) => void;
+  onTrimClip?: (clipId: string, newStart: number, newEnd: number) => void;
+  showIntelligenceMarkers?: boolean;
 }
+
+export type MarkerCategory = 'HOOK' | 'STORY_BEAT' | 'SPEAKER' | 'VISUAL_EVENT' | 'PAUSE' | 'B_ROLL' | 'EMPHASIS';
 
 export const CreatorTimeline: React.FC<CreatorTimelineProps> = ({
   clip,
@@ -30,9 +45,26 @@ export const CreatorTimeline: React.FC<CreatorTimelineProps> = ({
   cuts = [],
   words = [],
   reframeTrack,
+  onSplit,
+  onDeleteClip,
+  selectedClipId,
+  onSelectClip,
+  onTrimClip,
+  showIntelligenceMarkers = true,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const [isScrubbing, setIsScrubbing] = useState(false);
+  const [zoomLevel, setZoomLevel] = useState<number>(1.0);
+  const [activeMarkerFilters, setActiveMarkerFilters] = useState<Record<MarkerCategory, boolean>>({
+    HOOK: true,
+    STORY_BEAT: true,
+    SPEAKER: true,
+    VISUAL_EVENT: true,
+    PAUSE: true,
+    B_ROLL: true,
+    EMPHASIS: true,
+  });
+  const [showFilterDropdown, setShowFilterDropdown] = useState(false);
 
   if (!clip) {
     return null;
@@ -69,10 +101,11 @@ export const CreatorTimeline: React.FC<CreatorTimelineProps> = ({
   const activeCuts = cuts.filter((c) => c.enabled && c.type !== 'BROLL');
   const brollOperations = cuts.filter((c) => c.enabled && c.type === 'BROLL');
 
-  // Semantic Markers
+  // Semantic Multimodal Markers (Phase 32)
   const semanticMarkers = useMemo(() => {
     const markers: Array<{
-      type: 'HOOK' | 'EMPHASIS' | 'PAUSE' | 'FILLER' | 'B-ROLL' | 'SCENE CHANGE';
+      category: MarkerCategory;
+      type: string;
       time: number; // absolute time
       relativeTime: number; // relative to clip
       label: string;
@@ -80,72 +113,91 @@ export const CreatorTimeline: React.FC<CreatorTimelineProps> = ({
     }> = [];
 
     // [HOOK] at clip start
-    markers.push({
-      type: 'HOOK',
-      time: clipStart,
-      relativeTime: 0,
-      label: 'HOOK',
-      color: 'bg-cyan-500 text-slate-950 border-cyan-400',
-    });
+    if (activeMarkerFilters.HOOK) {
+      markers.push({
+        category: 'HOOK',
+        type: 'HOOK',
+        time: clipStart,
+        relativeTime: 0,
+        label: 'HOOK',
+        color: 'bg-cyan-500 text-slate-950 border-cyan-400',
+      });
+    }
 
     // [EMPHASIS] around pivotal quote
-    const emphasisTime = clipStart + Math.min(duration * 0.45, 8);
-    markers.push({
-      type: 'EMPHASIS',
-      time: emphasisTime,
-      relativeTime: emphasisTime - clipStart,
-      label: 'EMPHASIS',
-      color: 'bg-amber-400 text-slate-950 border-amber-300',
-    });
-
-    // [PAUSE] from cuts or silence
-    cuts
-      .filter((c) => c.reason === 'silence')
-      .forEach((c) => {
-        markers.push({
-          type: 'PAUSE',
-          time: c.start,
-          relativeTime: Math.max(0, c.start - clipStart),
-          label: 'PAUSE',
-          color: 'bg-rose-500 text-white border-rose-400',
-        });
-      });
-
-    // [FILLER] from cuts
-    cuts
-      .filter((c) => c.reason === 'filler')
-      .forEach((c) => {
-        markers.push({
-          type: 'FILLER',
-          time: c.start,
-          relativeTime: Math.max(0, c.start - clipStart),
-          label: 'FILLER',
-          color: 'bg-orange-500 text-white border-orange-400',
-        });
-      });
-
-    // [B-ROLL]
-    brollOperations.forEach((b) => {
+    if (activeMarkerFilters.EMPHASIS) {
+      const emphasisTime = clipStart + Math.min(duration * 0.45, 8);
       markers.push({
-        type: 'B-ROLL',
-        time: b.start,
-        relativeTime: Math.max(0, b.start - clipStart),
-        label: b.word ? `B-ROLL: ${b.word.toUpperCase()}` : 'B-ROLL',
-        color: 'bg-indigo-500 text-white border-indigo-400',
+        category: 'EMPHASIS',
+        type: 'EMPHASIS',
+        time: emphasisTime,
+        relativeTime: emphasisTime - clipStart,
+        label: 'EMPHASIS',
+        color: 'bg-amber-400 text-slate-950 border-amber-300',
       });
-    });
+    }
+
+    // [STORY BEAT]
+    if (activeMarkerFilters.STORY_BEAT && duration > 15) {
+      const beatTime = clipStart + duration * 0.65;
+      markers.push({
+        category: 'STORY_BEAT',
+        type: 'STORY_BEAT',
+        time: beatTime,
+        relativeTime: beatTime - clipStart,
+        label: 'STORY BEAT',
+        color: 'bg-emerald-400 text-slate-950 border-emerald-300',
+      });
+    }
+
+    // [PAUSE / SILENCE] from cuts
+    if (activeMarkerFilters.PAUSE) {
+      cuts
+        .filter((c) => c.reason === 'silence')
+        .forEach((c) => {
+          markers.push({
+            category: 'PAUSE',
+            type: 'PAUSE',
+            time: c.start,
+            relativeTime: Math.max(0, c.start - clipStart),
+            label: 'SILENCE',
+            color: 'bg-rose-500 text-white border-rose-400',
+          });
+        });
+    }
+
+    // [B-ROLL OPPORTUNITY]
+    if (activeMarkerFilters.B_ROLL) {
+      brollOperations.forEach((b) => {
+        markers.push({
+          category: 'B_ROLL',
+          type: 'B_ROLL',
+          time: b.start,
+          relativeTime: Math.max(0, b.start - clipStart),
+          label: b.word ? `B-ROLL: ${b.word.toUpperCase()}` : 'B-ROLL',
+          color: 'bg-indigo-500 text-white border-indigo-400',
+        });
+      });
+    }
 
     return markers;
-  }, [clipStart, duration, cuts, brollOperations]);
+  }, [clipStart, duration, cuts, brollOperations, activeMarkerFilters]);
+
+  const toggleCategory = (cat: MarkerCategory) => {
+    setActiveMarkerFilters((prev) => ({ ...prev, [cat]: !prev[cat] }));
+  };
 
   return (
     <div className="w-full bg-white rounded-2xl border border-slate-200/90 p-4 shadow-sm space-y-3 select-none text-slate-900">
-      {/* Timeline Header & Timecode Display */}
-      <div className="flex items-center justify-between border-b border-slate-200/80 pb-2.5">
+      
+      {/* Timeline Header & Quick Operations Bar */}
+      <div className="flex flex-wrap items-center justify-between border-b border-slate-200/80 pb-2.5 gap-2">
+        
+        {/* Left: Title & Track info */}
         <div className="flex items-center gap-2">
           <Film className="w-4 h-4 text-red-600" />
           <span className="text-xs font-bold text-slate-900 tracking-wider uppercase">
-            Semantic Multi-Track Timeline
+            Semantic Multi-Track Workstation
           </span>
           <span className="text-[10px] px-2 py-0.5 rounded-full bg-red-50 text-red-700 font-mono font-bold border border-red-200/80">
             {duration.toFixed(1)}s
@@ -157,38 +209,124 @@ export const CreatorTimeline: React.FC<CreatorTimelineProps> = ({
           )}
         </div>
 
-        {/* Timecode */}
-        <div className="flex items-center gap-2 font-mono text-xs">
-          <span className="text-red-600 font-bold">{relativeCurrent.toFixed(1)}s</span>
-          <span className="text-slate-400">/</span>
-          <span className="text-slate-500 font-medium">{duration.toFixed(1)}s</span>
-        </div>
-      </div>
+        {/* Center: Editing Actions (Split, Delete, Marker Filter) */}
+        <div className="flex items-center gap-1.5 bg-slate-100/90 p-1 rounded-xl border border-slate-200">
+          <button
+            type="button"
+            onClick={() => onSplit?.(clipStart + relativeCurrent)}
+            className="px-2.5 py-1 rounded-lg bg-white hover:bg-red-50 text-slate-700 hover:text-red-700 text-xs font-bold border border-slate-200 flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs"
+            title="Split Clip at Playhead (S)"
+          >
+            <Split className="w-3.5 h-3.5 text-red-600" />
+            <span>Split (S)</span>
+          </button>
 
-      {/* Semantic Marker Strip */}
-      <div className="relative w-full h-6 bg-slate-100/90 rounded-lg border border-slate-200/80 px-2 flex items-center overflow-hidden shadow-xs">
-        {semanticMarkers.map((marker, idx) => {
-          const markerPercent = Math.min(94, Math.max(1, (marker.relativeTime / duration) * 100));
+          <button
+            type="button"
+            onClick={() => {
+              if (selectedClipId) {
+                onDeleteClip?.(selectedClipId);
+              }
+            }}
+            disabled={!selectedClipId}
+            className="px-2.5 py-1 rounded-lg bg-white hover:bg-rose-50 text-slate-700 hover:text-rose-700 disabled:opacity-40 text-xs font-bold border border-slate-200 flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs"
+            title="Delete Selected Clip (Delete)"
+          >
+            <Trash2 className="w-3.5 h-3.5 text-rose-600" />
+            <span>Delete</span>
+          </button>
 
-          return (
+          <div className="relative">
             <button
-              key={idx}
               type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                onSeek(marker.time);
-              }}
-              style={{ left: `${markerPercent}%` }}
-              className={`absolute -translate-x-1/2 px-1.5 py-0.2 rounded text-[8px] font-black uppercase tracking-wider border shadow-xs transition-transform hover:scale-110 cursor-pointer ${marker.color}`}
-              title={`Click to jump to [${marker.label}] at ${marker.relativeTime.toFixed(1)}s`}
+              onClick={() => setShowFilterDropdown(!showFilterDropdown)}
+              className="px-2.5 py-1 rounded-lg bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold border border-slate-200 flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs"
+              title="Toggle Intelligence Marker Categories (Phase 32)"
             >
-              [{marker.label}]
+              <Filter className="w-3.5 h-3.5 text-slate-500" />
+              <span>Markers</span>
             </button>
-          );
-        })}
+
+            {showFilterDropdown && (
+              <div className="absolute right-0 mt-1 w-44 rounded-xl bg-white border border-slate-200 shadow-xl py-2 px-3 z-50 text-xs space-y-1.5 animate-in fade-in">
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider pb-1 border-b">
+                  Marker Filters
+                </p>
+                {(Object.keys(activeMarkerFilters) as MarkerCategory[]).map((cat) => (
+                  <label key={cat} className="flex items-center gap-2 cursor-pointer text-slate-700 hover:text-slate-900">
+                    <input
+                      type="checkbox"
+                      checked={activeMarkerFilters[cat]}
+                      onChange={() => toggleCategory(cat)}
+                      className="rounded text-red-600 focus:ring-red-500 w-3.5 h-3.5"
+                    />
+                    <span className="capitalize">{cat.toLowerCase().replace('_', ' ')}</span>
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Right: Zoom & Timecode */}
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-lg border border-slate-200">
+            <button
+              type="button"
+              onClick={() => setZoomLevel((z) => Math.max(0.75, z - 0.25))}
+              className="p-1 rounded text-slate-600 hover:bg-white transition-colors"
+              title="Zoom Out"
+            >
+              <ZoomOut className="w-3 h-3" />
+            </button>
+            <span className="text-[10px] font-mono px-1 font-bold text-slate-600">
+              {Math.round(zoomLevel * 100)}%
+            </span>
+            <button
+              type="button"
+              onClick={() => setZoomLevel((z) => Math.min(2.5, z + 0.25))}
+              className="p-1 rounded text-slate-600 hover:bg-white transition-colors"
+              title="Zoom In"
+            >
+              <ZoomIn className="w-3 h-3" />
+            </button>
+          </div>
+
+          <div className="flex items-center gap-1 font-mono text-xs">
+            <span className="text-red-600 font-bold">{relativeCurrent.toFixed(2)}s</span>
+            <span className="text-slate-400">/</span>
+            <span className="text-slate-500 font-medium">{duration.toFixed(2)}s</span>
+          </div>
+        </div>
+
       </div>
 
-      {/* Scrubbable Multi-Track Canvas Area */}
+      {/* Semantic Marker Strip (Phase 32) */}
+      {showIntelligenceMarkers && (
+        <div className="relative w-full h-6 bg-slate-100/90 rounded-lg border border-slate-200/80 px-2 flex items-center overflow-hidden shadow-xs">
+          {semanticMarkers.map((marker, idx) => {
+            const markerPercent = Math.min(94, Math.max(1, (marker.relativeTime / duration) * 100));
+
+            return (
+              <button
+                key={idx}
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onSeek(marker.time);
+                }}
+                style={{ left: `${markerPercent}%` }}
+                className={`absolute -translate-x-1/2 px-1.5 py-0.2 rounded text-[8px] font-black uppercase tracking-wider border shadow-xs transition-transform hover:scale-110 cursor-pointer ${marker.color}`}
+                title={`Click to jump to [${marker.label}] at ${marker.relativeTime.toFixed(1)}s`}
+              >
+                [{marker.label}]
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Scrubbable Multi-Track Workstation Area */}
       <div
         ref={containerRef}
         onPointerDown={handlePointerDown}
@@ -196,7 +334,7 @@ export const CreatorTimeline: React.FC<CreatorTimelineProps> = ({
         onPointerUp={handlePointerUp}
         className="relative w-full bg-slate-100/80 rounded-xl overflow-hidden cursor-ew-resize pt-4 pb-2 px-1 space-y-1.5 touch-none border border-slate-200"
       >
-        {/* Playhead Vertical Line */}
+        {/* Playhead Vertical Indicator */}
         <div
           className="absolute top-0 bottom-0 z-30 pointer-events-none transition-transform"
           style={{ left: `${playheadPercent}%`, transform: 'translateX(-50%)' }}
@@ -206,10 +344,23 @@ export const CreatorTimeline: React.FC<CreatorTimelineProps> = ({
         </div>
 
         {/* TRACK 1: Video Footage Track */}
-        <div className="relative h-6 w-full rounded-md bg-white border border-slate-200/90 shadow-xs overflow-hidden flex items-center px-2">
+        <div
+          onClick={(e) => {
+            e.stopPropagation();
+            onSelectClip?.(clip.id);
+          }}
+          className={`relative h-6 w-full rounded-md bg-white border shadow-xs overflow-hidden flex items-center px-2 cursor-pointer transition-colors ${
+            selectedClipId === clip.id ? 'border-red-500 ring-2 ring-red-400/30' : 'border-slate-200/90'
+          }`}
+        >
           <div className="flex items-center gap-1.5 text-[9px] font-bold text-slate-800">
             <Video className="w-3 h-3 text-red-600" />
-            <span>VIDEO • {reframeTrack ? `${reframeTrack.targetWidth}x${reframeTrack.targetHeight} (${reframeTrack.aspectRatio})` : '1080x1920 (9:16)'}</span>
+            <span>
+              VIDEO •{' '}
+              {reframeTrack
+                ? `${reframeTrack.targetWidth}x${reframeTrack.targetHeight} (${reframeTrack.aspectRatio})`
+                : '1080x1920 (9:16)'}
+            </span>
           </div>
           <div className="absolute inset-0 bg-red-500/10 border-l-2 border-r-2 border-red-600 pointer-events-none" />
         </div>
@@ -245,8 +396,8 @@ export const CreatorTimeline: React.FC<CreatorTimelineProps> = ({
         {/* TRACK 3: B-Roll Overlays Track */}
         {brollOperations.length > 0 && (
           <div className="relative h-6 w-full rounded-md bg-white border border-slate-200/90 shadow-xs overflow-hidden flex items-center px-2">
-            <div className="flex items-center gap-1.5 text-[9px] font-bold text-indigo-300 shrink-0 mr-2 z-10">
-              <Layers className="w-3 h-3 text-indigo-400" />
+            <div className="flex items-center gap-1.5 text-[9px] font-bold text-indigo-700 shrink-0 mr-2 z-10">
+              <Layers className="w-3 h-3 text-indigo-500" />
               <span>B-ROLL</span>
             </div>
             <div className="relative w-full h-4">

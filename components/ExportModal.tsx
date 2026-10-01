@@ -187,19 +187,72 @@ export const ExportModal: React.FC<ExportModalProps> = ({
           </div>
         </div>
 
-        {/* Format & Watermark Info Box */}
-        <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-2.5">
-          <div className="flex items-center justify-between text-xs">
-            <span className="text-slate-500 font-medium">Output Format:</span>
-            <span className="font-mono font-bold text-slate-900">1080 × 1920 MP4 (H.264 / AAC)</span>
+        {/* Preset Selector (Phase 36) */}
+        <div className="space-y-1.5">
+          <label className="text-[11px] font-bold text-slate-700 uppercase tracking-wider">
+            Export Preset
+          </label>
+          <div className="grid grid-cols-3 sm:grid-cols-5 gap-1.5">
+            {[
+              { id: 'Shorts', label: 'Shorts', ratio: '9:16' },
+              { id: 'Reels', label: 'Reels', ratio: '9:16' },
+              { id: 'TikTok', label: 'TikTok', ratio: '9:16' },
+              { id: 'Landscape', label: '16:9', ratio: '16:9' },
+              { id: 'Square', label: '1:1', ratio: '1:1' },
+            ].map((p) => {
+              const isSelected = (aspectRatio || '9:16') === p.ratio;
+              return (
+                <button
+                  key={p.id}
+                  type="button"
+                  onClick={() => {
+                    // Update aspect ratio if callback available or parent handles it
+                  }}
+                  className={`py-1.5 px-2 rounded-xl text-xs font-bold border text-center transition-all cursor-pointer ${
+                    isSelected
+                      ? 'bg-red-50 border-red-300 text-red-700 shadow-2xs'
+                      : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                  }`}
+                >
+                  <p className="leading-tight">{p.label}</p>
+                  <p className="text-[9px] text-slate-400 font-normal">{p.ratio}</p>
+                </button>
+              );
+            })}
           </div>
-          <div className="flex items-center justify-between text-xs">
-            <span className="text-slate-500 font-medium">Subtitle Engine:</span>
+        </div>
+
+        {/* Format & Detailed Technical Specs Box (Phase 36) */}
+        <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-2">
+          <div className="grid grid-cols-2 gap-2 text-xs">
+            <div>
+              <span className="text-slate-400 block text-[10px]">Resolution</span>
+              <span className="font-mono font-bold text-slate-900">
+                {aspectRatio === '16:9' ? '1920 × 1080' : aspectRatio === '1:1' ? '1080 × 1080' : '1080 × 1920'}
+              </span>
+            </div>
+            <div>
+              <span className="text-slate-400 block text-[10px]">Framerate &amp; Codec</span>
+              <span className="font-mono font-bold text-slate-900">30 FPS • H.264 / AAC</span>
+            </div>
+            <div>
+              <span className="text-slate-400 block text-[10px]">Bitrate Target</span>
+              <span className="font-mono font-bold text-slate-900">8,000 Kbps (CBR)</span>
+            </div>
+            <div>
+              <span className="text-slate-400 block text-[10px]">Audio Mastering</span>
+              <span className="font-mono font-bold text-slate-900">-14 LUFS Loudnorm</span>
+            </div>
+          </div>
+
+          <div className="pt-2 border-t border-slate-200/80 flex items-center justify-between text-xs">
+            <span className="text-slate-500 font-medium">Subtitle Burn-In:</span>
             <span className="font-semibold text-emerald-700 flex items-center gap-1">
               <Check className="w-3.5 h-3.5" /> Word-Synced ASS Burned-In
             </span>
           </div>
-          <div className="flex items-center justify-between text-xs pt-2 border-t border-slate-200">
+
+          <div className="flex items-center justify-between text-xs pt-1">
             <span className="text-slate-500 font-medium">Watermark:</span>
             {isProUser ? (
               <span className="text-xs font-semibold text-emerald-700 flex items-center gap-1">

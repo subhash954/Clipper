@@ -1,0 +1,394 @@
+[
+  {
+    "id": "ver-proj-ver-test-1790897883727-1-1790897883727",
+    "versionNumber": 1,
+    "description": "Version 1 - Raw Ingest - Initial import",
+    "renderSpec": {
+      "id": "spec-proj-unit-test-1-1790897883725",
+      "projectId": "proj-unit-test-1",
+      "version": 1,
+      "sourceAsset": {
+        "url": "/mock/video.mp4",
+        "duration": 30,
+        "width": 1920,
+        "height": 1080
+      },
+      "duration": 30,
+      "canvas": {
+        "aspectRatio": "9:16",
+        "width": 1080,
+        "height": 1920,
+        "backgroundColor": "#000000"
+      },
+      "tracks": [
+        {
+          "id": "track-overlay",
+          "type": "OVERLAY",
+          "name": "Text & Graphics",
+          "order": 0,
+          "isMuted": false,
+          "isSolo": false,
+          "isLocked": false,
+          "clips": []
+        },
+        {
+          "id": "track-broll",
+          "type": "BROLL",
+          "name": "B-Roll & Cutaways",
+          "order": 1,
+          "isMuted": false,
+          "isSolo": false,
+          "isLocked": false,
+          "clips": []
+        },
+        {
+          "id": "track-caption",
+          "type": "CAPTION",
+          "name": "Subtitles",
+          "order": 2,
+          "isMuted": false,
+          "isSolo": false,
+          "isLocked": false,
+          "clips": []
+        },
+        {
+          "id": "track-video",
+          "type": "VIDEO",
+          "name": "Main Video",
+          "order": 3,
+          "isMuted": false,
+          "isSolo": false,
+          "isLocked": false,
+          "clips": [
+            {
+              "id": "clip-main-1790897883725",
+              "trackId": "track-video",
+              "trackType": "VIDEO",
+              "title": "Main Source Footage",
+              "start": 0,
+              "end": 30,
+              "sourceStart": 0,
+              "sourceEnd": 30,
+              "sourceUrl": "/mock/video.mp4",
+              "volume": 1,
+              "opacity": 1,
+              "isMuted": false,
+              "isDisabled": false,
+              "isLocked": false,
+              "layout": {
+                "x": 0,
+                "y": 0,
+                "width": 1080,
+                "height": 1920,
+                "fit": "cover"
+              }
+            }
+          ]
+        },
+        {
+          "id": "track-music",
+          "type": "MUSIC",
+          "name": "Background Music",
+          "order": 4,
+          "isMuted": false,
+          "isSolo": false,
+          "isLocked": false,
+          "clips": []
+        },
+        {
+          "id": "track-sfx",
+          "type": "SFX",
+          "name": "Sound Effects",
+          "order": 5,
+          "isMuted": false,
+          "isSolo": false,
+          "isLocked": false,
+          "clips": []
+        }
+      ],
+      "cuts": [],
+      "captions": {
+        "enabled": true,
+        "style": {
+          "preset": "punch",
+          "fontFamily": "Inter",
+          "fontSize": 24,
+          "primaryColor": "#FFFFFF",
+          "highlightColor": "#DC2626",
+          "strokeColor": "#000000",
+          "strokeWidth": 3,
+          "position": "middle",
+          "uppercase": true,
+          "showEmojis": true,
+          "animation": "karaoke",
+          "language": "en",
+          "showDualLanguage": false,
+          "enableSFX": false
+        },
+        "safeAreaEnabled": true,
+        "words": [
+          {
+            "word": "Hello",
+            "start": 0.2,
+            "end": 0.6
+          },
+          {
+            "word": "world",
+            "start": 0.7,
+            "end": 1.1
+          },
+          {
+            "word": "um",
+            "start": 1.5,
+            "end": 1.8
+          },
+          {
+            "word": "this",
+            "start": 2.2,
+            "end": 2.5
+          },
+          {
+            "word": "is",
+            "start": 2.6,
+            "end": 2.8
+          },
+          {
+            "word": "groundbreaking",
+            "start": 3,
+            "end": 3.7
+          }
+        ]
+      },
+      "reframe": {
+        "mode": "smart",
+        "safeMargins": true,
+        "multiSpeakerMode": "active_speaker"
+      },
+      "audioMix": {
+        "masterVolume": 1,
+        "studioCleanEnabled": true,
+        "loudnormEnabled": true,
+        "targetLufs": -14,
+        "smartDucking": {
+          "enabled": true,
+          "duckAmountDb": -12,
+          "attackMs": 150,
+          "releaseMs": 350
+        }
+      },
+      "textOverlays": [],
+      "imageOverlays": [],
+      "exportSettings": {
+        "resolution": "1080p",
+        "targetWidth": 1080,
+        "targetHeight": 1920,
+        "fps": 30,
+        "codec": "h264",
+        "bitrateKbps": 8000,
+        "captionBurnIn": true,
+        "filename": "clipper_proj-unit-test-1_9x16.mp4",
+        "preset": "Shorts"
+      },
+      "createdAt": "2026-10-01T23:38:03.725Z",
+      "updatedAt": "2026-10-01T23:38:03.727Z"
+    },
+    "createdAt": "2026-10-01T23:38:03.727Z",
+    "createdBy": "user-001"
+  },
+  {
+    "id": "ver-proj-ver-test-1790897883727-2-1790897883727",
+    "versionNumber": 2,
+    "description": "Version 2 - Square Feed - Changed to 1:1",
+    "renderSpec": {
+      "id": "spec-proj-unit-test-1-1790897883725",
+      "projectId": "proj-unit-test-1",
+      "version": 2,
+      "sourceAsset": {
+        "url": "/mock/video.mp4",
+        "duration": 30,
+        "width": 1920,
+        "height": 1080
+      },
+      "duration": 30,
+      "canvas": {
+        "aspectRatio": "1:1",
+        "width": 1080,
+        "height": 1080,
+        "backgroundColor": "#000000"
+      },
+      "tracks": [
+        {
+          "id": "track-overlay",
+          "type": "OVERLAY",
+          "name": "Text & Graphics",
+          "order": 0,
+          "isMuted": false,
+          "isSolo": false,
+          "isLocked": false,
+          "clips": []
+        },
+        {
+          "id": "track-broll",
+          "type": "BROLL",
+          "name": "B-Roll & Cutaways",
+          "order": 1,
+          "isMuted": false,
+          "isSolo": false,
+          "isLocked": false,
+          "clips": []
+        },
+        {
+          "id": "track-caption",
+          "type": "CAPTION",
+          "name": "Subtitles",
+          "order": 2,
+          "isMuted": false,
+          "isSolo": false,
+          "isLocked": false,
+          "clips": []
+        },
+        {
+          "id": "track-video",
+          "type": "VIDEO",
+          "name": "Main Video",
+          "order": 3,
+          "isMuted": false,
+          "isSolo": false,
+          "isLocked": false,
+          "clips": [
+            {
+              "id": "clip-main-1790897883725",
+              "trackId": "track-video",
+              "trackType": "VIDEO",
+              "title": "Main Source Footage",
+              "start": 0,
+              "end": 30,
+              "sourceStart": 0,
+              "sourceEnd": 30,
+              "sourceUrl": "/mock/video.mp4",
+              "volume": 1,
+              "opacity": 1,
+              "isMuted": false,
+              "isDisabled": false,
+              "isLocked": false,
+              "layout": {
+                "x": 0,
+                "y": 0,
+                "width": 1080,
+                "height": 1920,
+                "fit": "cover"
+              }
+            }
+          ]
+        },
+        {
+          "id": "track-music",
+          "type": "MUSIC",
+          "name": "Background Music",
+          "order": 4,
+          "isMuted": false,
+          "isSolo": false,
+          "isLocked": false,
+          "clips": []
+        },
+        {
+          "id": "track-sfx",
+          "type": "SFX",
+          "name": "Sound Effects",
+          "order": 5,
+          "isMuted": false,
+          "isSolo": false,
+          "isLocked": false,
+          "clips": []
+        }
+      ],
+      "cuts": [],
+      "captions": {
+        "enabled": true,
+        "style": {
+          "preset": "punch",
+          "fontFamily": "Inter",
+          "fontSize": 24,
+          "primaryColor": "#FFFFFF",
+          "highlightColor": "#DC2626",
+          "strokeColor": "#000000",
+          "strokeWidth": 3,
+          "position": "middle",
+          "uppercase": true,
+          "showEmojis": true,
+          "animation": "karaoke",
+          "language": "en",
+          "showDualLanguage": false,
+          "enableSFX": false
+        },
+        "safeAreaEnabled": true,
+        "words": [
+          {
+            "word": "Hello",
+            "start": 0.2,
+            "end": 0.6
+          },
+          {
+            "word": "world",
+            "start": 0.7,
+            "end": 1.1
+          },
+          {
+            "word": "um",
+            "start": 1.5,
+            "end": 1.8
+          },
+          {
+            "word": "this",
+            "start": 2.2,
+            "end": 2.5
+          },
+          {
+            "word": "is",
+            "start": 2.6,
+            "end": 2.8
+          },
+          {
+            "word": "groundbreaking",
+            "start": 3,
+            "end": 3.7
+          }
+        ]
+      },
+      "reframe": {
+        "mode": "smart",
+        "safeMargins": true,
+        "multiSpeakerMode": "active_speaker"
+      },
+      "audioMix": {
+        "masterVolume": 1,
+        "studioCleanEnabled": true,
+        "loudnormEnabled": true,
+        "targetLufs": -14,
+        "smartDucking": {
+          "enabled": true,
+          "duckAmountDb": -12,
+          "attackMs": 150,
+          "releaseMs": 350
+        }
+      },
+      "textOverlays": [],
+      "imageOverlays": [],
+      "exportSettings": {
+        "resolution": "1080p",
+        "targetWidth": 1080,
+        "targetHeight": 1080,
+        "fps": 30,
+        "codec": "h264",
+        "bitrateKbps": 8000,
+        "captionBurnIn": true,
+        "filename": "clipper_proj-unit-test-1_9x16.mp4",
+        "preset": "Square"
+      },
+      "createdAt": "2026-10-01T23:38:03.725Z",
+      "updatedAt": "2026-10-01T23:38:03.727Z"
+    },
+    "createdAt": "2026-10-01T23:38:03.727Z",
+    "createdBy": "user-001"
+  }
+]
