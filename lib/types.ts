@@ -223,6 +223,9 @@ export interface SubtitleStyle {
   enableSFX: boolean;
 }
 
+import { AspectRatio, TrackingMode, ManualReframeSettings, ReframeTrack } from './reframe/types';
+export type { AspectRatio, TrackingMode, ManualReframeSettings, ReframeTrack };
+
 export interface VisualLayoutSettings {
   splitScreenEnabled: boolean;
   satisfyingVideoType: 'subway' | 'minecraft' | 'gta' | 'none';
@@ -235,6 +238,11 @@ export interface VisualLayoutSettings {
   showIntroHook: boolean;
   introHookText: string;
   backgroundBlur: boolean;
+  aspectRatio?: AspectRatio;
+  trackingMode?: TrackingMode;
+  manualPosition?: ManualReframeSettings;
+  lockFraming?: boolean;
+  reframeTrack?: ReframeTrack;
 }
 
 export interface AudioStudioSettings {
@@ -275,7 +283,7 @@ export interface AgencySettings {
  */
 export interface RenderSpec {
   crop: {
-    aspectRatio: '9:16' | '16:9' | '1:1';
+    aspectRatio: AspectRatio;
     targetWidth: number;
     targetHeight: number;
   };
@@ -283,4 +291,6 @@ export interface RenderSpec {
   cuts: EditOperation[];
   audio: AudioStudioSettings;
   visual: VisualLayoutSettings;
+  reframe?: ReframeTrack;
+  broll?: EditOperation[];
 }

@@ -2,18 +2,16 @@
 
 import React, { useRef, useState, useMemo } from 'react';
 import { ViralClip, WordTimestamp, EditOperation } from '@/lib/types';
-import { 
-  Film, 
-  Type, 
-  Scissors, 
-  Video, 
-  Music2, 
-  Sparkles, 
-  Zap, 
-  Layers, 
-  Pause, 
-  VolumeX, 
-  Clock 
+import { ReframeTrack } from '@/lib/reframe/types';
+import {
+  Film,
+  Type,
+  Scissors,
+  Video,
+  Music2,
+  Sparkles,
+  Layers,
+  Crosshair,
 } from 'lucide-react';
 
 interface CreatorTimelineProps {
@@ -22,6 +20,7 @@ interface CreatorTimelineProps {
   onSeek: (time: number) => void;
   cuts?: EditOperation[];
   words?: WordTimestamp[];
+  reframeTrack?: ReframeTrack;
 }
 
 export const CreatorTimeline: React.FC<CreatorTimelineProps> = ({
@@ -30,6 +29,7 @@ export const CreatorTimeline: React.FC<CreatorTimelineProps> = ({
   onSeek,
   cuts = [],
   words = [],
+  reframeTrack,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const [isScrubbing, setIsScrubbing] = useState(false);
@@ -66,9 +66,10 @@ export const CreatorTimeline: React.FC<CreatorTimelineProps> = ({
     onSeek(clipStart + targetRelative);
   };
 
-  const activeCuts = cuts.filter((c) => c.enabled);
+  const activeCuts = cuts.filter((c) => c.enabled && c.type !== 'BROLL');
+  const brollOperations = cuts.filter((c) => c.enabled && c.type === 'BROLL');
 
-  // Section 15: AI Semantic Markers
+  // Semantic Markers
   const semanticMarkers = useMemo(() => {
     const markers: Array<{
       type: 'HOOK' | 'EMPHASIS' | 'PAUSE' | 'FILLER' | 'B-ROLL' | 'SCENE CHANGE';
@@ -98,70 +99,73 @@ export const CreatorTimeline: React.FC<CreatorTimelineProps> = ({
     });
 
     // [PAUSE] from cuts or silence
-    cuts.filter(c => c.reason === 'silence').forEach((c) => {
-      markers.push({
-        type: 'PAUSE',
-        time: c.start,
-        relativeTime: Math.max(0, c.start - clipStart),
-        label: 'PAUSE',
-        color: 'bg-rose-500 text-white border-rose-400',
+    cuts
+      .filter((c) => c.reason === 'silence')
+      .forEach((c) => {
+        markers.push({
+          type: 'PAUSE',
+          time: c.start,
+          relativeTime: Math.max(0, c.start - clipStart),
+          label: 'PAUSE',
+          color: 'bg-rose-500 text-white border-rose-400',
+        });
       });
-    });
 
     // [FILLER] from cuts
-    cuts.filter(c => c.reason === 'filler').forEach((c) => {
+    cuts
+      .filter((c) => c.reason === 'filler')
+      .forEach((c) => {
+        markers.push({
+          type: 'FILLER',
+          time: c.start,
+          relativeTime: Math.max(0, c.start - clipStart),
+          label: 'FILLER',
+          color: 'bg-orange-500 text-white border-orange-400',
+        });
+      });
+
+    // [B-ROLL]
+    brollOperations.forEach((b) => {
       markers.push({
-        type: 'FILLER',
-        time: c.start,
-        relativeTime: Math.max(0, c.start - clipStart),
-        label: 'FILLER',
-        color: 'bg-orange-500 text-white border-orange-400',
+        type: 'B-ROLL',
+        time: b.start,
+        relativeTime: Math.max(0, b.start - clipStart),
+        label: b.word ? `B-ROLL: ${b.word.toUpperCase()}` : 'B-ROLL',
+        color: 'bg-indigo-500 text-white border-indigo-400',
       });
     });
 
-    // [B-ROLL] interval
-    if (duration > 15) {
-      const brollTime = clipStart + Math.min(duration * 0.7, 14);
-      markers.push({
-        type: 'B-ROLL',
-        time: brollTime,
-        relativeTime: brollTime - clipStart,
-        label: 'B-ROLL',
-        color: 'bg-indigo-500 text-white border-indigo-400',
-      });
-    }
-
     return markers;
-  }, [clipStart, duration, cuts]);
+  }, [clipStart, duration, cuts, brollOperations]);
 
   return (
     <div className="w-full bg-[#111827] rounded-2xl border border-[#283344] p-4 shadow-xl space-y-3 select-none text-[#F8FAFC]">
-      
       {/* Timeline Header & Timecode Display */}
       <div className="flex items-center justify-between border-b border-[#1F2937] pb-2.5">
         <div className="flex items-center gap-2">
           <Film className="w-4 h-4 text-cyan-400" />
           <span className="text-xs font-bold text-white tracking-wider uppercase">
-            AI-First Semantic Timeline
+            Semantic Multi-Track Timeline
           </span>
           <span className="text-[10px] px-2 py-0.5 rounded-full bg-cyan-950 text-cyan-400 font-mono font-bold border border-cyan-800/40">
-            {duration.toFixed(1)}s Duration
+            {duration.toFixed(1)}s
           </span>
+          {reframeTrack && (
+            <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-800 text-cyan-300 font-mono border border-slate-700">
+              Reframe: {reframeTrack.trackingMode} ({reframeTrack.aspectRatio})
+            </span>
+          )}
         </div>
 
         {/* Timecode */}
         <div className="flex items-center gap-2 font-mono text-xs">
-          <span className="text-cyan-400 font-bold">
-            {relativeCurrent.toFixed(1)}s
-          </span>
+          <span className="text-cyan-400 font-bold">{relativeCurrent.toFixed(1)}s</span>
           <span className="text-slate-600">/</span>
-          <span className="text-slate-400 font-medium">
-            {duration.toFixed(1)}s
-          </span>
+          <span className="text-slate-400 font-medium">{duration.toFixed(1)}s</span>
         </div>
       </div>
 
-      {/* Semantic Marker Strip (Section 15) */}
+      {/* Semantic Marker Strip */}
       <div className="relative w-full h-6 bg-[#0B0F17] rounded-lg border border-[#1F2937] px-2 flex items-center overflow-hidden">
         {semanticMarkers.map((marker, idx) => {
           const markerPercent = Math.min(94, Math.max(1, (marker.relativeTime / duration) * 100));
@@ -205,12 +209,68 @@ export const CreatorTimeline: React.FC<CreatorTimelineProps> = ({
         <div className="relative h-6 w-full rounded-md bg-[#161F30] border border-[#283344] overflow-hidden flex items-center px-2">
           <div className="flex items-center gap-1.5 text-[9px] font-bold text-slate-300">
             <Video className="w-3 h-3 text-cyan-400" />
-            <span>VIDEO • 1080x1920 (9:16 Vertical Short)</span>
+            <span>VIDEO • {reframeTrack ? `${reframeTrack.targetWidth}x${reframeTrack.targetHeight} (${reframeTrack.aspectRatio})` : '1080x1920 (9:16)'}</span>
           </div>
           <div className="absolute inset-0 bg-cyan-500/10 border-l-2 border-r-2 border-cyan-400 pointer-events-none" />
         </div>
 
-        {/* TRACK 2: Dynamic Captions Track */}
+        {/* TRACK 2: Reframe Subject Keyframes Track */}
+        {reframeTrack && reframeTrack.keyframes && reframeTrack.keyframes.length > 0 && (
+          <div className="relative h-6 w-full rounded-md bg-[#161F30] border border-[#283344] overflow-hidden flex items-center px-2">
+            <div className="flex items-center gap-1.5 text-[9px] font-bold text-cyan-300 shrink-0 mr-2 z-10">
+              <Crosshair className="w-3 h-3 text-cyan-400" />
+              <span>REFRAME</span>
+            </div>
+            <div className="relative w-full h-4">
+              {reframeTrack.keyframes.map((kf, i) => {
+                const kfPct = Math.min(100, Math.max(0, (kf.time / duration) * 100));
+                return (
+                  <button
+                    key={i}
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onSeek(clipStart + kf.time);
+                    }}
+                    style={{ left: `${kfPct}%` }}
+                    className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-2.5 h-2.5 rotate-45 bg-cyan-400 hover:scale-150 transition-transform cursor-pointer border border-cyan-900 shadow-xs"
+                    title={`Keyframe at ${kf.time.toFixed(1)}s (X: ${Math.round(kf.x * 100)}%, Y: ${Math.round(kf.y * 100)}%)`}
+                  />
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* TRACK 3: B-Roll Overlays Track */}
+        {brollOperations.length > 0 && (
+          <div className="relative h-6 w-full rounded-md bg-[#161F30] border border-[#283344] overflow-hidden flex items-center px-2">
+            <div className="flex items-center gap-1.5 text-[9px] font-bold text-indigo-300 shrink-0 mr-2 z-10">
+              <Layers className="w-3 h-3 text-indigo-400" />
+              <span>B-ROLL</span>
+            </div>
+            <div className="relative w-full h-4">
+              {brollOperations.map((broll, idx) => {
+                const relStart = Math.max(0, broll.start - clipStart);
+                const relEnd = Math.max(0, broll.end - clipStart);
+                const leftPct = Math.min(100, Math.max(0, (relStart / duration) * 100));
+                const widthPct = Math.min(100 - leftPct, Math.max(2, ((relEnd - relStart) / duration) * 100));
+                return (
+                  <div
+                    key={idx}
+                    className="absolute top-0 bottom-0 bg-indigo-600/80 border border-indigo-400 rounded-xs flex items-center justify-center text-[7px] font-bold text-white uppercase px-1 truncate"
+                    style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
+                    title={`B-Roll: ${broll.word || 'Stock video'}`}
+                  >
+                    {broll.word ? broll.word.toUpperCase() : 'B-ROLL'}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* TRACK 4: Dynamic Captions Track */}
         <div className="relative h-6 w-full rounded-md bg-[#161F30] border border-[#283344] overflow-hidden flex items-center px-2">
           <div className="flex items-center gap-1.5 text-[9px] font-bold text-amber-300 shrink-0 mr-2 z-10">
             <Type className="w-3 h-3 text-amber-400" />
@@ -234,7 +294,7 @@ export const CreatorTimeline: React.FC<CreatorTimelineProps> = ({
           </div>
         </div>
 
-        {/* TRACK 3: Cuts / EDL Track (Filler words & Silence cuts) */}
+        {/* TRACK 5: Cuts / Silence / Filler Track */}
         <div className="relative h-6 w-full rounded-md bg-[#161F30] border border-[#283344] overflow-hidden flex items-center px-2">
           <div className="flex items-center gap-1.5 text-[9px] font-bold text-rose-400 shrink-0 mr-2 z-10">
             <Scissors className="w-3 h-3 text-rose-400" />
@@ -260,7 +320,7 @@ export const CreatorTimeline: React.FC<CreatorTimelineProps> = ({
           </div>
         </div>
 
-        {/* TRACK 4: Audio Track (Voice waveform representation) */}
+        {/* TRACK 6: Audio Waveform Track */}
         <div className="relative h-5 w-full rounded-md bg-[#161F30] border border-[#283344] overflow-hidden flex items-center px-2">
           <div className="flex items-center gap-1.5 text-[9px] font-bold text-emerald-400 shrink-0 mr-2 z-10">
             <Music2 className="w-3 h-3 text-emerald-400" />
@@ -279,9 +339,7 @@ export const CreatorTimeline: React.FC<CreatorTimelineProps> = ({
             })}
           </div>
         </div>
-
       </div>
-
     </div>
   );
 };

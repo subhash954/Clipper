@@ -1,8 +1,9 @@
 'use client';
 
-import React, { useRef, useEffect, useState, forwardRef, useImperativeHandle } from 'react';
-import { Play, Pause, RotateCcw, Volume2, VolumeX, Smartphone, SplitSquareVertical } from 'lucide-react';
+import React, { useRef, useEffect, useState, forwardRef, useImperativeHandle, useMemo } from 'react';
+import { Play, Pause, RotateCcw, Volume2, VolumeX, Smartphone, SplitSquareVertical, Crosshair } from 'lucide-react';
 import { WordTimestamp, SubtitleStyle, VisualLayoutSettings, AudioStudioSettings } from '@/lib/types';
+import { AspectRatio, ReframeTrack, ReframeKeyframe, ASPECT_RATIO_CONFIGS } from '@/lib/reframe/types';
 import { renderSubtitlesOnCanvas } from '@/lib/subtitleRenderer';
 import { SATISFYING_VIDEO_URLS } from '@/lib/sampleData';
 import { soundFX } from '@/lib/audioEffects';
@@ -16,6 +17,8 @@ interface VideoPreviewPlayerProps {
   isProUser: boolean;
   clipStartTime?: number;
   onTimeUpdate?: (time: number) => void;
+  reframeTrack?: ReframeTrack;
+  aspectRatio?: AspectRatio;
 }
 
 export interface VideoPreviewPlayerRef {
@@ -24,8 +27,65 @@ export interface VideoPreviewPlayerRef {
   seekTo: (time: number) => void;
 }
 
+/**
+ * Linearly interpolates focal point and zoom from reframe keyframes
+ */
+function getInterpolatedKeyframe(
+  keyframes: ReframeKeyframe[] | undefined,
+  time: number
+): { x: number; y: number; scale: number } {
+  if (!keyframes || keyframes.length === 0) {
+    return { x: 0.5, y: 0.5, scale: 1.0 };
+  }
+  if (keyframes.length === 1 || time <= keyframes[0].time) {
+    return {
+      x: keyframes[0].x,
+      y: keyframes[0].y,
+      scale: keyframes[0].scale || 1.0,
+    };
+  }
+  if (time >= keyframes[keyframes.length - 1].time) {
+    const last = keyframes[keyframes.length - 1];
+    return {
+      x: last.x,
+      y: last.y,
+      scale: last.scale || 1.0,
+    };
+  }
+
+  for (let i = 0; i < keyframes.length - 1; i++) {
+    const k1 = keyframes[i];
+    const k2 = keyframes[i + 1];
+    if (time >= k1.time && time <= k2.time) {
+      const dt = Math.max(0.001, k2.time - k1.time);
+      const t = (time - k1.time) / dt;
+      return {
+        x: k1.x + (k2.x - k1.x) * t,
+        y: k1.y + (k2.y - k1.y) * t,
+        scale: (k1.scale || 1.0) + ((k2.scale || 1.0) - (k1.scale || 1.0)) * t,
+      };
+    }
+  }
+
+  return { x: 0.5, y: 0.5, scale: 1.0 };
+}
+
 export const VideoPreviewPlayer = forwardRef<VideoPreviewPlayerRef, VideoPreviewPlayerProps>(
-  ({ videoUrl, words, subtitleStyle, visualSettings, audioSettings, isProUser, clipStartTime = 0, onTimeUpdate }, ref) => {
+  (
+    {
+      videoUrl,
+      words,
+      subtitleStyle,
+      visualSettings,
+      audioSettings,
+      isProUser,
+      clipStartTime = 0,
+      onTimeUpdate,
+      reframeTrack: propReframeTrack,
+      aspectRatio: propAspectRatio,
+    },
+    ref
+  ) => {
     const videoRef = useRef<HTMLVideoElement>(null);
     const secondaryVideoRef = useRef<HTMLVideoElement>(null);
     const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -36,6 +96,12 @@ export const VideoPreviewPlayer = forwardRef<VideoPreviewPlayerRef, VideoPreview
     const [duration, setDuration] = useState(0);
     const [isMuted, setIsMuted] = useState(false);
     const lastActiveWordRef = useRef<string | null>(null);
+
+    // Active aspect ratio & reframe track
+    const activeAspectRatio: AspectRatio =
+      propAspectRatio || visualSettings.aspectRatio || propReframeTrack?.aspectRatio || '9:16';
+    const activeReframeTrack = propReframeTrack || visualSettings.reframeTrack;
+    const aspectConfig = ASPECT_RATIO_CONFIGS[activeAspectRatio] || ASPECT_RATIO_CONFIGS['9:16'];
 
     useImperativeHandle(ref, () => ({
       getVideoElement: () => videoRef.current,
@@ -48,10 +114,55 @@ export const VideoPreviewPlayer = forwardRef<VideoPreviewPlayerRef, VideoPreview
         if (secondaryVideoRef.current) {
           secondaryVideoRef.current.currentTime = time;
         }
-      }
+      },
     }));
 
-    // Synchronize canvas rendering loop and sound effects (Feature 9)
+    // Dynamic subject position calculation for Auto Reframe
+    const relativeTime = Math.max(0, currentTime - clipStartTime);
+    const currentFrame = useMemo(() => {
+      return getInterpolatedKeyframe(activeReframeTrack?.keyframes, relativeTime);
+    }, [activeReframeTrack?.keyframes, relativeTime]);
+
+    // Calculate exact CSS object-position to match FFmpeg crop filter
+    const videoStyle = useMemo(() => {
+      const videoEl = videoRef.current;
+      const sourceW = videoEl?.videoWidth || 1920;
+      const sourceH = videoEl?.videoHeight || 1080;
+      const targetRatio = aspectConfig.ratio;
+      const sourceRatio = sourceW / sourceH;
+
+      let cropW: number;
+      let cropH: number;
+
+      if (sourceRatio > targetRatio) {
+        cropH = sourceH;
+        cropW = sourceH * targetRatio;
+      } else {
+        cropW = sourceW;
+        cropH = sourceW / targetRatio;
+      }
+
+      const zoom = Math.max(1.0, currentFrame.scale || 1.0);
+      const zoomedW = cropW / zoom;
+      const zoomedH = cropH / zoom;
+
+      const maxTravelX = sourceW - zoomedW;
+      const maxTravelY = sourceH - zoomedH;
+
+      const desiredLeft = Math.max(0, Math.min(maxTravelX, currentFrame.x * sourceW - zoomedW / 2));
+      const desiredTop = Math.max(0, Math.min(maxTravelY, currentFrame.y * sourceH - zoomedH / 2));
+
+      const objPosX = maxTravelX > 0 ? (desiredLeft / maxTravelX) * 100 : 50;
+      const objPosY = maxTravelY > 0 ? (desiredTop / maxTravelY) * 100 : 50;
+
+      return {
+        objectPosition: `${objPosX.toFixed(2)}% ${objPosY.toFixed(2)}%`,
+        transform: zoom > 1.01 ? `scale(${zoom.toFixed(2)})` : undefined,
+        transformOrigin: `${objPosX.toFixed(2)}% ${objPosY.toFixed(2)}%`,
+      };
+    }, [aspectConfig.ratio, currentFrame]);
+
+    // Synchronize canvas rendering loop and sound effects
     useEffect(() => {
       let animationFrameId: number;
 
@@ -76,9 +187,9 @@ export const VideoPreviewPlayer = forwardRef<VideoPreviewPlayerRef, VideoPreview
             );
           }
 
-          // Trigger Sound FX when high-impact keywords appear (Feature 9)
+          // Trigger Sound FX when high-impact keywords appear
           if (subtitleStyle.enableSFX && isPlaying) {
-            const active = words.find(w => video.currentTime >= w.start && video.currentTime <= w.end);
+            const active = words.find((w) => video.currentTime >= w.start && video.currentTime <= w.end);
             if (active && active.word !== lastActiveWordRef.current) {
               lastActiveWordRef.current = active.word;
               const cleanWord = active.word.replace(/[^a-zA-Z]/g, '').toUpperCase();
@@ -98,7 +209,7 @@ export const VideoPreviewPlayer = forwardRef<VideoPreviewPlayerRef, VideoPreview
       return () => {
         cancelAnimationFrame(animationFrameId);
       };
-    }, [words, subtitleStyle, visualSettings, isProUser, duration, isPlaying]);
+    }, [words, subtitleStyle, visualSettings, isProUser, duration, isPlaying, clipStartTime]);
 
     // Handle primary time update
     const handleTimeUpdate = () => {
@@ -158,7 +269,7 @@ export const VideoPreviewPlayer = forwardRef<VideoPreviewPlayerRef, VideoPreview
       return `${mins}:${secs < 10 ? '0' : ''}${secs}.${ms}`;
     };
 
-    // Detect YouTube Video ID
+    // YouTube Video ID Detection
     const extractYouTubeId = (url: string) => {
       if (!url) return null;
       const match = url.match(/^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|&v=)([^#&?]*).*/);
@@ -167,7 +278,6 @@ export const VideoPreviewPlayer = forwardRef<VideoPreviewPlayerRef, VideoPreview
     const youtubeId = extractYouTubeId(videoUrl);
     const [useYouTubeEmbed, setUseYouTubeEmbed] = useState<boolean>(Boolean(youtubeId));
 
-    // Keep YouTube playback time ticker active for subtitle animation
     useEffect(() => {
       let interval: NodeJS.Timeout;
       if (useYouTubeEmbed && isPlaying) {
@@ -186,68 +296,93 @@ export const VideoPreviewPlayer = forwardRef<VideoPreviewPlayerRef, VideoPreview
       return () => clearInterval(interval);
     }, [useYouTubeEmbed, isPlaying, duration, onTimeUpdate]);
 
-    const secondarySrc = visualSettings.splitScreenEnabled && visualSettings.satisfyingVideoType !== 'none'
-      ? SATISFYING_VIDEO_URLS[visualSettings.satisfyingVideoType]
-      : null;
+    const secondarySrc =
+      visualSettings.splitScreenEnabled && visualSettings.satisfyingVideoType !== 'none'
+        ? SATISFYING_VIDEO_URLS[visualSettings.satisfyingVideoType]
+        : null;
+
+    // Aspect ratio container styles
+    const containerAspectClass =
+      activeAspectRatio === '9:16'
+        ? 'w-[280px] sm:w-[320px] aspect-[9/16]'
+        : activeAspectRatio === '1:1'
+        ? 'w-[300px] sm:w-[340px] aspect-square'
+        : activeAspectRatio === '16:9'
+        ? 'w-[360px] sm:w-[480px] aspect-video'
+        : 'w-[290px] sm:w-[330px] aspect-[4/5]';
 
     return (
-      <div className="flex flex-col items-center w-full max-w-sm mx-auto">
-        
-        {/* Device Frame Header with Split Screen & YouTube Stream Switcher */}
+      <div className="flex flex-col items-center w-full max-w-lg mx-auto">
+        {/* Device Frame Header with Aspect Ratio & Subject Tracking Indicator */}
         <div className="flex items-center justify-between w-full px-2 mb-2 text-xs font-semibold text-slate-500">
           <div className="flex items-center gap-1.5">
-            <Smartphone className="w-4 h-4 text-red-600" />
-            <span className="font-bold text-slate-800">9:16 Shorts (1080x1920)</span>
+            <Smartphone className="w-4 h-4 text-cyan-400" />
+            <span className="font-bold text-slate-200">
+              {aspectConfig.label} ({aspectConfig.width}x{aspectConfig.height})
+            </span>
           </div>
 
           <div className="flex items-center gap-1.5">
+            {activeReframeTrack && (
+              <span className="flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-cyan-950 text-cyan-300 border border-cyan-800/60 font-mono">
+                <Crosshair className="w-3 h-3 text-cyan-400" />
+                {activeReframeTrack.trackingMode === 'smart'
+                  ? 'Smart Centering'
+                  : activeReframeTrack.trackingMode === 'manual'
+                  ? 'Manual Framing'
+                  : 'Center Crop'}
+              </span>
+            )}
+
             {youtubeId && (
               <button
                 onClick={() => setUseYouTubeEmbed(!useYouTubeEmbed)}
                 className={`text-[10px] px-2 py-0.5 rounded-full font-bold border transition-colors ${
                   useYouTubeEmbed
-                    ? 'bg-red-50 text-red-600 border-red-200 hover:bg-red-100'
-                    : 'bg-slate-100 text-slate-600 border-slate-200 hover:bg-slate-200'
+                    ? 'bg-red-950 text-red-400 border-red-800 hover:bg-red-900'
+                    : 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700'
                 }`}
               >
-                {useYouTubeEmbed ? '▶ YT Stream' : '🎬 Canvas View'}
+                {useYouTubeEmbed ? '▶ YT Stream' : '🎬 Native View'}
               </button>
             )}
 
             {visualSettings.splitScreenEnabled && (
-              <span className="flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-red-50 text-red-600 border border-red-200">
+              <span className="flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-red-950 text-red-400 border border-red-800">
                 <SplitSquareVertical className="w-3 h-3" /> Split Screen
               </span>
             )}
           </div>
         </div>
 
-        {/* 9:16 Vertical Phone Mockup Container */}
-        <div 
+        {/* Viewport Container with Dynamic Aspect Ratio */}
+        <div
           ref={containerRef}
-          className="relative w-[280px] sm:w-[320px] aspect-[9/16] rounded-[38px] p-2.5 bg-gradient-to-b from-slate-800 via-slate-900 to-black shadow-2xl border-4 border-slate-700/60 overflow-hidden"
+          className={`relative ${containerAspectClass} rounded-[32px] p-2.5 bg-gradient-to-b from-slate-800 via-slate-900 to-black shadow-2xl border-4 border-slate-700/60 overflow-hidden transition-all duration-300`}
         >
-          {/* Top Notch */}
-          <div className="absolute top-4 left-1/2 -translate-x-1/2 z-30 w-24 h-4 rounded-full bg-black/90 flex items-center justify-center">
-            <div className="w-2.5 h-2.5 rounded-full bg-slate-900 border border-slate-700"></div>
-          </div>
+          {/* Top Notch for Phone Framing */}
+          {activeAspectRatio === '9:16' && (
+            <div className="absolute top-4 left-1/2 -translate-x-1/2 z-30 w-24 h-4 rounded-full bg-black/90 flex items-center justify-center">
+              <div className="w-2.5 h-2.5 rounded-full bg-slate-900 border border-slate-700" />
+            </div>
+          )}
 
-          {/* Inner Display */}
-          <div className="relative w-full h-full rounded-[30px] overflow-hidden bg-black flex flex-col items-center justify-center">
-            
-            {/* If YouTube URL and embed enabled: Stream live YouTube video */}
+          {/* Inner Display Viewport */}
+          <div className="relative w-full h-full rounded-[24px] overflow-hidden bg-black flex flex-col items-center justify-center">
+            {/* If YouTube URL and embed enabled */}
             {youtubeId && useYouTubeEmbed ? (
               <div className="absolute inset-0 w-full h-full overflow-hidden pointer-events-auto">
                 <iframe
-                  src={`https://www.youtube-nocookie.com/embed/${youtubeId}?autoplay=${isPlaying ? 1 : 0}&mute=${isMuted ? 1 : 0}&controls=0&loop=1&playlist=${youtubeId}&playsinline=1&rel=0&modestbranding=1`}
+                  src={`https://www.youtube-nocookie.com/embed/${youtubeId}?autoplay=${
+                    isPlaying ? 1 : 0
+                  }&mute=${isMuted ? 1 : 0}&controls=0&loop=1&playlist=${youtubeId}&playsinline=1&rel=0&modestbranding=1`}
                   className="w-full h-full object-cover scale-[1.35] pointer-events-none"
                   allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
                 />
               </div>
             ) : visualSettings.splitScreenEnabled && secondarySrc ? (
-              /* Feature 18: Split-Screen Viewport */
+              /* Split-Screen Viewport */
               <div className="w-full h-full flex flex-col">
-                {/* Top Video: Speaker (50%) */}
                 <div className="relative w-full h-1/2 overflow-hidden border-b-2 border-red-500/40">
                   <video
                     ref={videoRef}
@@ -257,7 +392,8 @@ export const VideoPreviewPlayer = forwardRef<VideoPreviewPlayerRef, VideoPreview
                     loop
                     onTimeUpdate={handleTimeUpdate}
                     onLoadedMetadata={handleLoadedMetadata}
-                    className="w-full h-full object-cover cursor-pointer"
+                    style={videoStyle}
+                    className="w-full h-full object-cover cursor-pointer transition-all duration-100 ease-out"
                     onClick={togglePlay}
                   />
                   <div className="absolute top-2 left-2 px-1.5 py-0.5 rounded bg-black/60 text-[9px] font-bold text-white uppercase tracking-wider backdrop-blur-sm">
@@ -265,7 +401,6 @@ export const VideoPreviewPlayer = forwardRef<VideoPreviewPlayerRef, VideoPreview
                   </div>
                 </div>
 
-                {/* Bottom Video: Satisfying Gameplay / Parkour (50%) */}
                 <div className="relative w-full h-1/2 overflow-hidden">
                   <video
                     ref={secondaryVideoRef}
@@ -282,7 +417,7 @@ export const VideoPreviewPlayer = forwardRef<VideoPreviewPlayerRef, VideoPreview
                 </div>
               </div>
             ) : (
-              /* Standard Full-Height Vertical 9:16 Video */
+              /* Standard Full-Frame Auto Reframe Video */
               <video
                 ref={videoRef}
                 src={videoUrl}
@@ -291,7 +426,8 @@ export const VideoPreviewPlayer = forwardRef<VideoPreviewPlayerRef, VideoPreview
                 loop
                 onTimeUpdate={handleTimeUpdate}
                 onLoadedMetadata={handleLoadedMetadata}
-                className={`absolute inset-0 w-full h-full object-cover cursor-pointer ${
+                style={videoStyle}
+                className={`absolute inset-0 w-full h-full object-cover cursor-pointer transition-all duration-100 ease-out ${
                   visualSettings.backgroundBlur ? 'blur-[1px]' : ''
                 }`}
                 onClick={togglePlay}
@@ -301,31 +437,30 @@ export const VideoPreviewPlayer = forwardRef<VideoPreviewPlayerRef, VideoPreview
             {/* Canvas Overlay for Dynamic Subtitles, Progress Bar, Watermark, & Stickers */}
             <canvas
               ref={canvasRef}
-              width={1080}
-              height={1920}
+              width={aspectConfig.width}
+              height={aspectConfig.height}
               className="absolute inset-0 w-full h-full pointer-events-none z-10"
             />
 
-            {/* Center Tap Play Button (when not using embedded iframe) */}
+            {/* Center Tap Play Button */}
             {!isPlaying && (!youtubeId || !useYouTubeEmbed) && (
-              <div 
+              <div
                 onClick={togglePlay}
                 className="absolute inset-0 z-20 flex items-center justify-center bg-black/30 backdrop-blur-[2px] cursor-pointer"
               >
-                <div className="w-16 h-16 rounded-full bg-red-600 text-white flex items-center justify-center shadow-lg shadow-red-600/50 hover:scale-110 transition-transform">
-                  <Play className="w-8 h-8 fill-white ml-1" />
+                <div className="w-16 h-16 rounded-full bg-cyan-500 text-slate-950 flex items-center justify-center shadow-lg shadow-cyan-500/50 hover:scale-110 transition-transform">
+                  <Play className="w-8 h-8 fill-slate-950 ml-1" />
                 </div>
               </div>
             )}
           </div>
         </div>
 
-        {/* Custom Modern Playback Controls Bar - Clean Light UI */}
-        <div className="w-full mt-4 p-3.5 rounded-2xl bg-white border border-slate-200 shadow-sm space-y-2.5">
-          
+        {/* Custom Playback Controls Bar */}
+        <div className="w-full mt-4 p-3.5 rounded-2xl bg-[#111827] border border-[#283344] shadow-sm space-y-2.5">
           {/* Scrub Slider */}
           <div className="flex items-center gap-3">
-            <span className="text-[11px] font-mono text-red-600 font-bold w-10">
+            <span className="text-[11px] font-mono text-cyan-400 font-bold w-10">
               {formatTime(currentTime)}
             </span>
             <input
@@ -335,7 +470,7 @@ export const VideoPreviewPlayer = forwardRef<VideoPreviewPlayerRef, VideoPreview
               step="0.05"
               value={currentTime}
               onChange={handleSeek}
-              className="flex-1 h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-red-600"
+              className="flex-1 h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-cyan-400"
             />
             <span className="text-[11px] font-mono text-slate-400 w-10 text-right">
               {formatTime(duration || 30)}
@@ -350,10 +485,14 @@ export const VideoPreviewPlayer = forwardRef<VideoPreviewPlayerRef, VideoPreview
                   togglePlay();
                   setIsPlaying(!isPlaying);
                 }}
-                className="p-2.5 rounded-xl bg-red-600 hover:bg-red-700 text-white shadow-sm shadow-red-600/20 transition-all cursor-pointer"
-                title={isPlaying ? "Pause" : "Play"}
+                className="p-2.5 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold shadow-sm shadow-cyan-500/20 transition-all cursor-pointer"
+                title={isPlaying ? 'Pause' : 'Play'}
               >
-                {isPlaying ? <Pause className="w-4 h-4 fill-white" /> : <Play className="w-4 h-4 fill-white ml-0.5" />}
+                {isPlaying ? (
+                  <Pause className="w-4 h-4 fill-slate-950" />
+                ) : (
+                  <Play className="w-4 h-4 fill-slate-950 ml-0.5" />
+                )}
               </button>
 
               <button
@@ -363,7 +502,7 @@ export const VideoPreviewPlayer = forwardRef<VideoPreviewPlayerRef, VideoPreview
                   }
                   setCurrentTime(0);
                 }}
-                className="p-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 transition-colors cursor-pointer"
+                className="p-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition-colors cursor-pointer"
                 title="Restart"
               >
                 <RotateCcw className="w-4 h-4" />
@@ -372,25 +511,23 @@ export const VideoPreviewPlayer = forwardRef<VideoPreviewPlayerRef, VideoPreview
 
             <div className="flex items-center gap-2">
               {audioSettings.studioSoundEnabled && (
-                <span className="text-[10px] px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 font-extrabold">
+                <span className="text-[10px] px-2.5 py-1 rounded-full bg-emerald-950/60 text-emerald-400 border border-emerald-800 font-extrabold">
                   Studio Sound ON
                 </span>
               )}
               <button
                 onClick={toggleMute}
-                className="p-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 transition-colors cursor-pointer"
-                title={isMuted ? "Unmute" : "Mute"}
+                className="p-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition-colors cursor-pointer"
+                title={isMuted ? 'Unmute' : 'Mute'}
               >
-                {isMuted ? <VolumeX className="w-4 h-4 text-red-600" /> : <Volume2 className="w-4 h-4" />}
+                {isMuted ? <VolumeX className="w-4 h-4 text-rose-400" /> : <Volume2 className="w-4 h-4" />}
               </button>
             </div>
           </div>
-
         </div>
-
       </div>
     );
   }
 );
 
-VideoPreviewPlayer.displayName = "VideoPreviewPlayer";
+VideoPreviewPlayer.displayName = 'VideoPreviewPlayer';

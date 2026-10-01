@@ -24,7 +24,10 @@ import {
   SocialPublishSettings, 
   AgencySettings,
   EditOperation,
-  Project
+  Project,
+  AspectRatio,
+  TrackingMode,
+  ReframeTrack,
 } from '@/lib/types';
 import { 
   DEMO_VIDEO_URL, 
@@ -76,6 +79,11 @@ export default function StudioPage() {
   // Subtitle styling using original Clipper preset 'signal'
   const [subtitleStyle, setSubtitleStyle] = useState<SubtitleStyle>(PRESET_STYLES.signal || PRESET_STYLES.impact);
 
+  // Auto Reframe State
+  const [reframeTrack, setReframeTrack] = useState<ReframeTrack | null>(null);
+  const [isReframeLoading, setIsReframeLoading] = useState(false);
+  const [reframeStatus, setReframeStatus] = useState('');
+
   // Visual layout settings
   const [visualSettings, setVisualSettings] = useState<VisualLayoutSettings>({
     splitScreenEnabled: false,
@@ -89,6 +97,10 @@ export default function StudioPage() {
     showIntroHook: true,
     introHookText: 'WAIT FOR THE DROP ⚡',
     backgroundBlur: false,
+    aspectRatio: '9:16',
+    trackingMode: 'center',
+    manualPosition: { x: 0.5, y: 0.5, zoom: 1.0 },
+    lockFraming: false,
   });
 
   // Audio settings
@@ -192,6 +204,48 @@ export default function StudioPage() {
       playerRef.current.seekTo(time);
       setCurrentTime(time);
     }
+  };
+
+  const handleTriggerReframe = async (mode: TrackingMode, ratio: AspectRatio) => {
+    setIsReframeLoading(true);
+    setReframeStatus(mode === 'smart' ? 'Analyzing frames & tracking subjects...' : 'Updating crop...');
+    try {
+      const res = await fetch('/api/reframe/track', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          videoUrl,
+          startTime: activeClip?.start || 0,
+          duration: activeClip?.duration || 30,
+          aspectRatio: ratio,
+          trackingMode: mode,
+          manualSettings: visualSettings.manualPosition,
+          locked: visualSettings.lockFraming,
+        }),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data.track) {
+          setReframeTrack(data.track);
+          setVisualSettings((prev) => ({
+            ...prev,
+            reframeTrack: data.track,
+            aspectRatio: ratio,
+            trackingMode: mode,
+          }));
+        }
+      }
+    } catch (err) {
+      console.warn('Could not compute reframe track:', err);
+    } finally {
+      setIsReframeLoading(false);
+      setReframeStatus('');
+    }
+  };
+
+  const handleInsertBroll = (brollOp: EditOperation) => {
+    setActiveCuts((prev) => [...prev.filter((c) => c.id !== brollOp.id), brollOp]);
   };
 
   const aiToolsList = [
@@ -430,6 +484,8 @@ export default function StudioPage() {
                   audioSettings={audioSettings}
                   isProUser={false}
                   clipStartTime={activeClip?.start || 0}
+                  reframeTrack={reframeTrack || visualSettings.reframeTrack}
+                  aspectRatio={visualSettings.aspectRatio}
                 />
               </div>
 
@@ -458,6 +514,10 @@ export default function StudioPage() {
                     settings={visualSettings}
                     onChange={(vs) => setVisualSettings(vs)}
                     bRollKeywords={activeClip?.bRollKeywords || ['business', 'creator', 'podcast']}
+                    onTriggerReframe={handleTriggerReframe}
+                    onInsertBroll={handleInsertBroll}
+                    isReframeLoading={isReframeLoading}
+                    reframeStatus={reframeStatus}
                   />
                 )}
 
@@ -466,6 +526,10 @@ export default function StudioPage() {
                     settings={visualSettings}
                     onChange={(vs) => setVisualSettings(vs)}
                     bRollKeywords={activeClip?.bRollKeywords || ['business', 'growth', 'marketing', 'tech']}
+                    onTriggerReframe={handleTriggerReframe}
+                    onInsertBroll={handleInsertBroll}
+                    isReframeLoading={isReframeLoading}
+                    reframeStatus={reframeStatus}
                   />
                 )}
 
@@ -495,6 +559,7 @@ export default function StudioPage() {
                 onSeek={handleJumpToTime}
                 cuts={activeCuts}
                 words={words}
+                reframeTrack={reframeTrack || visualSettings.reframeTrack}
               />
             </div>
 
@@ -512,6 +577,9 @@ export default function StudioPage() {
         subtitleStyle={subtitleStyle}
         visualSettings={visualSettings}
         isProUser={false}
+        reframeTrack={reframeTrack || visualSettings.reframeTrack}
+        aspectRatio={visualSettings.aspectRatio}
+        cuts={activeCuts}
       />
 
       {/* Creation Modal */}

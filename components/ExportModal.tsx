@@ -3,7 +3,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Download, Sparkles, X, Check, Crown, AlertCircle, RefreshCw } from 'lucide-react';
 import confetti from 'canvas-confetti';
-import { ViralClip, SubtitleStyle, VisualLayoutSettings } from '@/lib/types';
+import { ViralClip, SubtitleStyle, VisualLayoutSettings, EditOperation } from '@/lib/types';
+import { AspectRatio, ReframeTrack } from '@/lib/reframe/types';
 
 interface ExportModalProps {
   isOpen: boolean;
@@ -17,6 +18,9 @@ interface ExportModalProps {
   visualSettings?: VisualLayoutSettings;
   videoElement?: HTMLVideoElement | null;
   canvasElement?: HTMLCanvasElement | null;
+  reframeTrack?: ReframeTrack;
+  aspectRatio?: AspectRatio;
+  cuts?: EditOperation[];
 }
 
 export const ExportModal: React.FC<ExportModalProps> = ({
@@ -29,6 +33,9 @@ export const ExportModal: React.FC<ExportModalProps> = ({
   sourceUrl,
   subtitleStyle,
   visualSettings,
+  reframeTrack,
+  aspectRatio,
+  cuts,
 }) => {
   const [isRendering, setIsRendering] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -59,21 +66,33 @@ export const ExportModal: React.FC<ExportModalProps> = ({
     setDownloadUrl(null);
 
     try {
+      const activeCutsList = cuts || activeClip?.cuts || [];
+      const resolvedReframe = reframeTrack || visualSettings?.reframeTrack;
+      const resolvedAspect = aspectRatio || visualSettings?.aspectRatio || resolvedReframe?.aspectRatio || '9:16';
+
       // 1. Submit render job to backend
       const res = await fetch('/api/render', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          clip: activeClip || {
-            id: 'clip-default',
-            start: 0,
-            duration: 30,
-            words: [],
+          clip: {
+            ...(activeClip || {
+              id: 'clip-default',
+              start: 0,
+              duration: 30,
+              words: [],
+            }),
+            cuts: activeCutsList,
           },
           sourceUrl: activeMedia,
           subtitleStyle,
           visualSettings,
           isProUser,
+          reframeTrack: resolvedReframe,
+          aspectRatio: resolvedAspect,
+          trackingMode: visualSettings?.trackingMode,
+          manualSettings: visualSettings?.manualPosition,
+          brollOperations: activeCutsList.filter((c) => c.type === 'BROLL'),
         }),
       });
 

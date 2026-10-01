@@ -1,7 +1,19 @@
 import fs from 'fs';
 import path from 'path';
 import { spawn } from 'child_process';
-import { WordTimestamp, SubtitleStyle, VisualLayoutSettings } from './types';
+import { WordTimestamp, SubtitleStyle, VisualLayoutSettings, EditOperation } from './types';
+import {
+  AspectRatio,
+  TrackingMode,
+  ManualReframeSettings,
+  ReframeTrack,
+  ASPECT_RATIO_CONFIGS,
+} from './reframe/types';
+import {
+  extractVideoMetadata,
+  generateReframeTrack,
+  buildFfmpegReframeCropFilter,
+} from './reframe/reframeEngine';
 
 // Statically resolve ffmpeg binary without Turbopack require issues
 export function getFfmpegPath(): string {
@@ -35,6 +47,11 @@ export interface RenderClipOptions {
   subtitleStyle?: SubtitleStyle;
   visualSettings?: VisualLayoutSettings;
   isProUser?: boolean;
+  reframeTrack?: ReframeTrack;
+  aspectRatio?: AspectRatio;
+  trackingMode?: TrackingMode;
+  manualSettings?: ManualReframeSettings;
+  brollOperations?: EditOperation[];
 }
 
 export interface RenderResult {
@@ -80,35 +97,51 @@ export function generateAssSubtitleFile(params: {
   visualSettings?: VisualLayoutSettings;
   isProUser?: boolean;
   outputPath: string;
+  targetWidth?: number;
+  targetHeight?: number;
 }): void {
-  const { words, clipStartTime, style, visualSettings, isProUser, outputPath } = params;
+  const {
+    words,
+    clipStartTime,
+    style,
+    visualSettings,
+    isProUser,
+    outputPath,
+    targetWidth = 1080,
+    targetHeight = 1920,
+  } = params;
 
   const fontName = style?.fontFamily || 'Arial Black';
-  const fontSize = style?.fontSize ? Math.round(style.fontSize * 1.5) : 68;
+  const baseScale = targetHeight / 1920;
+  const fontSize = style?.fontSize
+    ? Math.round(style.fontSize * 1.5 * baseScale)
+    : Math.round(68 * baseScale);
   const primaryColor = hexToAssColor(style?.primaryColor || '#FFFFFF');
   const highlightColor = hexToAssColor(style?.highlightColor || '#FACC15');
   const outlineColor = hexToAssColor(style?.strokeColor || '#000000');
-  const strokeWidth = style?.strokeWidth ? Math.min(8, Math.max(2, style.strokeWidth)) : 4;
+  const strokeWidth = style?.strokeWidth
+    ? Math.min(8, Math.max(2, Math.round(style.strokeWidth * baseScale)))
+    : 4;
 
-  // MarginV for 9:16 vertical placement
-  let marginV = 360;
+  // MarginV relative to targetHeight
+  let marginV = Math.round(targetHeight * 0.18); // bottom
   if (style?.position === 'top') {
-    marginV = 1350;
+    marginV = Math.round(targetHeight * 0.75);
   } else if (style?.position === 'middle') {
-    marginV = 880;
+    marginV = Math.round(targetHeight * 0.46);
   }
 
   const assContent: string[] = [
     '[Script Info]',
     'ScriptType: v4.00+',
-    'PlayResX: 1080',
-    'PlayResY: 1920',
+    `PlayResX: ${targetWidth}`,
+    `PlayResY: ${targetHeight}`,
     'ScaledBorderAndShadow: yes',
     '',
     '[V4+ Styles]',
     'Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding',
     `Style: Default,${fontName},${fontSize},${primaryColor},${highlightColor},${outlineColor},&H80000000,-1,0,0,0,100,100,0,0,1,${strokeWidth},2,2,40,40,${marginV},1`,
-    `Style: Watermark,Arial,32,&H70FFFFFF,&H00000000,&H90000000,&H80000000,0,0,0,0,100,100,0,0,1,2,1,2,40,40,60,1`,
+    `Style: Watermark,Arial,${Math.round(32 * baseScale)},&H70FFFFFF,&H00000000,&H90000000,&H80000000,0,0,0,0,100,100,0,0,1,2,1,2,40,40,60,1`,
     '',
     '[Events]',
     'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text',
@@ -177,18 +210,37 @@ async function resolveLocalMediaInput(inputUrl: string, tempDir: string): Promis
     return publicCandidate;
   }
 
+  // Try data folder
+  const dataCandidate = path.join(process.cwd(), 'data', inputUrl.replace(/^(\/)?(data\/)?/, ''));
+  if (fs.existsSync(dataCandidate)) {
+    return dataCandidate;
+  }
+
   throw new Error(`Media source could not be resolved: ${inputUrl}`);
 }
 
 /**
- * Renders an exact 9:16 vertical short with real FFmpeg composition and burned-in subtitles.
+ * Renders an exact reframed video with real FFmpeg subject tracking and burned-in subtitles.
  */
 export async function renderClipWithFfmpeg(
   jobId: string,
   options: RenderClipOptions,
   onProgress?: (progress: number, stage: string) => void
 ): Promise<RenderResult> {
-  const { inputMedia, startTime, duration, words, subtitleStyle, visualSettings, isProUser } = options;
+  const {
+    inputMedia,
+    startTime,
+    duration,
+    words,
+    subtitleStyle,
+    visualSettings,
+    isProUser,
+    reframeTrack: explicitReframeTrack,
+    aspectRatio: explicitAspect,
+    trackingMode: explicitTrackingMode,
+    manualSettings: explicitManualSettings,
+    brollOperations = [],
+  } = options;
 
   const tempDir = path.join(process.cwd(), 'data', 'temp_renders', jobId);
   const exportsDir = path.join(process.cwd(), 'public', 'exports');
@@ -200,26 +252,62 @@ export async function renderClipWithFfmpeg(
   const assFilePath = path.join(tempDir, 'subtitles.ass');
 
   try {
-    // Stage 1: Preparing (0 - 15%)
+    // Stage 1: Preparing workspace
     onProgress?.(10, 'Preparing render workspace & fonts...');
 
-    // Stage 2: Sourcing media (15 - 35%)
+    // Stage 2: Sourcing media
     onProgress?.(20, 'Acquiring source video media...');
     let localInputPath: string;
     try {
       localInputPath = await resolveLocalMediaInput(inputMedia, tempDir);
-    } catch {
-      // Fallback to high quality synthetic 1080x1920 base if URL cannot be streamed directly
-      localInputPath = path.join(tempDir, 'synth_base.mp4');
-      const createSynthCmd = `${ffmpegPath} -y -f lavfi -i color=c=0x1E1E2E:s=1080x1920:d=${Math.ceil(
-        duration
-      )} -f lavfi -i anullsrc=r=44100:cl=stereo -c:v libx264 -c:a aac -shortest ${localInputPath}`;
-      const { execSync } = require('child_process');
-      execSync(createSynthCmd);
+    } catch (err: any) {
+      // Production Rule: Never generate fake/synthetic color boxes when real media is missing!
+      throw new Error(
+        `Cannot render clip: Source media file could not be acquired or is missing (${err.message}). Synthetic fallback is disabled in production.`
+      );
     }
 
-    // Stage 3: Preparing subtitles (35 - 50%)
-    onProgress?.(40, 'Generating word-synchronized subtitle timeline...');
+    // Determine target aspect ratio and tracking mode
+    const targetAspect: AspectRatio =
+      explicitAspect ||
+      explicitReframeTrack?.aspectRatio ||
+      visualSettings?.aspectRatio ||
+      '9:16';
+
+    const trackingMode: TrackingMode =
+      explicitTrackingMode ||
+      explicitReframeTrack?.trackingMode ||
+      visualSettings?.trackingMode ||
+      'center';
+
+    const manualSettings =
+      explicitManualSettings ||
+      explicitReframeTrack?.manualSettings ||
+      visualSettings?.manualPosition ||
+      { x: 0.5, y: 0.5, zoom: 1.0 };
+
+    // Stage 3: Resolving Reframe Track
+    onProgress?.(30, `Calculating subject tracking & ${targetAspect} crop path...`);
+
+    let reframeTrack: ReframeTrack;
+    if (explicitReframeTrack && explicitReframeTrack.aspectRatio === targetAspect) {
+      reframeTrack = explicitReframeTrack;
+    } else {
+      reframeTrack = await generateReframeTrack({
+        videoPath: localInputPath,
+        startTime,
+        duration,
+        aspectRatio: targetAspect,
+        trackingMode,
+        manualSettings,
+        locked: visualSettings?.lockFraming,
+      });
+    }
+
+    const { targetWidth, targetHeight } = reframeTrack;
+
+    // Stage 4: Preparing subtitles with correct aspect geometry
+    onProgress?.(45, 'Generating word-synchronized subtitle timeline...');
     generateAssSubtitleFile({
       words,
       clipStartTime: startTime,
@@ -227,20 +315,20 @@ export async function renderClipWithFfmpeg(
       visualSettings,
       isProUser,
       outputPath: assFilePath,
+      targetWidth,
+      targetHeight,
     });
 
-    // Stage 4: Composition & Rendering (50 - 90%)
-    onProgress?.(55, 'Composing 9:16 vertical frame & burning subtitles...');
+    // Stage 5: Build Reframe Crop Filtergraph
+    onProgress?.(55, `Composing ${targetAspect} frame (${targetWidth}x${targetHeight}) & burning subtitles...`);
 
-    // Construct filtergraph
-    // 1. Center crop and scale to 1080x1920
-    // 2. Burn in ASS subtitles
-    // Escape ASS path for FFmpeg filter syntax
+    const cropFilter = buildFfmpegReframeCropFilter(reframeTrack);
     const escapedAssPath = assFilePath.replace(/\\/g, '/').replace(/:/g, '\\:');
     
-    // Video filter: crop/scale to 1080x1920 and burn subtitles
-    const videoFilter = `scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,ass='${escapedAssPath}'`;
+    // Combine crop + subtitle burn-in
+    let videoFilter = `${cropFilter},ass='${escapedAssPath}'`;
 
+    // Stage 6: Render via FFmpeg
     const args = [
       '-y',
       '-ss', startTime.toFixed(2),
@@ -263,15 +351,14 @@ export async function renderClipWithFfmpeg(
 
       child.stderr.on('data', (data) => {
         const text = data.toString();
-        // Parse time=HH:MM:SS.ms to compute real percentage
         const timeMatch = text.match(/time=(\d{2}):(\d{2}):(\d{2}\.\d{2})/);
         if (timeMatch && duration > 0) {
           const currentSecs =
             parseInt(timeMatch[1], 10) * 3600 +
             parseInt(timeMatch[2], 10) * 60 +
             parseFloat(timeMatch[3]);
-          const renderProgress = Math.min(95, Math.max(50, 50 + Math.round((currentSecs / duration) * 45)));
-          onProgress?.(renderProgress, 'Encoding vertical H.264 video frames...');
+          const renderProgress = Math.min(95, Math.max(55, 55 + Math.round((currentSecs / duration) * 40)));
+          onProgress?.(renderProgress, `Encoding ${targetAspect} H.264 video frames...`);
         }
       });
 
@@ -288,7 +375,7 @@ export async function renderClipWithFfmpeg(
       });
     });
 
-    // Stage 5: Finalizing (90 - 100%)
+    // Stage 7: Finalizing
     onProgress?.(95, 'Finalizing MP4 file & audio streams...');
 
     if (!fs.existsSync(finalMp4Path)) {

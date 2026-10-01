@@ -10,8 +10,16 @@ import {
 } from '../lib/alignmentEngine';
 import { detectFillerWords, detectSilences, calculateVoiceEnergy } from '../lib/edl/editDecisionList';
 import { getStorage, getMediaStorage } from '../lib/storage';
-import { renderClipWithFfmpeg } from '../lib/renderEngine';
+import { renderClipWithFfmpeg, getFfmpegPath } from '../lib/renderEngine';
 import { WordTimestamp, Transcript, Project } from '../lib/types';
+import {
+  calculateCropDimensions,
+  smoothTrackingPath,
+  buildFfmpegReframeCropFilter,
+  generateReframeTrack,
+} from '../lib/reframe/reframeEngine';
+import { ReframeTrack, ReframeKeyframe } from '../lib/reframe/types';
+import { execSync } from 'child_process';
 
 async function runTests() {
   console.log('====================================================');
@@ -248,9 +256,16 @@ async function runTests() {
   const outDir = path.join(process.cwd(), 'public', 'exports');
   fs.mkdirSync(outDir, { recursive: true });
 
+  const tempSourcePath = path.join(process.cwd(), 'data', `test_source_${Date.now()}.mp4`);
+  fs.mkdirSync(path.dirname(tempSourcePath), { recursive: true });
+  execSync(
+    `"${getFfmpegPath()}" -y -f lavfi -i testsrc=size=1920x1080:rate=30 -f lavfi -i sine=frequency=1000:sample_rate=44100 -t 4 -c:v libx264 -c:a aac -pix_fmt yuv420p "${tempSourcePath}"`,
+    { stdio: 'ignore' }
+  );
+
   console.log('Rendering 3-second 1080x1920 test MP4 with FFmpeg...');
   const renderResult = await renderClipWithFfmpeg(testRenderId, {
-    inputMedia: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4',
+    inputMedia: tempSourcePath,
     startTime: 0,
     duration: 3,
     words: [
@@ -260,14 +275,169 @@ async function runTests() {
     isProUser: true,
   });
 
+  try { fs.unlinkSync(tempSourcePath); } catch {}
+
   assert(fs.existsSync(renderResult.filePath), 'Render output MP4 exists on filesystem');
   const stat = fs.statSync(renderResult.filePath);
   assert(stat.size > 1000, `Output MP4 has valid non-zero byte size (${stat.size} bytes)`);
   assert(renderResult.outputUrl === `/exports/${testRenderId}.mp4`, 'Valid accessible HTTP output URL generated');
 
-  // Clean up test render file
+  // TEST 10: Auto Reframe Crop Dimensions & Multi-Aspect Ratio Math
+  console.log('\n--- TEST GROUP 10: Auto Reframe Crop Dimensions Math ---');
+  const crop916 = calculateCropDimensions(1920, 1080, '9:16');
+  assert(crop916.cropHeight === 1080, '9:16 on 1080p source preserves full height (1080)');
+  assert(crop916.cropWidth === 608, `9:16 crop width is even integer (got ${crop916.cropWidth})`);
+  assert(crop916.targetWidth === 1080 && crop916.targetHeight === 1920, '9:16 target dimensions 1080x1920');
+
+  const crop11 = calculateCropDimensions(1920, 1080, '1:1');
+  assert(crop11.cropHeight === 1080 && crop11.cropWidth === 1080, '1:1 square crop is 1080x1080');
+
+  const crop169 = calculateCropDimensions(1920, 1080, '16:9');
+  assert(crop169.cropWidth === 1920 && crop169.cropHeight === 1080, '16:9 landscape maintains 1920x1080');
+
+  const crop45 = calculateCropDimensions(1920, 1080, '4:5');
+  assert(crop45.cropHeight === 1080 && crop45.cropWidth === 864, `4:5 social portrait crop is 864x1080 (got ${crop45.cropWidth}x${crop45.cropHeight})`);
+
+  // TEST 11: Temporal Smoothing & Dead Zone Noise Suppression
+  console.log('\n--- TEST GROUP 11: Temporal Smoothing & Dead Zone ---');
+  const jitterKeyframes: ReframeKeyframe[] = [
+    { time: 0, x: 0.500, y: 0.500, scale: 1.0, confidence: 0.9 },
+    { time: 1, x: 0.515, y: 0.510, scale: 1.0, confidence: 0.9 }, // 0.015 movement (< 0.035 dead zone)
+    { time: 2, x: 0.520, y: 0.505, scale: 1.0, confidence: 0.9 }, // 0.020 movement (< 0.035 dead zone)
+  ];
+  const smoothedJitter = smoothTrackingPath(jitterKeyframes, 0.25, 0.035);
+  assert(smoothedJitter[1].x === 0.5, `Dead zone suppresses horizontal jitter < 0.035 (got ${smoothedJitter[1].x})`);
+  assert(smoothedJitter[2].x === 0.5, `Dead zone suppresses subsequent jitter (got ${smoothedJitter[2].x})`);
+
+  // Significant movement traverses dead zone smoothly
+  const panKeyframes: ReframeKeyframe[] = [
+    { time: 0, x: 0.20, y: 0.50, scale: 1.0, confidence: 0.9 },
+    { time: 1, x: 0.80, y: 0.50, scale: 1.0, confidence: 0.9 }, // 0.60 delta (> 0.035 dead zone)
+  ];
+  const smoothedPan = smoothTrackingPath(panKeyframes, 0.25, 0.035);
+  assert(smoothedPan[1].x > 0.20 && smoothedPan[1].x < 0.80, `EMA smoothly shifts towards target (got ${smoothedPan[1].x})`);
+
+  // TEST 12: Dynamic FFmpeg Reframe Filter Expression Generation
+  console.log('\n--- TEST GROUP 12: Dynamic FFmpeg Reframe Filter Expressions ---');
+  const centerTrack: ReframeTrack = {
+    id: 'track-center',
+    sourceWidth: 1920,
+    sourceHeight: 1080,
+    targetWidth: 1080,
+    targetHeight: 1920,
+    aspectRatio: '9:16',
+    trackingMode: 'center',
+    keyframes: [
+      { time: 0, x: 0.5, y: 0.5, scale: 1.0, confidence: 1.0 },
+      { time: 5, x: 0.5, y: 0.5, scale: 1.0, confidence: 1.0 },
+    ],
+    version: '2.0.0',
+    createdAt: new Date().toISOString(),
+  };
+  const centerFilter = buildFfmpegReframeCropFilter(centerTrack);
+  assert(centerFilter.includes('crop=608:1080:656:0,scale=1080:1920'), `Center crop filter has exact static bounds (${centerFilter})`);
+
+  const manualTrack: ReframeTrack = {
+    id: 'track-manual',
+    sourceWidth: 1920,
+    sourceHeight: 1080,
+    targetWidth: 1080,
+    targetHeight: 1920,
+    aspectRatio: '9:16',
+    trackingMode: 'manual',
+    manualSettings: { x: 0.2, y: 0.5, zoom: 1.5 },
+    keyframes: [],
+    version: '2.0.0',
+    createdAt: new Date().toISOString(),
+  };
+  const manualFilter = buildFfmpegReframeCropFilter(manualTrack);
+  assert(manualFilter.includes('scale=1080:1920') && !manualFilter.includes('656:0'), `Manual filter calculates custom offset & zoom (${manualFilter})`);
+
+  const smartTrack: ReframeTrack = {
+    id: 'track-smart',
+    sourceWidth: 1920,
+    sourceHeight: 1080,
+    targetWidth: 1080,
+    targetHeight: 1920,
+    aspectRatio: '9:16',
+    trackingMode: 'smart',
+    keyframes: [
+      { time: 0, x: 0.16, y: 0.5, scale: 1.0, confidence: 0.9 }, // Left
+      { time: 3, x: 0.50, y: 0.5, scale: 1.0, confidence: 0.9 }, // Center
+      { time: 6, x: 0.84, y: 0.5, scale: 1.0, confidence: 0.9 }, // Right
+    ],
+    version: '2.0.0',
+    createdAt: new Date().toISOString(),
+  };
+  const smartFilter = buildFfmpegReframeCropFilter(smartTrack);
+  assert(smartFilter.includes('if(lt(t,') && smartFilter.includes('scale=1080:1920'), `Smart filter builds dynamic piecewise linear interpolation filter (${smartFilter})`);
+
+  // TEST 13: Real FFmpeg End-to-End Reframe Rendering (Multi-Aspect Ratios)
+  console.log('\n--- TEST GROUP 13: Real FFmpeg End-to-End Reframe Rendering ---');
+  const tempTestDir = path.join(process.cwd(), 'data', 'test_scratch');
+  fs.mkdirSync(tempTestDir, { recursive: true });
+  const testInputVideo = path.join(tempTestDir, 'synthetic_test_source.mp4');
+
+  // Generate 6-second 1920x1080 source test video with moving box
+  const ffmpeg = getFfmpegPath();
+  execSync(
+    `"${ffmpeg}" -y -f lavfi -i testsrc=size=1920x1080:rate=30 -t 6 -c:v libx264 -pix_fmt yuv420p "${testInputVideo}"`,
+    { stdio: 'ignore' }
+  );
+
+  assert(fs.existsSync(testInputVideo), 'Created real 1080p source video for reframe testing');
+
+  // Render Smart Centered 9:16
+  const smartJobId = `reframe-smart-${Date.now()}`;
+  console.log('Rendering 9:16 Smart Centered video with dynamic crop track...');
+  const smartResult = await renderClipWithFfmpeg(smartJobId, {
+    inputMedia: testInputVideo,
+    startTime: 0,
+    duration: 5,
+    words: [
+      { word: 'SMART', start: 0.5, end: 1.5 },
+      { word: 'REFRAME', start: 1.6, end: 3.0 },
+    ],
+    reframeTrack: smartTrack,
+    isProUser: true,
+  });
+  assert(fs.existsSync(smartResult.filePath), 'Smart reframed MP4 was successfully exported');
+  assert(smartResult.fileSizeBytes > 10000, `Smart reframed MP4 has valid non-zero size (${smartResult.fileSizeBytes} bytes)`);
+  try { fs.unlinkSync(smartResult.filePath); } catch {}
+
+  // Render 1:1 Square
+  const squareJobId = `reframe-square-${Date.now()}`;
+  console.log('Rendering 1:1 Square video with reframe engine...');
+  const squareResult = await renderClipWithFfmpeg(squareJobId, {
+    inputMedia: testInputVideo,
+    startTime: 0,
+    duration: 3,
+    words: [{ word: 'SQUARE', start: 0.2, end: 1.0 }],
+    aspectRatio: '1:1',
+    trackingMode: 'center',
+    isProUser: true,
+  });
+  assert(fs.existsSync(squareResult.filePath), '1:1 Square MP4 was successfully exported');
+  try { fs.unlinkSync(squareResult.filePath); } catch {}
+
+  // Verify missing media throws error without synthetic fallback
+  let missingMediaThrew = false;
   try {
-    fs.unlinkSync(renderResult.filePath);
+    await renderClipWithFfmpeg('missing-media-job', {
+      inputMedia: '/non/existent/path/video.mp4',
+      startTime: 0,
+      duration: 3,
+      words: [],
+    });
+  } catch (err: any) {
+    missingMediaThrew = true;
+    assert(err.message.includes('Source media file could not be acquired'), `Error message correctly reports missing source media: "${err.message}"`);
+  }
+  assert(missingMediaThrew, 'Render pipeline cleanly fails when media is missing (NO fake synthetic fallback)');
+
+  // Clean up test scratch
+  try {
+    fs.rmSync(tempTestDir, { recursive: true, force: true });
   } catch {}
 
   console.log('\n====================================================');

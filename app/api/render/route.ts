@@ -2,10 +2,24 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createRenderJob, startRenderWorkerAsync } from '@/lib/renderJobs';
 import { RenderClipOptions } from '@/lib/renderEngine';
 
+import fs from 'fs';
+import path from 'path';
+
 /**
  * Validates media URL to prevent SSRF and protocol spoofing
  */
 function isValidMediaUrl(urlStr: string): boolean {
+  // Allow local file paths and internal public/upload paths
+  if (
+    fs.existsSync(urlStr) ||
+    urlStr.startsWith('/') ||
+    urlStr.startsWith('./') ||
+    urlStr.startsWith('data/') ||
+    urlStr.startsWith('public/')
+  ) {
+    return true;
+  }
+
   try {
     const parsed = new URL(urlStr);
     if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
@@ -40,6 +54,11 @@ export async function POST(req: NextRequest) {
       subtitleStyle,
       visualSettings,
       isProUser = false,
+      reframeTrack,
+      aspectRatio,
+      trackingMode,
+      manualSettings,
+      brollOperations,
     } = body;
 
     if (!clip || typeof clip.start !== 'number' || typeof clip.duration !== 'number') {
@@ -87,6 +106,12 @@ export async function POST(req: NextRequest) {
       inputUrl: candidateMedia,
     });
 
+    const resolvedReframe = reframeTrack || visualSettings?.reframeTrack;
+    const resolvedAspect = aspectRatio || visualSettings?.aspectRatio || resolvedReframe?.aspectRatio;
+    const resolvedTracking = trackingMode || visualSettings?.trackingMode || resolvedReframe?.trackingMode;
+    const resolvedManual = manualSettings || visualSettings?.manualPosition || resolvedReframe?.manualSettings;
+    const resolvedBroll = brollOperations || (clip.cuts ? clip.cuts.filter((c: any) => c.type === 'BROLL') : []);
+
     const renderOptions: RenderClipOptions = {
       inputMedia: candidateMedia,
       startTime: clip.start,
@@ -95,6 +120,11 @@ export async function POST(req: NextRequest) {
       subtitleStyle,
       visualSettings,
       isProUser,
+      reframeTrack: resolvedReframe,
+      aspectRatio: resolvedAspect,
+      trackingMode: resolvedTracking,
+      manualSettings: resolvedManual,
+      brollOperations: resolvedBroll,
     };
 
     // 2. Launch background rendering worker (non-blocking)
