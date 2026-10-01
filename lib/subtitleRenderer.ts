@@ -181,22 +181,51 @@ export function renderSubtitlesOnCanvas(
           ctx.scale(wordScale, wordScale);
           ctx.translate(-wordCenterX, -yPos);
 
-          ctx.strokeStyle = style.strokeColor;
-          ctx.lineWidth = style.strokeWidth * scale * 2.2;
-          ctx.strokeText(text, wordCenterX, yPos);
+          // Draw background badge (e.g. Kendrick neon green or Dan yellow)
+          if (style.badgeColor) {
+            const padX = 16 * scale;
+            const padY = 8 * scale;
+            const boxW = width + padX * 2;
+            const boxH = fontSize * 1.35 + padY;
+            const boxX = wordCenterX - boxW / 2;
+            const boxY = yPos - boxH / 2;
 
-          ctx.fillStyle = style.highlightColor;
-          ctx.fillText(text, wordCenterX, yPos);
+            ctx.fillStyle = style.badgeColor;
+            ctx.shadowColor = 'rgba(0, 0, 0, 0.4)';
+            ctx.shadowBlur = 8 * scale;
+            ctx.beginPath();
+            ctx.roundRect(boxX, boxY, boxW, boxH, 8 * scale);
+            ctx.fill();
+            ctx.shadowBlur = 0;
+          }
 
-          if (style.animation === 'glow') {
+          if (style.strokeWidth > 0 && !style.badgeColor) {
+            ctx.strokeStyle = style.strokeColor;
+            ctx.lineWidth = style.strokeWidth * scale * 2.2;
+            ctx.strokeText(text, wordCenterX, yPos);
+          }
+
+          if (style.shadowColor) {
+            ctx.shadowColor = style.shadowColor;
+            ctx.shadowBlur = (style.shadowBlur || 14) * scale;
+          } else if (style.animation === 'glow') {
             ctx.shadowColor = style.highlightColor;
             ctx.shadowBlur = 18 * scale;
-            ctx.fillText(text, wordCenterX, yPos);
           }
+
+          ctx.fillStyle = style.badgeTextColor || style.highlightColor;
+          ctx.fillText(text, wordCenterX, yPos);
         } else {
-          ctx.strokeStyle = style.strokeColor;
-          ctx.lineWidth = style.strokeWidth * scale * 1.8;
-          ctx.strokeText(text, wordCenterX, yPos);
+          if (style.strokeWidth > 0) {
+            ctx.strokeStyle = style.strokeColor;
+            ctx.lineWidth = style.strokeWidth * scale * 1.8;
+            ctx.strokeText(text, wordCenterX, yPos);
+          }
+
+          if (style.shadowColor) {
+            ctx.shadowColor = style.shadowColor;
+            ctx.shadowBlur = 8 * scale;
+          }
 
           ctx.fillStyle = style.primaryColor;
           ctx.fillText(text, wordCenterX, yPos);

@@ -1,5 +1,25 @@
 [
   {
+    "projectId": "proj-MxAbaaEvLr8",
+    "serviceName": "gemini_flash",
+    "model": "gemini-2.5-flash",
+    "unitsUsed": 10191,
+    "unitType": "tokens",
+    "costInUSD": 0.0008,
+    "isEstimated": true,
+    "id": "telemetry-1790837580546"
+  },
+  {
+    "projectId": "proj-MxAbaaEvLr8",
+    "serviceName": "gemini_flash",
+    "model": "gemini-2.5-flash",
+    "unitsUsed": 10191,
+    "unitType": "tokens",
+    "costInUSD": 0.0008,
+    "isEstimated": true,
+    "id": "telemetry-1790837508967"
+  },
+  {
     "projectId": "proj-B_9c1hJGCsw",
     "serviceName": "gemini_flash",
     "model": "gemini-2.5-flash",

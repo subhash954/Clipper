@@ -46,6 +46,8 @@ export interface EditOperation {
   confidence?: number;
   enabled: boolean;
   word?: string;
+  label?: string;
+  mediaUrl?: string;
 }
 
 export interface ViralClip {
@@ -188,7 +190,7 @@ export interface BrollAsset {
   height?: number;
 }
 
-// Original Clipper Caption Presets (Section 16: Signal, Punch, Minimal, Focus, Studio, Kinetic, Mono, Highlight)
+// Original Clipper & Modern Creator Caption Presets
 export type SubtitlePreset = 
   | 'signal' 
   | 'punch' 
@@ -202,7 +204,16 @@ export type SubtitlePreset =
   | 'pulse' 
   | 'clean' 
   | 'bold' 
-  | 'neon';
+  | 'neon'
+  | 'kendrick'
+  | 'hormozi'
+  | 'adrian'
+  | 'nora'
+  | 'benie'
+  | 'dan'
+  | 'beast'
+  | 'ella';
+
 export type SubtitleLanguage = 'en' | 'hi' | 'es' | 'fr' | 'de';
 
 export interface SubtitleStyle {
@@ -221,6 +232,10 @@ export interface SubtitleStyle {
   showDualLanguage: boolean;
   translatedText?: string;
   enableSFX: boolean;
+  badgeColor?: string;
+  badgeTextColor?: string;
+  shadowColor?: string;
+  shadowBlur?: number;
 }
 
 import { AspectRatio, TrackingMode, ManualReframeSettings, ReframeTrack } from './reframe/types';
@@ -243,6 +258,12 @@ export interface VisualLayoutSettings {
   manualPosition?: ManualReframeSettings;
   lockFraming?: boolean;
   reframeTrack?: ReframeTrack;
+  autoZoomsEnabled?: boolean;
+  autoBrollEnabled?: boolean;
+  removeSilencesEnabled?: boolean;
+  cleanAudioEnabled?: boolean;
+  removeBadTakesEnabled?: boolean;
+  correctEyeContactEnabled?: boolean;
 }
 
 export interface AudioStudioSettings {

@@ -1,8 +1,24 @@
 'use client';
 
 import React, { useRef, useEffect, useState, forwardRef, useImperativeHandle, useMemo } from 'react';
-import { Play, Pause, RotateCcw, Volume2, VolumeX, Smartphone, SplitSquareVertical, Crosshair } from 'lucide-react';
-import { WordTimestamp, SubtitleStyle, VisualLayoutSettings, AudioStudioSettings } from '@/lib/types';
+import {
+  Play,
+  Pause,
+  RotateCcw,
+  Volume2,
+  VolumeX,
+  Smartphone,
+  SplitSquareVertical,
+  Crosshair,
+  Sparkles,
+  Music2,
+  Image as ImageIcon,
+  Maximize2,
+  Eye,
+  Sliders,
+  ChevronDown,
+} from 'lucide-react';
+import { WordTimestamp, SubtitleStyle, VisualLayoutSettings, AudioStudioSettings, EditOperation } from '@/lib/types';
 import { AspectRatio, ReframeTrack, ReframeKeyframe, ASPECT_RATIO_CONFIGS } from '@/lib/reframe/types';
 import { renderSubtitlesOnCanvas } from '@/lib/subtitleRenderer';
 import { SATISFYING_VIDEO_URLS } from '@/lib/sampleData';
@@ -19,6 +35,9 @@ interface VideoPreviewPlayerProps {
   onTimeUpdate?: (time: number) => void;
   reframeTrack?: ReframeTrack;
   aspectRatio?: AspectRatio;
+  cuts?: EditOperation[];
+  onAspectRatioChange?: (ratio: AspectRatio) => void;
+  onNavigateToTab?: (tab: string) => void;
 }
 
 export interface VideoPreviewPlayerRef {
@@ -83,6 +102,9 @@ export const VideoPreviewPlayer = forwardRef<VideoPreviewPlayerRef, VideoPreview
       onTimeUpdate,
       reframeTrack: propReframeTrack,
       aspectRatio: propAspectRatio,
+      cuts = [],
+      onAspectRatioChange,
+      onNavigateToTab,
     },
     ref
   ) => {
@@ -95,6 +117,8 @@ export const VideoPreviewPlayer = forwardRef<VideoPreviewPlayerRef, VideoPreview
     const [currentTime, setCurrentTime] = useState(0);
     const [duration, setDuration] = useState(0);
     const [isMuted, setIsMuted] = useState(false);
+    const [previewModeOnly, setPreviewModeOnly] = useState(true);
+    const [isAspectMenuOpen, setIsAspectMenuOpen] = useState(false);
     const lastActiveWordRef = useRef<string | null>(null);
 
     // Active aspect ratio & reframe track
@@ -123,6 +147,12 @@ export const VideoPreviewPlayer = forwardRef<VideoPreviewPlayerRef, VideoPreview
       return getInterpolatedKeyframe(activeReframeTrack?.keyframes, relativeTime);
     }, [activeReframeTrack?.keyframes, relativeTime]);
 
+    // Check if auto-zoom is active at this timestamp
+    const isAutoZoomActive = useMemo(() => {
+      if (!visualSettings.autoZoomsEnabled) return false;
+      return cuts.some((c) => c.type === 'ZOOM' && currentTime >= c.start && currentTime <= c.end && c.enabled);
+    }, [visualSettings.autoZoomsEnabled, cuts, currentTime]);
+
     // Calculate exact CSS object-position to match FFmpeg crop filter
     const videoStyle = useMemo(() => {
       const videoEl = videoRef.current;
@@ -142,7 +172,11 @@ export const VideoPreviewPlayer = forwardRef<VideoPreviewPlayerRef, VideoPreview
         cropH = sourceW / targetRatio;
       }
 
-      const zoom = Math.max(1.0, currentFrame.scale || 1.0);
+      let zoom = Math.max(1.0, currentFrame.scale || 1.0);
+      if (isAutoZoomActive) {
+        zoom *= 1.15; // Dynamic punch-in for auto zooms
+      }
+
       const zoomedW = cropW / zoom;
       const zoomedH = cropH / zoom;
 
@@ -160,7 +194,7 @@ export const VideoPreviewPlayer = forwardRef<VideoPreviewPlayerRef, VideoPreview
         transform: zoom > 1.01 ? `scale(${zoom.toFixed(2)})` : undefined,
         transformOrigin: `${objPosX.toFixed(2)}% ${objPosY.toFixed(2)}%`,
       };
-    }, [aspectConfig.ratio, currentFrame]);
+    }, [aspectConfig.ratio, currentFrame, isAutoZoomActive]);
 
     // Synchronize canvas rendering loop and sound effects
     useEffect(() => {
@@ -193,7 +227,7 @@ export const VideoPreviewPlayer = forwardRef<VideoPreviewPlayerRef, VideoPreview
             if (active && active.word !== lastActiveWordRef.current) {
               lastActiveWordRef.current = active.word;
               const cleanWord = active.word.replace(/[^a-zA-Z]/g, '').toUpperCase();
-              if (['DOLLAR', 'BUSINESS', 'THOUSAND'].includes(cleanWord)) {
+              if (['DOLLAR', 'BUSINESS', 'THOUSAND', 'रुपए'].includes(cleanWord)) {
                 soundFX.playCashDing();
               } else if (['STOP', 'SPEED', 'WINS', 'START'].includes(cleanWord)) {
                 soundFX.playPop();
@@ -262,11 +296,21 @@ export const VideoPreviewPlayer = forwardRef<VideoPreviewPlayerRef, VideoPreview
       }
     };
 
+    const toggleFullscreen = () => {
+      if (containerRef.current) {
+        if (!document.fullscreenElement) {
+          containerRef.current.requestFullscreen().catch(() => {});
+        } else {
+          document.exitFullscreen().catch(() => {});
+        }
+      }
+    };
+
     const formatTime = (seconds: number) => {
       const mins = Math.floor(seconds / 60);
       const secs = Math.floor(seconds % 60);
-      const ms = Math.floor((seconds % 1) * 10);
-      return `${mins}:${secs < 10 ? '0' : ''}${secs}.${ms}`;
+      const ms = Math.floor((seconds % 1) * 100);
+      return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}.${ms.toString().padStart(2, '0')}`;
     };
 
     // YouTube Video ID Detection
@@ -313,44 +357,70 @@ export const VideoPreviewPlayer = forwardRef<VideoPreviewPlayerRef, VideoPreview
 
     return (
       <div className="flex flex-col items-center w-full max-w-lg mx-auto">
-        {/* Device Frame Header with Aspect Ratio & Subject Tracking Indicator */}
-        <div className="flex items-center justify-between w-full px-2 mb-2 text-xs font-semibold text-slate-500">
-          <div className="flex items-center gap-1.5">
-            <Smartphone className="w-4 h-4 text-cyan-400" />
-            <span className="font-bold text-slate-200">
-              {aspectConfig.label} ({aspectConfig.width}x{aspectConfig.height})
-            </span>
+        {/* Header Bar Above Preview (Matching Submagic: AI Tools, Audio, Thumbnail) */}
+        <div className="flex items-center justify-between w-full px-1 mb-2.5">
+          <div className="flex items-center gap-1.5 bg-[#111827] border border-[#283344] p-1 rounded-xl">
+            <button
+              type="button"
+              onClick={() => onNavigateToTab?.('ai-tools')}
+              className="px-2.5 py-1 rounded-lg text-xs font-bold text-white hover:bg-slate-800 transition-colors flex items-center gap-1.5 cursor-pointer"
+            >
+              <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
+              <span>AI Tools</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => onNavigateToTab?.('audio')}
+              className="px-2.5 py-1 rounded-lg text-xs font-bold text-slate-300 hover:bg-slate-800 transition-colors flex items-center gap-1.5 cursor-pointer"
+            >
+              <Music2 className="w-3.5 h-3.5 text-slate-400" />
+              <span>Audio</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => onNavigateToTab?.('moments')}
+              className="px-2.5 py-1 rounded-lg text-xs font-bold text-slate-300 hover:bg-slate-800 transition-colors flex items-center gap-1.5 cursor-pointer"
+            >
+              <ImageIcon className="w-3.5 h-3.5 text-slate-400" />
+              <span>Thumbnail</span>
+            </button>
           </div>
 
-          <div className="flex items-center gap-1.5">
-            {activeReframeTrack && (
-              <span className="flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-cyan-950 text-cyan-300 border border-cyan-800/60 font-mono">
-                <Crosshair className="w-3 h-3 text-cyan-400" />
-                {activeReframeTrack.trackingMode === 'smart'
-                  ? 'Smart Centering'
-                  : activeReframeTrack.trackingMode === 'manual'
-                  ? 'Manual Framing'
-                  : 'Center Crop'}
-              </span>
-            )}
+          {/* Aspect Ratio Badge & Selector */}
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setIsAspectMenuOpen(!isAspectMenuOpen)}
+              className="px-3 py-1.5 rounded-xl bg-[#111827] hover:bg-slate-800 border border-[#283344] text-xs font-bold text-cyan-400 flex items-center gap-1.5 cursor-pointer"
+            >
+              <Smartphone className="w-3.5 h-3.5" />
+              <span>{activeAspectRatio}</span>
+              <ChevronDown className="w-3 h-3 text-slate-400" />
+            </button>
 
-            {youtubeId && (
-              <button
-                onClick={() => setUseYouTubeEmbed(!useYouTubeEmbed)}
-                className={`text-[10px] px-2 py-0.5 rounded-full font-bold border transition-colors ${
-                  useYouTubeEmbed
-                    ? 'bg-red-950 text-red-400 border-red-800 hover:bg-red-900'
-                    : 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700'
-                }`}
-              >
-                {useYouTubeEmbed ? '▶ YT Stream' : '🎬 Native View'}
-              </button>
-            )}
-
-            {visualSettings.splitScreenEnabled && (
-              <span className="flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-red-950 text-red-400 border border-red-800">
-                <SplitSquareVertical className="w-3 h-3" /> Split Screen
-              </span>
+            {isAspectMenuOpen && (
+              <div className="absolute right-0 mt-1 w-36 rounded-xl bg-[#111827] border border-[#283344] shadow-2xl py-1 z-50 animate-in fade-in">
+                {(['9:16', '1:1', '16:9', '4:5'] as AspectRatio[]).map((ratio) => (
+                  <button
+                    key={ratio}
+                    type="button"
+                    onClick={() => {
+                      onAspectRatioChange?.(ratio);
+                      setIsAspectMenuOpen(false);
+                    }}
+                    className={`w-full px-3 py-1.5 text-left text-xs font-semibold flex items-center justify-between hover:bg-slate-800 transition-colors ${
+                      activeAspectRatio === ratio ? 'text-cyan-400 bg-slate-800/50' : 'text-slate-300'
+                    }`}
+                  >
+                    <span>{ratio}</span>
+                    <span className="text-[10px] text-slate-500 font-mono">
+                      {ASPECT_RATIO_CONFIGS[ratio].width}x{ASPECT_RATIO_CONFIGS[ratio].height}
+                    </span>
+                  </button>
+                ))}
+              </div>
             )}
           </div>
         </div>
@@ -358,17 +428,15 @@ export const VideoPreviewPlayer = forwardRef<VideoPreviewPlayerRef, VideoPreview
         {/* Viewport Container with Dynamic Aspect Ratio */}
         <div
           ref={containerRef}
-          className={`relative ${containerAspectClass} rounded-[32px] p-2.5 bg-gradient-to-b from-slate-800 via-slate-900 to-black shadow-2xl border-4 border-slate-700/60 overflow-hidden transition-all duration-300`}
+          className={`relative ${containerAspectClass} rounded-[32px] p-2 bg-gradient-to-b from-slate-800 via-slate-900 to-black shadow-2xl border-4 border-slate-700/60 overflow-hidden transition-all duration-300`}
         >
-          {/* Top Notch for Phone Framing */}
-          {activeAspectRatio === '9:16' && (
-            <div className="absolute top-4 left-1/2 -translate-x-1/2 z-30 w-24 h-4 rounded-full bg-black/90 flex items-center justify-center">
-              <div className="w-2.5 h-2.5 rounded-full bg-slate-900 border border-slate-700" />
-            </div>
-          )}
-
           {/* Inner Display Viewport */}
           <div className="relative w-full h-full rounded-[24px] overflow-hidden bg-black flex flex-col items-center justify-center">
+            {/* Low Res Preview Badge (Matching Submagic) */}
+            <div className="absolute top-3 right-3 z-30 px-2 py-0.5 rounded-full bg-black/60 text-[9px] font-bold text-slate-400 backdrop-blur-xs border border-white/10 select-none pointer-events-none">
+              Low res preview
+            </div>
+
             {/* If YouTube URL and embed enabled */}
             {youtubeId && useYouTubeEmbed ? (
               <div className="absolute inset-0 w-full h-full overflow-hidden pointer-events-auto">
@@ -456,13 +524,10 @@ export const VideoPreviewPlayer = forwardRef<VideoPreviewPlayerRef, VideoPreview
           </div>
         </div>
 
-        {/* Custom Playback Controls Bar */}
-        <div className="w-full mt-4 p-3.5 rounded-2xl bg-[#111827] border border-[#283344] shadow-sm space-y-2.5">
+        {/* Custom Playback Controls Bar (Matching Submagic with Preview Mode, Timecode, Volume, Fullscreen) */}
+        <div className="w-full mt-3 p-3 rounded-2xl bg-[#111827] border border-[#283344] shadow-sm space-y-2.5">
           {/* Scrub Slider */}
-          <div className="flex items-center gap-3">
-            <span className="text-[11px] font-mono text-cyan-400 font-bold w-10">
-              {formatTime(currentTime)}
-            </span>
+          <div className="flex items-center gap-2.5">
             <input
               type="range"
               min="0"
@@ -472,55 +537,59 @@ export const VideoPreviewPlayer = forwardRef<VideoPreviewPlayerRef, VideoPreview
               onChange={handleSeek}
               className="flex-1 h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-cyan-400"
             />
-            <span className="text-[11px] font-mono text-slate-400 w-10 text-right">
-              {formatTime(duration || 30)}
-            </span>
           </div>
 
-          {/* Buttons Row */}
-          <div className="flex items-center justify-between pt-1">
+          {/* Controls Bottom Row */}
+          <div className="flex items-center justify-between pt-0.5">
             <div className="flex items-center gap-2">
               <button
-                onClick={() => {
-                  togglePlay();
-                  setIsPlaying(!isPlaying);
-                }}
-                className="p-2.5 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold shadow-sm shadow-cyan-500/20 transition-all cursor-pointer"
+                type="button"
+                onClick={togglePlay}
+                className="p-2 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold shadow-sm transition-all cursor-pointer"
                 title={isPlaying ? 'Pause' : 'Play'}
               >
                 {isPlaying ? (
-                  <Pause className="w-4 h-4 fill-slate-950" />
+                  <Pause className="w-3.5 h-3.5 fill-slate-950" />
                 ) : (
-                  <Play className="w-4 h-4 fill-slate-950 ml-0.5" />
+                  <Play className="w-3.5 h-3.5 fill-slate-950 ml-0.5" />
                 )}
               </button>
 
               <button
-                onClick={() => {
-                  if (videoRef.current) {
-                    videoRef.current.currentTime = 0;
-                  }
-                  setCurrentTime(0);
-                }}
-                className="p-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition-colors cursor-pointer"
-                title="Restart"
+                type="button"
+                onClick={() => setPreviewModeOnly(!previewModeOnly)}
+                className={`text-[11px] font-bold px-2.5 py-1 rounded-full border transition-colors cursor-pointer ${
+                  previewModeOnly
+                    ? 'bg-emerald-950/60 text-emerald-300 border-emerald-800'
+                    : 'bg-slate-800 text-slate-400 border-slate-700'
+                }`}
               >
-                <RotateCcw className="w-4 h-4" />
+                Preview Mode
               </button>
+
+              {/* Timecode 00:02.80 / 01:00.00 */}
+              <span className="text-[11px] font-mono text-slate-300 font-bold ml-1">
+                {formatTime(currentTime)} / {formatTime(duration || 60)}
+              </span>
             </div>
 
-            <div className="flex items-center gap-2">
-              {audioSettings.studioSoundEnabled && (
-                <span className="text-[10px] px-2.5 py-1 rounded-full bg-emerald-950/60 text-emerald-400 border border-emerald-800 font-extrabold">
-                  Studio Sound ON
-                </span>
-              )}
+            <div className="flex items-center gap-1.5">
               <button
+                type="button"
                 onClick={toggleMute}
-                className="p-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition-colors cursor-pointer"
+                className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
                 title={isMuted ? 'Unmute' : 'Mute'}
               >
                 {isMuted ? <VolumeX className="w-4 h-4 text-rose-400" /> : <Volume2 className="w-4 h-4" />}
+              </button>
+
+              <button
+                type="button"
+                onClick={toggleFullscreen}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+                title="Fullscreen"
+              >
+                <Maximize2 className="w-4 h-4" />
               </button>
             </div>
           </div>

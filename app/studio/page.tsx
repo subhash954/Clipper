@@ -7,6 +7,10 @@ import { CreateProjectModal } from '@/components/CreateProjectModal';
 import { VideoUploader } from '@/components/VideoUploader';
 import { VideoPreviewPlayer, VideoPreviewPlayerRef } from '@/components/VideoPreviewPlayer';
 import { CreatorTimeline } from '@/components/CreatorTimeline';
+import { StyleTab } from '@/components/tabs/StyleTab';
+import { CaptionsTab } from '@/components/tabs/CaptionsTab';
+import { AIToolsTab } from '@/components/tabs/AIToolsTab';
+import { BrollStoryboardTab } from '@/components/tabs/BrollStoryboardTab';
 import { IntelligenceTab } from '@/components/tabs/IntelligenceTab';
 import { TypographyTab } from '@/components/tabs/TypographyTab';
 import { AudioStudioTab } from '@/components/tabs/AudioStudioTab';
@@ -41,6 +45,7 @@ import {
   RefreshCw, 
   Sparkles, 
   Type, 
+  Palette,
   Mic2, 
   Crop, 
   Share2, 
@@ -73,8 +78,10 @@ export default function StudioPage() {
   const [activeCuts, setActiveCuts] = useState<EditOperation[]>([]);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
 
-  // Active Tool for Editor (Section 14)
-  const [activeTool, setActiveTool] = useState<'moments' | 'captions' | 'reframe' | 'broll' | 'audio' | 'publish'>('moments');
+  // Active Tool for Editor (Workflow inspired by modern AI Video SaaS)
+  const [activeTool, setActiveTool] = useState<
+    'style' | 'captions' | 'ai-tools' | 'brolls' | 'reframe' | 'moments' | 'audio' | 'publish'
+  >('style');
 
   // Subtitle styling using original Clipper preset 'signal'
   const [subtitleStyle, setSubtitleStyle] = useState<SubtitleStyle>(PRESET_STYLES.signal || PRESET_STYLES.impact);
@@ -193,6 +200,9 @@ export default function StudioPage() {
 
   const handleSelectClip = (clip: ViralClip) => {
     setActiveClipId(clip.id);
+    if (clip.words && clip.words.length > 0) {
+      setWords(clip.words);
+    }
     if (playerRef.current) {
       playerRef.current.seekTo(clip.start);
       setCurrentTime(clip.start);
@@ -249,12 +259,14 @@ export default function StudioPage() {
   };
 
   const aiToolsList = [
-    { id: 'moments', label: 'AI Moments', icon: Sparkles, desc: 'Signal & Retention' },
-    { id: 'captions', label: 'Typography', icon: Type, desc: 'Presets & Word Sync' },
-    { id: 'reframe', label: 'Reframe', icon: Crop, desc: '9:16 Auto Crop' },
-    { id: 'broll', label: 'B-Roll', icon: Layers, desc: 'Visual Overlays' },
-    { id: 'audio', label: 'Audio & Music', icon: Mic2, desc: 'SFX & Voice Ducking' },
-    { id: 'publish', label: 'Distribution', icon: Share2, desc: 'Scheduling & Tags' },
+    { id: 'style', label: 'Style', icon: Palette, desc: 'Preset Badges & Fonts' },
+    { id: 'captions', label: 'Captions', icon: Type, desc: 'Words & Highlight Star' },
+    { id: 'ai-tools', label: 'AI Tools', icon: Sparkles, desc: 'Auto Zooms & B-rolls' },
+    { id: 'brolls', label: 'B-rolls', icon: Layers, desc: 'Scene Storyboard' },
+    { id: 'reframe', label: 'Auto Reframe', icon: Crop, desc: 'Smart 9:16 Subject Track' },
+    { id: 'moments', label: 'AI Moments', icon: Bot, desc: 'Virality & Retention' },
+    { id: 'audio', label: 'Audio & Music', icon: Mic2, desc: 'Voice Clean & SFX' },
+    { id: 'publish', label: 'Distribution', icon: Share2, desc: 'Viral Titles & Export' },
   ] as const;
 
   return (
@@ -484,28 +496,90 @@ export default function StudioPage() {
                   audioSettings={audioSettings}
                   isProUser={false}
                   clipStartTime={activeClip?.start || 0}
+                  onTimeUpdate={(t) => setCurrentTime(t)}
                   reframeTrack={reframeTrack || visualSettings.reframeTrack}
                   aspectRatio={visualSettings.aspectRatio}
+                  cuts={activeCuts}
+                  onAspectRatioChange={(newRatio) => {
+                    setVisualSettings((prev) => ({ ...prev, aspectRatio: newRatio }));
+                    handleTriggerReframe(visualSettings.trackingMode || 'center', newRatio);
+                  }}
+                  onNavigateToTab={(tab) => {
+                    if (
+                      tab === 'ai-tools' ||
+                      tab === 'audio' ||
+                      tab === 'captions' ||
+                      tab === 'style' ||
+                      tab === 'brolls' ||
+                      tab === 'reframe' ||
+                      tab === 'moments' ||
+                      tab === 'publish'
+                    ) {
+                      setActiveTool(tab as any);
+                    }
+                  }}
                 />
               </div>
 
               {/* COLUMN 3: Properties & Active Tool Panel (5 cols) */}
               <div className="lg:col-span-5 space-y-4">
-                {activeTool === 'moments' && (
-                  <IntelligenceTab
-                    clips={clips}
-                    activeClipId={activeClipId}
-                    onSelectClip={handleSelectClip}
-                    onJumpToTime={handleJumpToTime}
-                    words={words}
-                    onApplyCuts={(cuts) => setActiveCuts(cuts)}
+                {activeTool === 'style' && (
+                  <StyleTab
+                    currentStyle={subtitleStyle}
+                    onChange={(st) => setSubtitleStyle(st)}
                   />
                 )}
 
                 {activeTool === 'captions' && (
-                  <TypographyTab
-                    currentStyle={subtitleStyle}
-                    onChange={(st) => setSubtitleStyle(st)}
+                  <CaptionsTab
+                    words={words}
+                    onWordsChange={(updatedWords) => setWords(updatedWords)}
+                    onJumpToTime={handleJumpToTime}
+                    currentTime={currentTime}
+                    subtitleStyle={subtitleStyle}
+                    onStyleChange={(st) => setSubtitleStyle(st)}
+                  />
+                )}
+
+                {activeTool === 'ai-tools' && (
+                  <AIToolsTab
+                    visualSettings={visualSettings}
+                    audioSettings={audioSettings}
+                    onVisualChange={(vs) => setVisualSettings(vs)}
+                    onAudioChange={(as) => setAudioSettings(as)}
+                    onNavigateToTab={(tab) => setActiveTool(tab as any)}
+                    words={words}
+                    onApplyAutoZooms={() => {
+                      const zoomCuts: EditOperation[] = [];
+                      const step = 5.0;
+                      const clipStart = activeClip?.start || 0;
+                      const clipEnd = activeClip?.end || (clipStart + 30);
+                      for (let t = clipStart + 2; t < clipEnd - 2; t += step) {
+                        zoomCuts.push({
+                          id: `auto-zoom-${t.toFixed(1)}`,
+                          type: 'ZOOM',
+                          start: t,
+                          end: Math.min(t + 2.5, clipEnd),
+                          label: 'AI Auto-Zoom (1.15x)',
+                          enabled: true,
+                        });
+                      }
+                      setActiveCuts((prev) => [...prev.filter((c) => c.type !== 'ZOOM'), ...zoomCuts]);
+                      setVisualSettings((prev) => ({ ...prev, autoZoomsEnabled: true }));
+                    }}
+                    onApplySilences={() => {
+                      setVisualSettings((prev) => ({ ...prev, removeSilencesEnabled: true }));
+                    }}
+                  />
+                )}
+
+                {activeTool === 'brolls' && (
+                  <BrollStoryboardTab
+                    words={words}
+                    cuts={activeCuts}
+                    onCutsChange={(newCuts) => setActiveCuts(newCuts)}
+                    onJumpToTime={handleJumpToTime}
+                    currentTime={currentTime}
                   />
                 )}
 
@@ -521,15 +595,14 @@ export default function StudioPage() {
                   />
                 )}
 
-                {activeTool === 'broll' && (
-                  <VisualLayoutTab
-                    settings={visualSettings}
-                    onChange={(vs) => setVisualSettings(vs)}
-                    bRollKeywords={activeClip?.bRollKeywords || ['business', 'growth', 'marketing', 'tech']}
-                    onTriggerReframe={handleTriggerReframe}
-                    onInsertBroll={handleInsertBroll}
-                    isReframeLoading={isReframeLoading}
-                    reframeStatus={reframeStatus}
+                {activeTool === 'moments' && (
+                  <IntelligenceTab
+                    clips={clips}
+                    activeClipId={activeClipId}
+                    onSelectClip={handleSelectClip}
+                    onJumpToTime={handleJumpToTime}
+                    words={words}
+                    onApplyCuts={(cuts) => setActiveCuts(cuts)}
                   />
                 )}
 
