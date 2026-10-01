@@ -14,7 +14,7 @@ interface GeminiClipResponse {
 
 export async function POST(req: NextRequest) {
   try {
-    const { youtubeUrl } = await req.json();
+    const { youtubeUrl, clipCount = 5 } = await req.json();
 
     if (!youtubeUrl || typeof youtubeUrl !== 'string') {
       return NextResponse.json({ error: 'Valid YouTube URL is required' }, { status: 400 });
@@ -48,9 +48,10 @@ export async function POST(req: NextRequest) {
       console.warn('oEmbed fetch fallback:', e);
     }
 
-    // 3. Call Gemini 2.5 Flash to intelligently analyze and slice the video
+    // 3. Call Gemini 2.5 Flash to intelligently analyze speech lines and slice the top 5 clips
     const geminiKey = process.env.GEMINI_API_KEY;
     let generatedClips: any[] = [];
+    const targetCount = Math.min(10, Math.max(3, Number(clipCount) || 5));
 
     if (geminiKey) {
       try {
@@ -60,18 +61,25 @@ Title: "${videoTitle}"
 Channel: "${authorName}"
 URL: "${cleanUrl}"
 
-Generate 10 highly viral, retention-engineered vertical Shorts (30-60s) from this video topic.
-For each clip return JSON object with:
-- "title": punchy high-converting headline
-- "hookSummary": 2-sentence psychological hook reason
-- "viralScore": number between 88 and 99
+TASK:
+Analyze the speech and narrative of this long video to TRACK THE MOST IMPORTANT SPOKEN LINES.
+Cut down and extract ONLY the ${targetCount} MOST IMPORTANT, high-retention viral vertical Shorts (30-60s duration).
+To select each clip, pinpoint the exact pivotal line/quote spoken in the video that gives it maximum viral retention.
+
+For each of the ${targetCount} clips, return a JSON object with:
+- "title": punchy high-CTR title
+- "importantLine": the exact high-impact quote or spoken sentence tracked by AI that makes this clip worth cutting
+- "whyThisLineIsImportant": why this specific line grabs attention and hooks viewers
+- "keyMomentType": category, e.g. "Contrarian Truth", "Actionable Secret", "Core Framework", "Emotional Climax", or "High-Curiosity Hook"
+- "viralScore": number between 91 and 99 based on line impact
 - "start_seconds": integer start timestamp
-- "end_seconds": integer end timestamp
-- "bRollKeywords": 3 visual stock video keywords (e.g. ["luxury office", "stock market chart", "stressed founder"])
-- "aiImagePrompt": cinematic Midjourney prompt
+- "end_seconds": integer end timestamp (30 to 60 seconds duration around the important line)
+- "bRollKeywords": 3 visual stock video keywords for Pixabay
+- "aiImagePrompt": cinematic visual prompt
 - "soundEffects": 2 sound effects (e.g. ["whoosh.mp3", "cash_register.mp3"])
 
-Respond ONLY with valid JSON array of objects.`;
+Sort the clips in order of importance (Rank #1 being the absolute most critical moment of the entire video).
+Respond ONLY with a valid JSON array of ${targetCount} objects.`;
 
         const geminiRes = await fetch(
           `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiKey}`,
@@ -94,16 +102,17 @@ Respond ONLY with valid JSON array of objects.`;
           const geminiData = await geminiRes.json();
           const rawText = geminiData.candidates?.[0]?.content?.parts?.[0]?.text;
           if (rawText) {
-            const parsed = JSON.parse(rawText) as GeminiClipResponse[];
+            const parsed = JSON.parse(rawText);
             if (Array.isArray(parsed)) {
-              generatedClips = parsed.map((item, idx) => {
+              generatedClips = parsed.map((item: any, idx: number) => {
                 const start = item.start_seconds || (idx * 180 + 30);
                 const end = item.end_seconds || (start + 45);
                 const duration = Math.max(15, end - start);
                 
-                // Build word timestamps if Gemini didn't supply them
-                const hookWords = (item.hookSummary || item.title).split(' ').slice(0, 14);
-                const words = item.words || hookWords.map((w, wIdx) => ({
+                // Build word timestamps from important line or title
+                const spokenSentence = item.importantLine || item.hookSummary || item.title;
+                const hookWords = spokenSentence.split(' ').slice(0, 16);
+                const words = hookWords.map((w: string, wIdx: number) => ({
                   word: w,
                   start: parseFloat((start + wIdx * 0.35).toFixed(2)),
                   end: parseFloat((start + (wIdx + 1) * 0.35).toFixed(2)),
@@ -111,13 +120,17 @@ Respond ONLY with valid JSON array of objects.`;
 
                 const scheduleHours = 9 + (idx % 12);
                 const scheduleDate = new Date();
-                scheduleDate.setDate(scheduleDate.getDate() + Math.floor(idx / 3));
+                scheduleDate.setDate(scheduleDate.getDate() + Math.floor(idx / 2));
 
                 return {
                   id: `clip-yt-${idx + 1}-${Date.now()}`,
+                  rank: idx + 1,
                   title: item.title,
-                  hookSummary: item.hookSummary,
-                  viralScore: item.viralScore || Math.floor(88 + Math.random() * 10),
+                  importantLine: item.importantLine || `"${item.title}"`,
+                  whyThisLineIsImportant: item.whyThisLineIsImportant || item.hookSummary,
+                  keyMomentType: item.keyMomentType || (idx === 0 ? 'High-Curiosity Hook' : 'Contrarian Truth'),
+                  hookSummary: item.hookSummary || item.whyThisLineIsImportant,
+                  viralScore: item.viralScore || (99 - idx * 2),
                   start,
                   end,
                   duration,
@@ -140,37 +153,64 @@ Respond ONLY with valid JSON array of objects.`;
 
     // 4. Fallback if Gemini or network fails
     if (generatedClips.length === 0) {
-      const topics = [
-        `The Hidden Truth About ${videoTitle.slice(0, 30)}`,
-        `Stop Doing This: Biggest Mistake In ${authorName}'s Blueprint`,
-        `3 Steps to Dominate Your Market Today`,
-        `Why 99% Of People Fail At Brand Building`,
-        `The $100K Strategy Revealed By ${authorName}`,
-        `How To Build Unstoppable Customer Loyalty`,
-        `The 60-Second Framework For Rapid Growth`,
-        `The Exact System I Used To Multiply Results`,
-        `Why Traditional Marketing Is Dead`,
-        `The Secret Weapon Top Creators Keep Hidden`,
-        `Turn Your Brand Into A Cult Following`,
-        `Master This One Skill Before It's Too Late`,
+      const topMoments = [
+        {
+          title: `Stop Building a Brand, START Building a Universe!`,
+          line: `Your brand isn't a logo or color scheme — it's an entire universe your customers live in.`,
+          why: `Immediately reframes superficial marketing into an expansive emotional ecosystem, hooking viewers in first 2 seconds.`,
+          type: `High-Curiosity Hook`,
+          score: 99,
+        },
+        {
+          title: `Why 99% Of Businesses Are Practically Invisible`,
+          line: `If your customer can't immediately feel who you are, you are leaving 90% of your revenue on the table.`,
+          why: `Direct contrarian confrontation that attacks over-complicated branding strategies.`,
+          type: `Contrarian Truth`,
+          score: 97,
+        },
+        {
+          title: `The 3 Pillars of Unstoppable Customer Retention`,
+          line: `There are three core pillars: your authentic narrative, unbending values, and unforgettable experience.`,
+          why: `Actionable, punchy framework that provides immediate value in under 45 seconds.`,
+          type: `Core Framework`,
+          score: 96,
+        },
+        {
+          title: `The Storytelling Secret Weapon Top Creators Hide`,
+          line: `Facts inform, but emotional stories trigger purchases every single time.`,
+          why: `Addresses psychological purchasing behavior with memorable clarity.`,
+          type: `Actionable Secret`,
+          score: 94,
+        },
+        {
+          title: `Brand Values Are NON-NEGOTIABLE (Evolve or Die)`,
+          line: `The market is shifting rapidly — brands with weak backbones will disappear by next year.`,
+          why: `Urgency-driven emotional climax that compels viewers to take immediate action.`,
+          type: `Emotional Climax`,
+          score: 92,
+        },
       ];
 
-      generatedClips = topics.map((title, idx) => {
-        const start = idx * 190 + 20;
-        const end = start + 48;
-        const hookWords = title.split(' ');
+      generatedClips = topMoments.slice(0, targetCount).map((item, idx) => {
+        const start = idx * 240 + 30;
+        const end = start + 45;
+        const hookWords = item.line.split(' ');
         const scheduleHours = 10 + (idx % 10);
         const scheduleDate = new Date();
         scheduleDate.setDate(scheduleDate.getDate() + Math.floor(idx / 2));
 
         return {
           id: `clip-yt-fallback-${idx + 1}`,
-          title,
-          hookSummary: `Hook: "${hookWords.slice(0, 6).join(' ')}..." Retention strategy grabs viewer attention in first 2.5 seconds.`,
-          viralScore: 89 + (idx % 9),
+          rank: idx + 1,
+          title: item.title,
+          importantLine: item.line,
+          whyThisLineIsImportant: item.why,
+          keyMomentType: item.type,
+          hookSummary: item.why,
+          viralScore: item.score,
           start,
           end,
-          duration: 48,
+          duration: 45,
           bRollKeywords: ['business strategy', 'growth chart', 'founder mindset'],
           aiImagePrompt: `Cinematic hyperrealistic shot of modern entrepreneur, 8k resolution, dramatic lighting`,
           soundEffects: ['riser.mp3', 'sub_drop.mp3'],

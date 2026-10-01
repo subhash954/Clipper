@@ -3,7 +3,7 @@
 import React, { useState } from 'react';
 import { ViralClip } from '@/lib/types';
 import { DETECTED_FILLER_WORDS, AI_SOCIAL_METADATA } from '@/lib/sampleData';
-import { Flame, Clock, Sparkles, Scissors, Activity, Copy, Check, Eye } from 'lucide-react';
+import { Flame, Clock, Sparkles, Scissors, Activity, Copy, Check, Eye, Quote, Target } from 'lucide-react';
 
 interface IntelligenceTabProps {
   clips: ViralClip[];
@@ -64,36 +64,63 @@ export const IntelligenceTab: React.FC<IntelligenceTabProps> = ({
         </div>
 
         {/* Clip Cards List */}
-        <div className="space-y-2 pt-1 max-h-[380px] overflow-y-auto pr-1">
-          {clips.map((clip) => {
+        <div className="space-y-2.5 pt-1 max-h-[420px] overflow-y-auto pr-1">
+          {clips.map((clip, idx) => {
             const isSelected = activeClipId === clip.id;
+            const clipRank = clip.rank || idx + 1;
             return (
               <div
                 key={clip.id}
                 onClick={() => onSelectClip(clip)}
-                className={`p-3.5 rounded-xl border cursor-pointer transition-all ${
+                className={`p-3.5 rounded-xl border cursor-pointer transition-all space-y-2 ${
                   isSelected
                     ? 'border-red-500 bg-red-50/50 shadow-sm'
                     : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50'
                 }`}
               >
-                <div className="flex items-start justify-between gap-2">
-                  <h4 className="text-xs font-bold text-slate-900 leading-snug">{clip.title}</h4>
+                <div className="flex items-center justify-between gap-1 text-[10px]">
+                  <div className="flex items-center gap-1.5">
+                    <span className="px-2 py-0.5 rounded-full bg-red-600 text-white font-black text-[9px]">
+                      #{clipRank} GOLDEN
+                    </span>
+                    {clip.keyMomentType && (
+                      <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 font-bold text-[9px] border border-slate-200">
+                        {clip.keyMomentType}
+                      </span>
+                    )}
+                  </div>
                   <div className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 text-[10px] font-extrabold whitespace-nowrap border border-emerald-200">
                     {clip.viralScore}% VIRAL
                   </div>
                 </div>
 
-                <p className="text-[11px] text-slate-500 mt-1 line-clamp-2">
-                  {clip.hookSummary}
+                <h4 className="text-xs font-bold text-slate-900 leading-snug">{clip.title}</h4>
+
+                {/* Tracked Spoken Quote */}
+                {clip.importantLine && (
+                  <div className="p-2 rounded-lg bg-amber-50 border border-amber-200/80 space-y-0.5">
+                    <div className="flex items-center gap-1 text-[9px] font-bold text-amber-900 uppercase tracking-wider">
+                      <Quote className="w-2.5 h-2.5 text-amber-600 shrink-0" />
+                      <span>Tracked Speech Line:</span>
+                    </div>
+                    <p className="text-[11px] font-semibold text-slate-800 italic leading-snug line-clamp-2">
+                      &ldquo;{clip.importantLine.replace(/^"|"$/g, '')}&rdquo;
+                    </p>
+                  </div>
+                )}
+
+                <p className="text-[11px] text-slate-500 line-clamp-2">
+                  {clip.whyThisLineIsImportant || clip.hookSummary}
                 </p>
 
-                <div className="flex items-center justify-between mt-2 pt-2 border-t border-slate-100 text-[10px] text-slate-500 font-mono">
+                <div className="flex items-center justify-between pt-2 border-t border-slate-100 text-[10px] text-slate-500 font-mono">
                   <span className="flex items-center gap-1 text-red-600 font-bold">
                     <Clock className="w-3 h-3" />
                     {formatTime(clip.start)} – {formatTime(clip.end)}
                   </span>
-                  <span className="text-emerald-700 font-semibold">Est. Retention: {clip.retentionEstimate}%</span>
+                  <span className="text-emerald-700 font-semibold">
+                    {clip.retentionEstimate ? `Est. Retention: ${clip.retentionEstimate}%` : `${clip.viralScore}% Viral Potential`}
+                  </span>
                 </div>
               </div>
             );

@@ -6,15 +6,24 @@ export interface WordTimestamp {
 
 export interface ViralClip {
   id: string;
+  rank?: number;
   title: string;
   hookSummary: string;
+  importantLine?: string;
+  whyThisLineIsImportant?: string;
+  keyMomentType?: string;
   start: number; // in seconds
   end: number;   // in seconds
+  duration?: number;
   viralScore: number; // 0 to 100
   tags: string[];
   hookStrength: number;
   retentionEstimate: number;
   energyLevel: 'Medium' | 'High' | 'Extreme';
+  thumbnailUrl?: string;
+  bRollKeywords?: string[];
+  soundEffects?: string[];
+  youtubeScheduleTime?: string;
 }
 
 export type SubtitlePreset = 'hormozi' | 'beast' | 'minimal' | 'neon';

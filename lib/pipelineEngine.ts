@@ -3,7 +3,11 @@ import { SAMPLE_WORDS } from './sampleData';
 
 export interface ProcessedYouTubeShort {
   id: string;
+  rank?: number;
   title: string;
+  importantLine: string;
+  whyThisLineIsImportant: string;
+  keyMomentType: string;
   hookSummary: string;
   viralScore: number;
   start: number;
@@ -15,6 +19,7 @@ export interface ProcessedYouTubeShort {
   youtubeScheduleTime: string;
   words: WordTimestamp[];
   videoUrl: string;
+  thumbnailUrl?: string;
 }
 
 export interface DocumentaryChapter {
@@ -41,7 +46,7 @@ export interface CostCalculation {
 // 1. Workflow 1: 1-Hour YouTube to 10-15 Shorts Generator
 export function processYouTubeVideoToShorts(
   youtubeUrl: string,
-  targetClipCount: number = 12
+  targetClipCount: number = 5
 ): {
   videoTitle: string;
   durationMinutes: number;
@@ -51,77 +56,95 @@ export function processYouTubeVideoToShorts(
 } {
   const durationMinutes = 58.5; // ~1-hour video
   
-  // Real Financial Costs calculated to the cent
+  // Real Financial Costs calculated for 5 golden shorts
   const deepgramSTTCost = parseFloat((durationMinutes * 0.0043).toFixed(4)); // ~$0.25
-  const geminiFlashLLMCost = 0.0022; // 15k tokens in + 2.5k tokens out
+  const geminiFlashLLMCost = 0.0019; // Gemini 2.5 Flash input + output
   const stockBRollCost = 0.00; // Pexels/Pixabay API is 100% free commercial
-  const fluxImageGenCost = parseFloat((targetClipCount * 0.003).toFixed(3)); // ~$0.036
-  const ffmpegRenderCost = parseFloat((targetClipCount * 0.032).toFixed(3)); // ~$0.384
-  const r2StorageCost = 0.025;
+  const fluxImageGenCost = parseFloat((targetClipCount * 0.003).toFixed(3)); // ~$0.015
+  const ffmpegRenderCost = parseFloat((targetClipCount * 0.028).toFixed(3)); // ~$0.14
+  const r2StorageCost = 0.015;
   const totalCostUSD = parseFloat(
     (deepgramSTTCost + geminiFlashLLMCost + stockBRollCost + fluxImageGenCost + ffmpegRenderCost + r2StorageCost).toFixed(2)
   );
-  const totalCostINR = Math.round(totalCostUSD * 84);
+  const totalCostINR = Math.round(totalCostUSD * 86.5);
 
-  const sampleTitles = [
-    "🔥 The $10,000 Speed Secret (Stop Waiting for Perfection)",
-    "⚡ Why 90% of Startups Fail in Week 1",
-    "🤫 The 1 Habit That Made Me Financially Free",
-    "📈 How to Scale to $1,000/Month With Zero Ad Spend",
-    "🛑 The Dangerous Trap of Endless Planning",
-    "💡 Psychological Rule of Viral Content",
-    "💰 High-Income Skill Nobody Talks About",
-    "🚀 From Zero to $10k in 6 Months (Step-by-Step)",
-    "🎯 How to Win Before You Even Start",
-    "💎 The Value Equation That Changes Everything",
-    "⏱️ Why Execution Speed Beats Raw Talent",
-    "🏆 The Contrarian Mindset of Top 1% Creators"
+  const goldenMoments = [
+    {
+      title: "🔥 Stop Building a Brand, START Building a Universe!",
+      importantLine: "Your brand isn't a logo or color scheme — it's an entire universe your customers live in.",
+      whyThisLineIsImportant: "Immediately reframes superficial marketing into an expansive emotional ecosystem, hooking viewers in first 2 seconds.",
+      keyMomentType: "High-Curiosity Hook",
+      viralScore: 99,
+      bRollKeywords: ["brand identity", "creative universe", "modern studio"],
+    },
+    {
+      title: "⚡ Why 99% Of Businesses Are Practically Invisible",
+      importantLine: "If your customer can't immediately feel who you are, you are leaving 90% of your revenue on the table.",
+      whyThisLineIsImportant: "Direct contrarian confrontation that attacks over-complicated branding strategies.",
+      keyMomentType: "Contrarian Truth",
+      viralScore: 97,
+      bRollKeywords: ["business meeting", "revenue analytics", "digital entrepreneur"],
+    },
+    {
+      title: "📈 The 3 Pillars of Unstoppable Customer Retention",
+      importantLine: "There are three core pillars: your authentic narrative, unbending values, and unforgettable experience.",
+      whyThisLineIsImportant: "Actionable, punchy framework that provides immediate value in under 45 seconds.",
+      keyMomentType: "Core Framework",
+      viralScore: 96,
+      bRollKeywords: ["customer loyalty", "handshake deal", "growth chart"],
+    },
+    {
+      title: "🤫 The Storytelling Secret Weapon Top Creators Hide",
+      importantLine: "Facts inform, but emotional stories trigger purchases every single time.",
+      whyThisLineIsImportant: "Addresses psychological purchasing behavior with memorable clarity.",
+      keyMomentType: "Actionable Secret",
+      viralScore: 94,
+      bRollKeywords: ["cinematic lighting", "storyboard sketch", "podcaster microphone"],
+    },
+    {
+      title: "🛑 Brand Values Are NON-NEGOTIABLE (Evolve or Die)",
+      importantLine: "The market is shifting rapidly — brands with weak backbones will disappear by next year.",
+      whyThisLineIsImportant: "Urgency-driven emotional climax that compels viewers to take immediate action.",
+      keyMomentType: "Emotional Climax",
+      viralScore: 92,
+      bRollKeywords: ["market shift", "fast speed highway", "decision maker"],
+    },
   ];
 
-  const bRollSets = [
-    ["luxury sports car", "fast highway", "stock trading chart"],
-    ["frustrated coder", "broken computer", "empty bank account"],
-    ["sunrise coffee", "morning notebook", "meditation focus"],
-    ["growing graph", "e-commerce dashboard", "stripe notifications"],
-    ["procrastination clock", "endless calendar", "spinning wheel"],
-    ["brain neurons", "eyeball zoom", "tiktok scrolling hand"],
-    ["handshake agreement", "signing contract", "executive desk"],
-    ["rocket launch", "calendar checkmark", "confetti party"],
-    ["chess checkmate", "boxing training", "podium trophy"],
-    ["diamond sparkle", "gold vault", "customer happy face"],
-    ["speeding bullet train", "runner starting blocks", "stopwatch tick"],
-    ["private jet tarmac", "rooftop skyline", "millionaire sunglasses"]
-  ];
-
-  const clips: ProcessedYouTubeShort[] = sampleTitles.slice(0, targetClipCount).map((title, i) => {
-    const start = i * 4.5 * 60 + 12; // Spread across the 1-hour video
-    const duration = 45 + (i % 15);
+  const clips: ProcessedYouTubeShort[] = goldenMoments.slice(0, targetClipCount).map((item, i) => {
+    const start = i * 8 * 60 + 24; // Spread across the 1-hour video
+    const duration = 45;
     const end = start + duration;
     
-    // Scheduled daily distribution across next 12 days at 6:30 PM peak viral time
+    // Scheduled daily distribution across next 5 days at 6:30 PM peak viral time
     const schedDate = new Date();
     schedDate.setDate(schedDate.getDate() + i + 1);
     schedDate.setHours(18, 30, 0, 0);
 
     return {
       id: `short-clip-${i + 1}`,
-      title,
-      hookSummary: `Contrarian psychological hook extracted from minute ${Math.floor(start / 60)} with high vocal intensity.`,
-      viralScore: 92 + (i % 8),
+      rank: i + 1,
+      title: item.title,
+      importantLine: item.importantLine,
+      whyThisLineIsImportant: item.whyThisLineIsImportant,
+      keyMomentType: item.keyMomentType,
+      hookSummary: item.whyThisLineIsImportant,
+      viralScore: item.viralScore,
       start,
       end,
       duration,
-      bRollKeywords: bRollSets[i % bRollSets.length],
-      aiImagePrompt: `Hyper-realistic cinematic 9:16 visual of ${bRollSets[i % bRollSets.length][0]}, 8k resolution, neon dramatic lighting.`,
+      bRollKeywords: item.bRollKeywords,
+      aiImagePrompt: `Hyper-realistic cinematic 9:16 visual of ${item.bRollKeywords[0]}, 8k resolution, dramatic lighting.`,
       soundEffects: ["Cash Register Ding", "Swoosh Transition", "Bass Drop Impact"],
       youtubeScheduleTime: `${schedDate.toISOString().split('T')[0]} at 18:00 UTC`,
       words: SAMPLE_WORDS,
-      videoUrl: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4"
+      videoUrl: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4",
+      thumbnailUrl: "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=800&auto=format&fit=crop&q=80",
     };
   });
 
   return {
-    videoTitle: "The Masterclass on Scaling to $10,000/Month (Full 1-Hour Ingest)",
+    videoTitle: "The Masterclass on Brand Building & Scaling (1-Hour Ingest)",
     durationMinutes,
     channelName: "High Impact Media",
     clips,
