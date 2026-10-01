@@ -78,12 +78,13 @@ Respond ONLY with valid JSON array of objects.`;
           {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            signal: AbortSignal.timeout(15000),
+            signal: AbortSignal.timeout(20000),
             body: JSON.stringify({
               contents: [{ role: 'user', parts: [{ text: prompt }] }],
               generationConfig: {
                 responseMimeType: 'application/json',
-                temperature: 0.3,
+                temperature: 0.2,
+                thinkingConfig: { thinkingBudget: 0 },
               },
             }),
           }
