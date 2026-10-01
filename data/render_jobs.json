@@ -1,5 +1,14 @@
 [
   {
+    "id": "job-test-1790875024059",
+    "projectId": "test-proj-1790875024042",
+    "inputUrl": "https://example.com/test.mp4",
+    "status": "queued",
+    "progress": 50,
+    "currentStage": "Rendering",
+    "createdAt": "2026-10-01T17:17:04.059Z"
+  },
+  {
     "id": "job-test-1790874831250",
     "projectId": "test-proj-1790874831234",
     "inputUrl": "https://example.com/test.mp4",
