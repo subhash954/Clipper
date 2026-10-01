@@ -63,10 +63,24 @@ import {
   Sliders,
   Layers,
   ChevronRight,
-  Eye
+  Eye,
+  Database,
+  Save,
+  Check,
+  Loader2
 } from 'lucide-react';
 
 export default function StudioPage() {
+  const [projectId, setProjectId] = useState<string>(() => {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      return params.get('projectId') || params.get('id') || `proj-${Date.now()}`;
+    }
+    return `proj-${Date.now()}`;
+  });
+  const [dbSyncStatus, setDbSyncStatus] = useState<'saved' | 'saving' | 'error'>('saved');
+  const [lastSavedAt, setLastSavedAt] = useState<Date>(new Date());
+
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [projectName, setProjectName] = useState<string>("My Podcast Short");
   const [words, setWords] = useState<WordTimestamp[]>([]);
@@ -96,7 +110,7 @@ export default function StudioPage() {
     splitScreenEnabled: false,
     satisfyingVideoType: 'none',
     showProgressBar: true,
-    progressBarColor: '#06B6D4',
+    progressBarColor: '#DC2626',
     progressBarHeight: 8,
     showCustomLogo: false,
     customLogoText: '@ClipperCreator',
@@ -139,37 +153,132 @@ export default function StudioPage() {
   const [isPricingOpen, setIsPricingOpen] = useState(false);
   const playerRef = useRef<VideoPreviewPlayerRef>(null);
 
-  // Load project from localStorage on mount
+  // Load project: Query DB first if query id present, fallback to localStorage
   useEffect(() => {
     if (typeof window !== 'undefined') {
-      try {
-        const saved = localStorage.getItem('clipper_active_project');
-        if (saved) {
-          const parsed = JSON.parse(saved);
-          if (parsed.videoTitle) {
-            setProjectName(parsed.videoTitle.slice(0, 48));
+      const params = new URLSearchParams(window.location.search);
+      const queryId = params.get('projectId') || params.get('id');
+
+      if (queryId) {
+        setProjectId(queryId);
+        setDbSyncStatus('saving');
+        fetch(`/api/projects?id=${queryId}`)
+          .then((res) => res.json())
+          .then((data) => {
+            if (data.project) {
+              const p = data.project;
+              if (p.title) setProjectName(p.title);
+              if (p.sourceUrl) setVideoUrl(p.sourceUrl);
+              if (p.clips && p.clips.length > 0) {
+                setClips(p.clips);
+                setActiveClipId(p.clips[0].id);
+                if (p.clips[0].words && p.clips[0].words.length > 0) {
+                  setWords(p.clips[0].words);
+                }
+              }
+              if (p.transcript?.words && p.transcript.words.length > 0 && (!p.clips || p.clips.length === 0)) {
+                setWords(p.transcript.words);
+              }
+              if (typeof p.isMediaAvailable === 'boolean') {
+                setIsMediaAvailable(p.isMediaAvailable);
+              }
+              setDbSyncStatus('saved');
+            }
+          })
+          .catch((err) => {
+            console.warn('Could not load project from database:', err);
+            setDbSyncStatus('error');
+          });
+      } else {
+        // Fallback to localStorage active project
+        try {
+          const saved = localStorage.getItem('clipper_active_project');
+          if (saved) {
+            const parsed = JSON.parse(saved);
+            if (parsed.id) setProjectId(parsed.id);
+            if (parsed.videoTitle) setProjectName(parsed.videoTitle.slice(0, 48));
+            if (parsed.videoUrl) setVideoUrl(parsed.videoUrl);
+            if (parsed.activeClip?.words && parsed.activeClip.words.length > 0) {
+              setWords(parsed.activeClip.words);
+            } else if (parsed.transcript?.words && parsed.transcript.words.length > 0) {
+              setWords(parsed.transcript.words);
+            }
+            if (parsed.clips && parsed.clips.length > 0) {
+              setClips(parsed.clips);
+              setActiveClipId(parsed.activeClip?.id || parsed.clips[0].id);
+            }
+            if (typeof parsed.isMediaAvailable === 'boolean') {
+              setIsMediaAvailable(parsed.isMediaAvailable);
+            }
           }
-          if (parsed.videoUrl) {
-            setVideoUrl(parsed.videoUrl);
-          }
-          if (parsed.activeClip?.words && parsed.activeClip.words.length > 0) {
-            setWords(parsed.activeClip.words);
-          } else if (parsed.transcript?.words && parsed.transcript.words.length > 0) {
-            setWords(parsed.transcript.words);
-          }
-          if (parsed.clips && parsed.clips.length > 0) {
-            setClips(parsed.clips);
-            setActiveClipId(parsed.activeClip?.id || parsed.clips[0].id);
-          }
-          if (typeof parsed.isMediaAvailable === 'boolean') {
-            setIsMediaAvailable(parsed.isMediaAvailable);
-          }
+        } catch (err) {
+          console.warn('Error reading saved project from localStorage:', err);
         }
-      } catch (err) {
-        console.warn('Error reading saved project:', err);
       }
     }
   }, []);
+
+  // Save project directly to persistent database (/api/projects)
+  const handleSaveToDatabase = async () => {
+    setDbSyncStatus('saving');
+    try {
+      const projectPayload = {
+        id: projectId,
+        title: projectName,
+        sourceUrl: videoUrl,
+        clips: clips.map((c) => (c.id === activeClipId ? { ...c, words } : c)),
+        words: words,
+        status: 'completed',
+        isMediaAvailable: isMediaAvailable,
+        costs: {
+          deepgramSTTCost: 0.19,
+          geminiFlashLLMCost: 0.002,
+          stockBRollCost: 0.0,
+          totalCostUSD: 0.35,
+          totalCostINR: 30,
+        },
+        updatedAt: new Date().toISOString(),
+      };
+
+      const res = await fetch('/api/projects', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(projectPayload),
+      });
+
+      if (res.ok) {
+        setDbSyncStatus('saved');
+        setLastSavedAt(new Date());
+        if (typeof window !== 'undefined') {
+          localStorage.setItem(
+            'clipper_active_project',
+            JSON.stringify({
+              id: projectId,
+              videoTitle: projectName,
+              videoUrl: videoUrl,
+              activeClip: activeClip,
+              clips: clips,
+              isMediaAvailable: isMediaAvailable,
+            })
+          );
+        }
+      } else {
+        setDbSyncStatus('error');
+      }
+    } catch (err) {
+      console.error('Failed to sync to database:', err);
+      setDbSyncStatus('error');
+    }
+  };
+
+  // Debounced Auto-Save to Database whenever project state updates
+  useEffect(() => {
+    if (!videoUrl && clips.length === 0) return;
+    const timer = setTimeout(() => {
+      handleSaveToDatabase();
+    }, 2500);
+    return () => clearTimeout(timer);
+  }, [projectName, words, clips, activeCuts, visualSettings, subtitleStyle]);
 
   // Explicit Demo Loader (Section 2)
   const handleLoadDemo = () => {
@@ -272,51 +381,78 @@ export default function StudioPage() {
   return (
     <AppShell onOpenCreateProject={() => setIsCreateModalOpen(true)}>
       
-      {/* 1. TOP CONTEXT BAR (Section 21) */}
-      <header className="h-14 bg-[#111827] border-b border-[#1F2937] px-6 flex items-center justify-between sticky top-0 z-30 select-none">
+      {/* 1. TOP CONTEXT BAR: Clean White Box with Red Accents */}
+      <header className="h-14 bg-white border-b border-slate-200/80 px-6 flex items-center justify-between sticky top-0 z-30 select-none shadow-xs">
         
-        {/* Left: Project Name + Saved Status */}
+        {/* Left: Project Name + Saved Status + DB Sync */}
         <div className="flex items-center gap-3">
           <input
             type="text"
             value={projectName}
             onChange={(e) => setProjectName(e.target.value)}
-            className="text-xs font-bold text-white bg-transparent hover:bg-slate-800/40 focus:bg-[#0E1524] px-2 py-1 rounded-lg border border-transparent focus:border-cyan-500/50 outline-hidden transition-all truncate max-w-xs sm:max-w-md"
+            className="text-xs font-bold text-slate-900 bg-slate-100 hover:bg-slate-200/70 focus:bg-white px-2.5 py-1.5 rounded-lg border border-slate-200 focus:border-red-500 focus:ring-1 focus:ring-red-500 outline-hidden transition-all truncate max-w-xs sm:max-w-md shadow-xs"
             title="Click to rename project"
           />
-          <span className="text-[10px] text-emerald-400 font-medium flex items-center gap-1.5 bg-emerald-950/40 border border-emerald-800/40 px-2 py-0.5 rounded-full">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shadow-sm shadow-emerald-400" /> Saved
-          </span>
+
+          {/* Database Sync Status Badge */}
+          {dbSyncStatus === 'saving' ? (
+            <span className="text-[10px] text-amber-700 font-semibold flex items-center gap-1.5 bg-amber-50 border border-amber-200/80 px-2.5 py-1 rounded-full animate-pulse shadow-xs">
+              <Loader2 className="w-3 h-3 animate-spin text-amber-600" />
+              <span>Syncing to DB...</span>
+            </span>
+          ) : dbSyncStatus === 'error' ? (
+            <span className="text-[10px] text-rose-700 font-semibold flex items-center gap-1.5 bg-rose-50 border border-rose-200 px-2.5 py-1 rounded-full shadow-xs">
+              <AlertCircle className="w-3 h-3 text-rose-600" />
+              <span>Sync Error</span>
+            </span>
+          ) : (
+            <span className="text-[10px] text-emerald-700 font-semibold flex items-center gap-1.5 bg-emerald-50 border border-emerald-200/80 px-2.5 py-1 rounded-full shadow-xs">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shadow-xs shadow-emerald-400" />
+              <span>Saved to Database</span>
+            </span>
+          )}
+
+          {/* Manual Save Button */}
+          <button
+            type="button"
+            onClick={handleSaveToDatabase}
+            className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-50 hover:bg-red-50 text-slate-700 hover:text-red-700 border border-slate-200 hover:border-red-200 text-[11px] font-semibold transition-colors cursor-pointer shadow-xs"
+            title="Save Project to Database"
+          >
+            <Database className="w-3 h-3 text-red-600" />
+            <span>Save</span>
+          </button>
+
           {isDemoMode && (
-            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-cyan-950 text-cyan-400 border border-cyan-800/60">
-              DEMO PROJECT
+            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-red-50 text-red-700 border border-red-200">
+              DEMO
             </span>
           )}
         </div>
 
         {/* Center: Undo / Redo / AI Assistant */}
-        <div className="hidden md:flex items-center gap-1 bg-[#0E1524] border border-[#283344] p-1 rounded-xl">
+        <div className="hidden md:flex items-center gap-1 bg-slate-100/90 border border-slate-200/80 p-1 rounded-xl shadow-xs">
           <button
             type="button"
-            className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+            className="p-1.5 rounded-lg text-slate-500 hover:text-slate-900 hover:bg-white transition-colors"
             title="Undo (⌘Z)"
           >
             <Undo2 className="w-3.5 h-3.5" />
           </button>
           <button
             type="button"
-            className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+            className="p-1.5 rounded-lg text-slate-500 hover:text-slate-900 hover:bg-white transition-colors"
             title="Redo (⇧⌘Z)"
           >
             <Redo2 className="w-3.5 h-3.5" />
           </button>
-          <div className="w-px h-3.5 bg-slate-700 mx-1" />
+          <div className="w-px h-3.5 bg-slate-300 mx-1" />
           <button
             type="button"
             onClick={() => setActiveTool('moments')}
-            className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-cyan-500/10 text-cyan-400 hover:bg-cyan-500/20 text-xs font-semibold transition-colors"
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-red-50 text-red-700 hover:bg-red-100 border border-red-200/70 text-xs font-bold transition-colors cursor-pointer"
           >
-            <Bot className="w-3.5 h-3.5" />
+            <Bot className="w-3.5 h-3.5 text-red-600" />
             <span>AI Assistant</span>
           </button>
         </div>
@@ -330,9 +466,9 @@ export default function StudioPage() {
                 setVideoUrl(null);
                 setIsDemoMode(false);
               }}
-              className="text-xs text-slate-400 hover:text-white px-2.5 py-1.5 rounded-lg hover:bg-slate-800 transition-colors flex items-center gap-1.5 cursor-pointer"
+              className="text-xs text-slate-600 hover:text-slate-900 px-2.5 py-1.5 rounded-lg hover:bg-slate-100 border border-transparent hover:border-slate-200 transition-colors flex items-center gap-1.5 cursor-pointer"
             >
-              <RefreshCw className="w-3.5 h-3.5" />
+              <RefreshCw className="w-3.5 h-3.5 text-slate-500" />
               <span>Change Video</span>
             </button>
           )}
@@ -340,61 +476,61 @@ export default function StudioPage() {
           <button
             type="button"
             onClick={() => setIsExportOpen(true)}
-            className="px-4 py-2 rounded-xl bg-gradient-to-r from-cyan-500 to-cyan-600 hover:from-cyan-400 hover:to-cyan-500 text-slate-950 font-bold text-xs flex items-center gap-2 shadow-lg shadow-cyan-500/25 transition-all hover:scale-[1.02] cursor-pointer"
+            className="px-4 py-2 rounded-xl bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-500 hover:to-rose-500 text-white font-bold text-xs flex items-center gap-2 shadow-md shadow-red-600/20 hover:scale-[1.02] transition-all cursor-pointer"
           >
-            <Download className="w-4 h-4" />
+            <Download className="w-4 h-4 text-white" />
             <span>Export 9:16 Video</span>
           </button>
         </div>
 
       </header>
 
-      {/* 2. EDITOR MAIN WORKSPACE (Section 14: 3-column + bottom timeline) */}
+      {/* 2. EDITOR MAIN WORKSPACE */}
       <main className="p-6 max-w-[1600px] w-full mx-auto space-y-6">
         
         {!videoUrl ? (
-          /* Empty State for New Project */
+          /* Empty State for New Project: White Cards with Soft Shadow on Light Grey */
           <div className="max-w-2xl mx-auto space-y-8 pt-8">
             <div className="text-center space-y-2">
-              <div className="w-12 h-12 rounded-2xl bg-cyan-950/40 border border-cyan-800/40 text-cyan-400 flex items-center justify-center mx-auto">
+              <div className="w-12 h-12 rounded-2xl bg-red-50 border border-red-200 text-red-600 flex items-center justify-center mx-auto shadow-sm">
                 <Scissors className="w-6 h-6 -rotate-45" />
               </div>
-              <h2 className="text-2xl font-extrabold text-white tracking-tight">
+              <h2 className="text-2xl font-extrabold text-slate-900 tracking-tight">
                 Import Your Video to Begin
               </h2>
-              <p className="text-xs text-slate-400 max-w-md mx-auto">
+              <p className="text-xs text-slate-500 max-w-md mx-auto">
                 Upload raw footage or paste a YouTube URL to automatically detect high-retention moments and sync word captions.
               </p>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {/* Option 1: File Upload */}
-              <div className="clipper-card p-6 space-y-3">
-                <div className="flex items-center gap-2 text-cyan-400 font-bold text-xs">
+              <div className="clipper-card bg-white border border-slate-200/90 p-6 space-y-3 shadow-sm rounded-2xl">
+                <div className="flex items-center gap-2 text-red-600 font-bold text-xs">
                   <Upload className="w-4 h-4" />
                   <span>Upload Local File</span>
                 </div>
-                <p className="text-xs text-slate-400">
+                <p className="text-xs text-slate-500">
                   Directly process MP4, MOV, or WebM videos.
                 </p>
                 <VideoUploader onVideoSelected={handleVideoSelected} />
               </div>
 
               {/* Option 2: YouTube Import */}
-              <div className="clipper-card p-6 flex flex-col justify-between space-y-3">
+              <div className="clipper-card bg-white border border-slate-200/90 p-6 flex flex-col justify-between space-y-3 shadow-sm rounded-2xl">
                 <div className="space-y-2">
-                  <div className="flex items-center gap-2 text-cyan-400 font-bold text-xs">
-                    <Youtube className="w-4 h-4 text-red-500" />
+                  <div className="flex items-center gap-2 text-red-600 font-bold text-xs">
+                    <Youtube className="w-4 h-4 text-red-600" />
                     <span>Paste YouTube URL</span>
                   </div>
-                  <p className="text-xs text-slate-400">
+                  <p className="text-xs text-slate-500">
                     Extract top 5 moments from official caption cues.
                   </p>
                 </div>
                 <button
                   type="button"
                   onClick={() => setIsCreateModalOpen(true)}
-                  className="w-full py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs border border-slate-700 transition-colors flex items-center justify-center gap-2 cursor-pointer"
+                  className="w-full py-2.5 rounded-xl bg-red-600 hover:bg-red-700 text-white font-bold text-xs shadow-md shadow-red-600/20 transition-all flex items-center justify-center gap-2 cursor-pointer"
                 >
                   <span>Open URL Importer</span>
                   <ChevronRight className="w-4 h-4" />
@@ -403,14 +539,14 @@ export default function StudioPage() {
             </div>
 
             {/* Option 3: Explicit Demo Mode */}
-            <div className="p-4 rounded-xl bg-[#0E1524] border border-[#283344] text-center space-y-2">
-              <p className="text-xs text-slate-400">
+            <div className="p-4 rounded-xl bg-white border border-slate-200/90 shadow-sm text-center space-y-2">
+              <p className="text-xs text-slate-500">
                 Want to test Clipper Studio immediately without uploading your own media?
               </p>
               <button
                 type="button"
                 onClick={handleLoadDemo}
-                className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-cyan-400 text-xs font-bold border border-slate-700 shadow-sm transition-colors cursor-pointer"
+                className="px-4 py-2 rounded-xl bg-slate-50 hover:bg-red-50 text-red-700 text-xs font-bold border border-red-200 shadow-xs transition-colors cursor-pointer"
               >
                 ⚡ Explore Demo Project (Pre-Loaded Clip)
               </button>
@@ -456,8 +592,8 @@ export default function StudioPage() {
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
               
               {/* COLUMN 1: AI Tools Menu (2 cols on large screen) */}
-              <div className="lg:col-span-2 space-y-1 bg-[#111827] border border-[#283344] p-2 rounded-2xl">
-                <p className="px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+              <div className="lg:col-span-2 space-y-1 bg-white border border-slate-200/90 shadow-sm p-2.5 rounded-2xl">
+                <p className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">
                   AI Tools
                 </p>
                 {aiToolsList.map((tool) => {
@@ -471,14 +607,14 @@ export default function StudioPage() {
                       onClick={() => setActiveTool(tool.id)}
                       className={`w-full p-2.5 rounded-xl text-left transition-all flex items-center gap-2.5 cursor-pointer ${
                         isActive
-                          ? 'bg-cyan-500/10 border border-cyan-500/30 text-cyan-400'
-                          : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/40'
+                          ? 'bg-red-50/80 border border-red-200 text-red-700 font-bold shadow-xs'
+                          : 'text-slate-600 hover:text-slate-900 hover:bg-slate-50'
                       }`}
                     >
-                      <Icon className={`w-4 h-4 shrink-0 ${isActive ? 'text-cyan-400' : 'text-slate-400'}`} />
+                      <Icon className={`w-4 h-4 shrink-0 ${isActive ? 'text-red-600' : 'text-slate-400'}`} />
                       <div className="overflow-hidden">
                         <p className="text-xs font-bold leading-tight">{tool.label}</p>
-                        <p className="text-[10px] text-slate-500 truncate">{tool.desc}</p>
+                        <p className={`text-[10px] truncate ${isActive ? 'text-red-500' : 'text-slate-400'}`}>{tool.desc}</p>
                       </div>
                     </button>
                   );
@@ -624,8 +760,8 @@ export default function StudioPage() {
 
             </div>
 
-            {/* BOTTOM SECTION: Full Width AI-First Timeline (Section 15) */}
-            <div className="pt-2">
+            {/* BOTTOM SECTION: Full Width AI-First Timeline */}
+            <div className="bg-white border border-slate-200/90 shadow-sm p-4 rounded-2xl">
               <CreatorTimeline
                 clip={activeClip}
                 currentTime={currentTime}

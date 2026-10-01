@@ -7,6 +7,7 @@ export interface IStorageAdapter {
   saveProject(project: Project): Promise<Project>;
   getProject(id: string): Promise<Project | null>;
   listProjects(): Promise<Project[]>;
+  deleteProject(id: string): Promise<boolean>;
   createRenderJob(job: RenderJob): Promise<RenderJob>;
   getRenderJob(id: string): Promise<RenderJob | null>;
   updateRenderJob(id: string, updates: Partial<RenderJob>): Promise<RenderJob | null>;
@@ -180,6 +181,15 @@ export class SupabaseStorageAdapter implements IStorageAdapter {
     }));
   }
 
+  async deleteProject(id: string): Promise<boolean> {
+    const { error } = await supabase.from('projects').delete().eq('id', id);
+    if (error) {
+      console.warn('Supabase deleteProject failed:', error.message);
+      return false;
+    }
+    return true;
+  }
+
   async createRenderJob(job: RenderJob): Promise<RenderJob> {
     const { error } = await supabase.from('render_jobs').insert({
       id: job.id,
@@ -350,6 +360,13 @@ export class LocalStorageAdapter implements IStorageAdapter {
 
   async listProjects(): Promise<Project[]> {
     return this.readJson<Project[]>(this.projectsFile, []);
+  }
+
+  async deleteProject(id: string): Promise<boolean> {
+    const list = await this.listProjects();
+    const updated = list.filter((p) => p.id !== id);
+    this.writeJson(this.projectsFile, updated);
+    return true;
   }
 
   async createRenderJob(job: RenderJob): Promise<RenderJob> {

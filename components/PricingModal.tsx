@@ -19,60 +19,60 @@ export const PricingModal: React.FC<PricingModalProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md">
-      <div className="relative w-full max-w-4xl rounded-3xl bg-slate-900 border border-white/15 p-6 sm:p-8 shadow-2xl space-y-6 max-h-[90vh] overflow-y-auto">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+      <div className="relative w-full max-w-4xl rounded-3xl bg-white border border-slate-200/90 p-6 sm:p-8 shadow-2xl space-y-6 max-h-[90vh] overflow-y-auto text-slate-900 animate-in fade-in zoom-in-95">
         
         {/* Close Button */}
         <button
           onClick={onClose}
-          className="absolute top-5 right-5 p-2 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white transition-colors"
+          className="absolute top-5 right-5 p-2 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-500 hover:text-slate-800 transition-colors cursor-pointer"
         >
           <X className="w-4 h-4" />
         </button>
 
         {/* Header */}
         <div className="text-center space-y-2 max-w-lg mx-auto">
-          <span className="px-3 py-1 rounded-full bg-purple-500/20 text-purple-300 text-xs font-semibold border border-purple-500/30">
+          <span className="px-3 py-1 rounded-full bg-red-50 text-red-700 text-xs font-bold border border-red-200 shadow-xs">
             Simple, Transparent Pricing
           </span>
-          <h2 className="text-2xl sm:text-3xl font-extrabold text-white">
-            Scale Your Content & 10x Your Reach
+          <h2 className="text-2xl sm:text-3xl font-extrabold text-slate-900 tracking-tight">
+            Scale Your Content &amp; 10x Your Reach
           </h2>
-          <p className="text-xs sm:text-sm text-slate-400">
+          <p className="text-xs sm:text-sm text-slate-600">
             Choose the plan that fits your growth. Cancel anytime with 1-click.
           </p>
         </div>
 
         {/* Pricing Cards Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-5 pt-2">
           
           {/* 1. Free Starter */}
-          <div className="p-6 rounded-2xl bg-slate-800/40 border border-white/10 flex flex-col justify-between space-y-6">
+          <div className="p-6 rounded-2xl bg-slate-50 border border-slate-200 flex flex-col justify-between space-y-6">
             <div className="space-y-4">
               <div>
-                <h3 className="text-sm font-bold text-white uppercase tracking-wider">Free Starter</h3>
-                <p className="text-xs text-slate-400 mt-1">For creators testing the waters</p>
+                <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wider">Free Starter</h3>
+                <p className="text-xs text-slate-500 mt-1">For creators testing the waters</p>
               </div>
 
               <div className="flex items-baseline gap-1">
-                <span className="text-3xl font-extrabold text-white">$0</span>
-                <span className="text-xs text-slate-400">/ forever</span>
+                <span className="text-3xl font-extrabold text-slate-900">$0</span>
+                <span className="text-xs text-slate-500 font-medium">/ forever</span>
               </div>
 
-              <ul className="space-y-2.5 text-xs text-slate-300">
+              <ul className="space-y-2.5 text-xs text-slate-700 font-medium">
                 <li className="flex items-center gap-2">
-                  <Check className="w-4 h-4 text-emerald-400" />
+                  <Check className="w-4 h-4 text-emerald-600" />
                   <span>3 Free Exports per month</span>
                 </li>
                 <li className="flex items-center gap-2">
-                  <Check className="w-4 h-4 text-emerald-400" />
+                  <Check className="w-4 h-4 text-emerald-600" />
                   <span>Basic Subtitle Styles</span>
                 </li>
                 <li className="flex items-center gap-2">
-                  <Check className="w-4 h-4 text-emerald-400" />
+                  <Check className="w-4 h-4 text-emerald-600" />
                   <span>Standard 720p Resolution</span>
                 </li>
-                <li className="flex items-center gap-2 text-slate-500">
+                <li className="flex items-center gap-2 text-slate-400">
                   <span className="line-through">Watermark Removal</span>
                 </li>
               </ul>
@@ -80,51 +80,51 @@ export const PricingModal: React.FC<PricingModalProps> = ({
 
             <button
               onClick={onClose}
-              className="w-full py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-xs font-semibold border border-white/10 transition-colors"
+              className="w-full py-2.5 rounded-xl bg-white hover:bg-slate-100 text-slate-700 text-xs font-semibold border border-slate-200 shadow-2xs transition-colors cursor-pointer"
             >
               Current Free Plan
             </button>
           </div>
 
           {/* 2. Pro Creator (Most Popular) */}
-          <div className="relative p-6 rounded-2xl bg-gradient-to-b from-purple-950/40 via-slate-900 to-slate-900 border-2 border-purple-500 flex flex-col justify-between space-y-6 shadow-xl shadow-purple-500/10">
+          <div className="relative p-6 rounded-2xl bg-red-50/20 border-2 border-red-500 flex flex-col justify-between space-y-6 shadow-xl shadow-red-500/10">
             {/* Best Value Badge */}
-            <div className="absolute -top-3 left-1/2 -translate-x-1/2 px-3 py-0.5 rounded-full bg-gradient-to-r from-purple-500 to-indigo-500 text-white text-[10px] font-extrabold uppercase tracking-wider shadow-md">
+            <div className="absolute -top-3 left-1/2 -translate-x-1/2 px-3 py-0.5 rounded-full bg-gradient-to-r from-red-600 to-rose-600 text-white text-[10px] font-extrabold uppercase tracking-wider shadow-md">
               Most Popular
             </div>
 
             <div className="space-y-4">
               <div>
-                <h3 className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-1.5">
-                  <Crown className="w-4 h-4 text-amber-400" /> Pro Creator
+                <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wider flex items-center gap-1.5">
+                  <Crown className="w-4 h-4 text-amber-500" /> Pro Creator
                 </h3>
-                <p className="text-xs text-purple-300 mt-1">For daily YouTubers & TikTokers</p>
+                <p className="text-xs text-red-600 font-medium mt-1">For daily YouTubers &amp; TikTokers</p>
               </div>
 
               <div className="flex items-baseline gap-1">
-                <span className="text-3xl font-extrabold text-white">$19</span>
-                <span className="text-xs text-slate-400">/ month</span>
+                <span className="text-3xl font-extrabold text-slate-900">$19</span>
+                <span className="text-xs text-slate-500 font-medium">/ month</span>
               </div>
 
-              <ul className="space-y-2.5 text-xs text-slate-200">
+              <ul className="space-y-2.5 text-xs text-slate-800 font-medium">
                 <li className="flex items-center gap-2">
-                  <Check className="w-4 h-4 text-emerald-400" />
-                  <span className="font-semibold text-white">NO Watermark (100% Clean)</span>
+                  <Check className="w-4 h-4 text-emerald-600" />
+                  <span className="font-bold text-slate-900">NO Watermark (100% Clean)</span>
                 </li>
                 <li className="flex items-center gap-2">
-                  <Check className="w-4 h-4 text-emerald-400" />
+                  <Check className="w-4 h-4 text-emerald-600" />
                   <span>Unlimited 9:16 Exports</span>
                 </li>
                 <li className="flex items-center gap-2">
-                  <Check className="w-4 h-4 text-emerald-400" />
+                  <Check className="w-4 h-4 text-emerald-600" />
                   <span>Signature Studio Typography Presets</span>
                 </li>
                 <li className="flex items-center gap-2">
-                  <Check className="w-4 h-4 text-emerald-400" />
+                  <Check className="w-4 h-4 text-emerald-600" />
                   <span>AI Viral Hook Score Ranking</span>
                 </li>
                 <li className="flex items-center gap-2">
-                  <Check className="w-4 h-4 text-emerald-400" />
+                  <Check className="w-4 h-4 text-emerald-600" />
                   <span>Full HD 1080p 60FPS</span>
                 </li>
               </ul>
@@ -135,7 +135,7 @@ export const PricingModal: React.FC<PricingModalProps> = ({
                 onToggleProStatus();
                 onClose();
               }}
-              className="w-full py-3 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white text-xs font-bold shadow-lg shadow-purple-600/30 transition-all hover:scale-[1.02] flex items-center justify-center gap-1.5"
+              className="w-full py-3 rounded-xl bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-500 hover:to-rose-500 text-white text-xs font-bold shadow-lg shadow-red-600/25 transition-all hover:scale-[1.02] flex items-center justify-center gap-1.5 cursor-pointer"
             >
               <Zap className="w-4 h-4 fill-white" />
               <span>{isProUser ? 'Switch to Free Mode' : 'Unlock Pro Access ($19/mo)'}</span>
@@ -143,38 +143,38 @@ export const PricingModal: React.FC<PricingModalProps> = ({
           </div>
 
           {/* 3. Agency Studio */}
-          <div className="p-6 rounded-2xl bg-slate-800/40 border border-white/10 flex flex-col justify-between space-y-6">
+          <div className="p-6 rounded-2xl bg-slate-50 border border-slate-200 flex flex-col justify-between space-y-6">
             <div className="space-y-4">
               <div>
-                <h3 className="text-sm font-bold text-white uppercase tracking-wider">Agency Studio</h3>
-                <p className="text-xs text-slate-400 mt-1">For video agencies & teams</p>
+                <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wider">Agency Studio</h3>
+                <p className="text-xs text-slate-500 mt-1">For video agencies &amp; teams</p>
               </div>
 
               <div className="flex items-baseline gap-1">
-                <span className="text-3xl font-extrabold text-white">$49</span>
-                <span className="text-xs text-slate-400">/ month</span>
+                <span className="text-3xl font-extrabold text-slate-900">$49</span>
+                <span className="text-xs text-slate-500 font-medium">/ month</span>
               </div>
 
-              <ul className="space-y-2.5 text-xs text-slate-300">
+              <ul className="space-y-2.5 text-xs text-slate-700 font-medium">
                 <li className="flex items-center gap-2">
-                  <Check className="w-4 h-4 text-emerald-400" />
+                  <Check className="w-4 h-4 text-emerald-600" />
                   <span>Everything in Pro</span>
                 </li>
                 <li className="flex items-center gap-2">
-                  <Check className="w-4 h-4 text-emerald-400" />
+                  <Check className="w-4 h-4 text-emerald-600" />
                   <span>5 Team Member Seats</span>
                 </li>
                 <li className="flex items-center gap-2">
-                  <Check className="w-4 h-4 text-emerald-400" />
-                  <span>Custom Fonts & Brand Presets</span>
+                  <Check className="w-4 h-4 text-emerald-600" />
+                  <span>Custom Fonts &amp; Brand Presets</span>
                 </li>
                 <li className="flex items-center gap-2">
-                  <Check className="w-4 h-4 text-emerald-400" />
+                  <Check className="w-4 h-4 text-emerald-600" />
                   <span>Priority GPU Cloud Rendering</span>
                 </li>
                 <li className="flex items-center gap-2">
-                  <Check className="w-4 h-4 text-emerald-400" />
-                  <span>Webhook & API Access</span>
+                  <Check className="w-4 h-4 text-emerald-600" />
+                  <span>Webhook &amp; API Access</span>
                 </li>
               </ul>
             </div>
@@ -184,7 +184,7 @@ export const PricingModal: React.FC<PricingModalProps> = ({
                 onToggleProStatus();
                 onClose();
               }}
-              className="w-full py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-xs font-semibold border border-white/10 transition-colors"
+              className="w-full py-2.5 rounded-xl bg-white hover:bg-slate-100 text-slate-700 text-xs font-semibold border border-slate-200 shadow-2xs transition-colors cursor-pointer"
             >
               Get Agency Plan
             </button>
@@ -195,7 +195,7 @@ export const PricingModal: React.FC<PricingModalProps> = ({
         {/* Global Payment Notice */}
         <div className="text-center pt-2 text-xs text-slate-500 flex items-center justify-center gap-4">
           <span>🔒 256-Bit SSL Encryption</span>
-          <span>💳 Supports Credit Cards, Apple Pay, PayPal & UPI</span>
+          <span>💳 Supports Cards, Apple Pay, PayPal &amp; UPI</span>
           <span>⚡ Instant Activation</span>
         </div>
 

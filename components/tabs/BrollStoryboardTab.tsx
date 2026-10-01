@@ -184,33 +184,33 @@ export const BrollStoryboardTab: React.FC<BrollStoryboardTabProps> = ({
   };
 
   return (
-    <div className="space-y-4 text-[#F8FAFC]">
+    <div className="space-y-4 text-slate-900">
       {/* Top Action Pills Bar */}
-      <div className="flex items-center justify-between gap-2 border-b border-[#1F2937] pb-3 overflow-x-auto scrollbar-none">
+      <div className="flex items-center justify-between gap-2 border-b border-slate-100 pb-3 overflow-x-auto scrollbar-none">
         <div className="flex items-center gap-2">
           <button
             type="button"
             onClick={handleAutoBrolls}
-            className="px-3 py-1.5 rounded-xl bg-orange-950/40 text-orange-400 border border-orange-800/60 hover:bg-orange-900/40 text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
+            className="px-3 py-1.5 rounded-xl bg-red-50 text-red-700 border border-red-200 hover:bg-red-100 text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer whitespace-nowrap shadow-xs"
           >
-            <Sparkles className="w-3.5 h-3.5 fill-orange-400" />
+            <Sparkles className="w-3.5 h-3.5 fill-red-600 text-red-600" />
             <span>Auto B-rolls</span>
           </button>
 
           <button
             type="button"
             onClick={handleAutoZooms}
-            className="px-3 py-1.5 rounded-xl bg-amber-950/40 text-amber-400 border border-amber-800/60 hover:bg-amber-900/40 text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
+            className="px-3 py-1.5 rounded-xl bg-amber-50 text-amber-800 border border-amber-200 hover:bg-amber-100 text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer whitespace-nowrap shadow-xs"
           >
-            <ZoomIn className="w-3.5 h-3.5" />
+            <ZoomIn className="w-3.5 h-3.5 text-amber-600" />
             <span>Auto Zooms</span>
           </button>
 
           <button
             type="button"
-            className="px-3 py-1.5 rounded-xl bg-slate-800 text-slate-300 border border-slate-700 hover:bg-slate-700 text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
+            className="px-3 py-1.5 rounded-xl bg-slate-50 text-slate-700 border border-slate-200 hover:bg-slate-100 text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer whitespace-nowrap shadow-xs"
           >
-            <Flame className="w-3.5 h-3.5 text-rose-400" />
+            <Flame className="w-3.5 h-3.5 text-rose-600" />
             <span>Hook Title</span>
           </button>
         </div>
@@ -218,7 +218,7 @@ export const BrollStoryboardTab: React.FC<BrollStoryboardTabProps> = ({
         <button
           type="button"
           onClick={handleAutoBrolls}
-          className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white border border-slate-700 transition-colors"
+          className="p-2 rounded-xl bg-slate-50 hover:bg-slate-100 text-slate-500 hover:text-slate-800 border border-slate-200 transition-colors cursor-pointer shadow-xs"
           title="Refresh Scene Analysis"
         >
           <RefreshCw className="w-3.5 h-3.5" />
@@ -237,32 +237,32 @@ export const BrollStoryboardTab: React.FC<BrollStoryboardTabProps> = ({
               {/* Scene Block Card */}
               <div
                 onClick={() => onJumpToTime(block.start)}
-                className={`p-3.5 rounded-2xl border transition-all cursor-pointer ${
+                className={`p-4 rounded-2xl border transition-all cursor-pointer ${
                   isCurrentlyActive
-                    ? 'bg-[#141E30] border-cyan-500/60 shadow-md ring-1 ring-cyan-500/30'
-                    : 'bg-[#111827] border-[#283344] hover:border-slate-600'
+                    ? 'bg-red-50/70 border-red-300 shadow-md ring-1 ring-red-400/40'
+                    : 'bg-white border-slate-200/90 hover:border-slate-300 shadow-[0_4px_20px_-2px_rgba(0,0,0,0.05)]'
                 }`}
               >
                 {/* Time Interval Header */}
                 <div className="flex items-center justify-between text-[11px] font-mono text-slate-500 mb-1.5">
-                  <span className="font-bold text-slate-400">
+                  <span className="font-bold text-slate-600">
                     {block.start.toFixed(2)} - {block.end.toFixed(2)}s
                   </span>
-                  <span className="text-[10px] text-slate-500">
+                  <span className="text-[10px] text-slate-400 font-semibold">
                     Scene #{idx + 1}
                   </span>
                 </div>
 
                 {/* Spoken Line */}
-                <p className="text-xs font-medium text-slate-200 leading-relaxed mb-3">
+                <p className="text-xs font-medium text-slate-800 leading-relaxed mb-3">
                   {block.text}
                 </p>
 
                 {/* Multi-Track Layer Chips Row */}
-                <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-[#1F2937]/60">
+                <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-100">
                   {/* Chip 1: A-Roll (Speaker) */}
-                  <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-800/80 border border-slate-700 text-[11px] font-bold text-slate-300">
-                    <span className="w-2 h-2 rounded-full bg-cyan-400" />
+                  <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-100 border border-slate-200 text-[11px] font-bold text-slate-700 shadow-2xs">
+                    <span className="w-2 h-2 rounded-full bg-red-600" />
                     <span>A-roll</span>
                   </div>
 
@@ -273,7 +273,7 @@ export const BrollStoryboardTab: React.FC<BrollStoryboardTabProps> = ({
                         e.stopPropagation();
                         setBrollModalBlockId(block.id);
                       }}
-                      className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-lg bg-indigo-950/60 border border-indigo-700/60 text-[11px] font-bold text-indigo-300 hover:bg-indigo-900/60 transition-colors"
+                      className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-lg bg-red-50 border border-red-200 text-[11px] font-bold text-red-700 hover:bg-red-100 transition-colors shadow-2xs cursor-pointer"
                       title="Click to change or replace B-roll footage"
                     >
                       <img
@@ -293,10 +293,10 @@ export const BrollStoryboardTab: React.FC<BrollStoryboardTabProps> = ({
                         e.stopPropagation();
                         handlePlaySound(block.soundType);
                       }}
-                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-950/60 border border-emerald-800/60 text-[11px] font-bold text-emerald-300 hover:bg-emerald-900/60 transition-colors"
+                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-50 border border-emerald-200 text-[11px] font-bold text-emerald-800 hover:bg-emerald-100 transition-colors shadow-2xs cursor-pointer"
                       title="Audition Sound FX"
                     >
-                      <Volume2 className="w-3 h-3 text-emerald-400" />
+                      <Volume2 className="w-3 h-3 text-emerald-600" />
                       <span>{block.soundType || 'Pop SFX'}</span>
                     </button>
                   )}
@@ -309,9 +309,9 @@ export const BrollStoryboardTab: React.FC<BrollStoryboardTabProps> = ({
                         e.stopPropagation();
                         handleToggleZoomOnBlock(block);
                       }}
-                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-amber-950/60 border border-amber-800/60 text-[11px] font-bold text-amber-300 hover:bg-amber-900/60 transition-colors"
+                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-amber-50 border border-amber-200 text-[11px] font-bold text-amber-800 hover:bg-amber-100 transition-colors shadow-2xs cursor-pointer"
                     >
-                      <ZoomIn className="w-3 h-3 text-amber-400" />
+                      <ZoomIn className="w-3 h-3 text-amber-600" />
                       <span>Zoom 1.15x</span>
                     </button>
                   ) : null}
@@ -323,7 +323,7 @@ export const BrollStoryboardTab: React.FC<BrollStoryboardTabProps> = ({
                       e.stopPropagation();
                       setBrollModalBlockId(block.id);
                     }}
-                    className="w-6 h-6 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 flex items-center justify-center transition-colors cursor-pointer"
+                    className="w-6 h-6 rounded-lg bg-slate-100 hover:bg-slate-200 border border-slate-200 text-slate-600 flex items-center justify-center transition-colors cursor-pointer"
                     title="Add B-Roll or Overlay to this scene"
                   >
                     <Plus className="w-3.5 h-3.5" />
@@ -331,16 +331,16 @@ export const BrollStoryboardTab: React.FC<BrollStoryboardTabProps> = ({
                 </div>
               </div>
 
-              {/* Inter-Scene Transition Pill (Matching Submagic's ⋈ icon) */}
+              {/* Inter-Scene Transition Pill */}
               {idx < sceneBlocks.length - 1 && (
                 <div className="flex items-center justify-center my-0.5">
                   <button
                     type="button"
                     onClick={() => toggleTransition(idx)}
-                    className="px-2.5 py-0.5 rounded-full bg-[#0E1524] hover:bg-slate-800 border border-[#283344] text-[10px] font-bold text-slate-400 hover:text-cyan-400 transition-all flex items-center gap-1 cursor-pointer"
+                    className="px-2.5 py-0.5 rounded-full bg-white hover:bg-red-50 border border-slate-200 text-[10px] font-bold text-slate-500 hover:text-red-600 transition-all flex items-center gap-1 cursor-pointer shadow-2xs"
                     title={`Transition: ${transition.toUpperCase()} (Click to cycle)`}
                   >
-                    <span className="text-xs">⋈</span>
+                    <span className="text-xs text-red-600">⋈</span>
                     <span className="uppercase">{transition}</span>
                   </button>
                 </div>
@@ -352,22 +352,22 @@ export const BrollStoryboardTab: React.FC<BrollStoryboardTabProps> = ({
 
       {/* Stock B-Roll Selection Modal / Drawer */}
       {brollModalBlockId && (
-        <div className="p-4 rounded-xl bg-[#0E1524] border border-indigo-500/40 space-y-3 animate-in fade-in">
-          <div className="flex items-center justify-between border-b border-[#1F2937] pb-2">
-            <span className="text-xs font-bold text-indigo-300 flex items-center gap-1.5">
-              <Film className="w-3.5 h-3.5 text-indigo-400" />
+        <div className="p-4 rounded-2xl bg-white border border-slate-200 shadow-xl space-y-3 animate-in fade-in">
+          <div className="flex items-center justify-between border-b border-slate-100 pb-2">
+            <span className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
+              <Film className="w-3.5 h-3.5 text-red-600" />
               <span>Select Contextual B-Roll Overlay</span>
             </span>
             <button
               type="button"
               onClick={() => setBrollModalBlockId(null)}
-              className="p-1 text-slate-400 hover:text-white"
+              className="p-1 text-slate-400 hover:text-slate-700 cursor-pointer"
             >
               <X className="w-3.5 h-3.5" />
             </button>
           </div>
 
-          <div className="grid grid-cols-3 gap-2 pt-1">
+          <div className="grid grid-cols-3 gap-2.5 pt-1">
             {[
               { keyword: 'money', label: 'Cash & Finance', thumb: STOCK_THUMBNAILS.money },
               { keyword: 'business', label: 'Office & Desk', thumb: STOCK_THUMBNAILS.business },
@@ -379,7 +379,7 @@ export const BrollStoryboardTab: React.FC<BrollStoryboardTabProps> = ({
                 key={stock.keyword}
                 type="button"
                 onClick={() => handleAttachBrollKeyword(brollModalBlockId, stock.keyword)}
-                className="group relative h-20 rounded-xl overflow-hidden border border-slate-700 hover:border-cyan-400 transition-all text-left cursor-pointer"
+                className="group relative h-20 rounded-xl overflow-hidden border border-slate-200 hover:border-red-500 hover:ring-2 hover:ring-red-400/30 transition-all text-left cursor-pointer shadow-xs"
               >
                 <img
                   src={stock.thumb}

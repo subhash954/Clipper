@@ -220,15 +220,15 @@ export const StyleTab: React.FC<StyleTabProps> = ({ currentStyle, onChange }) =>
     presetTiles.find((p) => p.id === currentStyle.preset)?.name || currentStyle.preset;
 
   return (
-    <div className="space-y-4 text-[#F8FAFC]">
+    <div className="bg-white border border-slate-200/90 rounded-2xl p-5 shadow-[0_4px_20px_-2px_rgba(0,0,0,0.05)] space-y-4 text-slate-900">
       {/* Header with Title & Customize Action */}
-      <div className="flex items-center justify-between border-b border-[#1F2937] pb-3">
+      <div className="flex items-center justify-between border-b border-slate-100 pb-3">
         <div>
-          <h2 className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2">
-            <Palette className="w-4 h-4 text-cyan-400" />
+          <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wider flex items-center gap-2">
+            <Palette className="w-4 h-4 text-red-600" />
             Caption Style
           </h2>
-          <p className="text-[11px] text-slate-400 mt-0.5">
+          <p className="text-[11px] text-slate-500 mt-0.5">
             Select high-retention creator subtitle preset
           </p>
         </div>
@@ -236,9 +236,9 @@ export const StyleTab: React.FC<StyleTabProps> = ({ currentStyle, onChange }) =>
         <button
           type="button"
           onClick={() => setIsCustomizing(!isCustomizing)}
-          className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-bold text-cyan-400 border border-slate-700 shadow-sm transition-all flex items-center gap-1.5 cursor-pointer"
+          className="px-3 py-1.5 rounded-xl bg-slate-50 hover:bg-red-50 text-xs font-bold text-slate-700 hover:text-red-700 border border-slate-200 hover:border-red-200 shadow-xs transition-all flex items-center gap-1.5 cursor-pointer"
         >
-          <Sliders className="w-3.5 h-3.5" />
+          <Sliders className="w-3.5 h-3.5 text-red-600" />
           <span>Customize {activePresetName}</span>
         </button>
       </div>
@@ -254,8 +254,8 @@ export const StyleTab: React.FC<StyleTabProps> = ({ currentStyle, onChange }) =>
               onClick={() => setActiveCategory(cat)}
               className={`px-3 py-1 rounded-full text-xs font-bold transition-colors whitespace-nowrap cursor-pointer ${
                 isActive
-                  ? 'bg-cyan-500 text-slate-950 shadow-sm'
-                  : 'bg-[#111827] text-slate-400 hover:text-white border border-[#283344]'
+                  ? 'bg-red-600 text-white shadow-xs'
+                  : 'bg-slate-100 text-slate-600 hover:text-slate-900 border border-slate-200'
               }`}
             >
               {cat}
@@ -266,15 +266,15 @@ export const StyleTab: React.FC<StyleTabProps> = ({ currentStyle, onChange }) =>
 
       {/* Fine-Tuning Drawer / Panel (when Customize is clicked) */}
       {isCustomizing && (
-        <div className="p-4 rounded-xl bg-[#0E1524] border border-cyan-500/30 space-y-4 animate-in fade-in duration-200">
-          <div className="flex items-center justify-between border-b border-[#1F2937] pb-2">
-            <span className="text-xs font-bold text-cyan-400 flex items-center gap-1.5">
+        <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-4 animate-in fade-in duration-200 text-slate-800">
+          <div className="flex items-center justify-between border-b border-slate-200 pb-2">
+            <span className="text-xs font-bold text-red-600 flex items-center gap-1.5">
               <Sliders className="w-3.5 h-3.5" /> Fine-Tune Typography &amp; Badges
             </span>
             <button
               type="button"
               onClick={() => setIsCustomizing(false)}
-              className="p-1 rounded-md text-slate-400 hover:text-white"
+              className="p-1 rounded-md text-slate-400 hover:text-slate-700 cursor-pointer"
             >
               <X className="w-3.5 h-3.5" />
             </button>
@@ -283,9 +283,9 @@ export const StyleTab: React.FC<StyleTabProps> = ({ currentStyle, onChange }) =>
           <div className="grid grid-cols-2 gap-3 text-xs">
             {/* Font Size */}
             <div className="space-y-1">
-              <div className="flex justify-between text-[11px] text-slate-300">
+              <div className="flex justify-between text-[11px] text-slate-600 font-medium">
                 <span>Font Size</span>
-                <span className="font-mono text-cyan-400">{currentStyle.fontSize}px</span>
+                <span className="font-mono text-red-600 font-bold">{currentStyle.fontSize}px</span>
               </div>
               <input
                 type="range"
@@ -294,15 +294,15 @@ export const StyleTab: React.FC<StyleTabProps> = ({ currentStyle, onChange }) =>
                 step="2"
                 value={currentStyle.fontSize}
                 onChange={(e) => handleUpdate({ fontSize: parseInt(e.target.value, 10) })}
-                className="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-cyan-400"
+                className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-red-600"
               />
             </div>
 
             {/* Stroke Width */}
             <div className="space-y-1">
-              <div className="flex justify-between text-[11px] text-slate-300">
+              <div className="flex justify-between text-[11px] text-slate-600 font-medium">
                 <span>Outline Stroke</span>
-                <span className="font-mono text-cyan-400">{currentStyle.strokeWidth}px</span>
+                <span className="font-mono text-red-600 font-bold">{currentStyle.strokeWidth}px</span>
               </div>
               <input
                 type="range"
@@ -311,7 +311,7 @@ export const StyleTab: React.FC<StyleTabProps> = ({ currentStyle, onChange }) =>
                 step="1"
                 value={currentStyle.strokeWidth}
                 onChange={(e) => handleUpdate({ strokeWidth: parseInt(e.target.value, 10) })}
-                className="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-cyan-400"
+                className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-red-600"
               />
             </div>
           </div>
@@ -319,43 +319,43 @@ export const StyleTab: React.FC<StyleTabProps> = ({ currentStyle, onChange }) =>
           {/* Color Pickers Row */}
           <div className="grid grid-cols-3 gap-2 pt-1 text-xs">
             <div>
-              <label className="text-[10px] font-bold text-slate-400 block mb-1">
+              <label className="text-[10px] font-bold text-slate-600 block mb-1">
                 Highlight Pop
               </label>
               <input
                 type="color"
                 value={currentStyle.highlightColor}
                 onChange={(e) => handleUpdate({ highlightColor: e.target.value })}
-                className="w-full h-8 rounded-lg bg-transparent border border-slate-700 cursor-pointer"
+                className="w-full h-8 rounded-lg bg-white border border-slate-300 cursor-pointer"
               />
             </div>
             <div>
-              <label className="text-[10px] font-bold text-slate-400 block mb-1">
+              <label className="text-[10px] font-bold text-slate-600 block mb-1">
                 Primary Text
               </label>
               <input
                 type="color"
                 value={currentStyle.primaryColor}
                 onChange={(e) => handleUpdate({ primaryColor: e.target.value })}
-                className="w-full h-8 rounded-lg bg-transparent border border-slate-700 cursor-pointer"
+                className="w-full h-8 rounded-lg bg-white border border-slate-300 cursor-pointer"
               />
             </div>
             <div>
-              <label className="text-[10px] font-bold text-slate-400 block mb-1">
+              <label className="text-[10px] font-bold text-slate-600 block mb-1">
                 Background Badge
               </label>
               <input
                 type="color"
                 value={currentStyle.badgeColor || '#22C55E'}
                 onChange={(e) => handleUpdate({ badgeColor: e.target.value })}
-                className="w-full h-8 rounded-lg bg-transparent border border-slate-700 cursor-pointer"
+                className="w-full h-8 rounded-lg bg-white border border-slate-300 cursor-pointer"
               />
             </div>
           </div>
 
           {/* Position Selector */}
           <div className="space-y-1.5 pt-1">
-            <label className="text-[10px] font-bold text-slate-400 block">
+            <label className="text-[10px] font-bold text-slate-600 block">
               Vertical Screen Position
             </label>
             <div className="grid grid-cols-3 gap-2">
@@ -366,8 +366,8 @@ export const StyleTab: React.FC<StyleTabProps> = ({ currentStyle, onChange }) =>
                   onClick={() => handleUpdate({ position: pos })}
                   className={`py-1.5 rounded-lg border text-xs font-bold capitalize transition-colors cursor-pointer ${
                     currentStyle.position === pos
-                      ? 'bg-cyan-500 text-slate-950 border-cyan-400'
-                      : 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700'
+                      ? 'bg-red-600 text-white border-red-500 shadow-xs'
+                      : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
                   }`}
                 >
                   {pos}
@@ -377,33 +377,33 @@ export const StyleTab: React.FC<StyleTabProps> = ({ currentStyle, onChange }) =>
           </div>
 
           {/* Toggles */}
-          <div className="flex items-center justify-between pt-2 border-t border-[#1F2937] text-xs">
-            <label className="flex items-center gap-2 cursor-pointer text-slate-300">
+          <div className="flex items-center justify-between pt-2 border-t border-slate-200 text-xs">
+            <label className="flex items-center gap-2 cursor-pointer text-slate-700 font-medium">
               <input
                 type="checkbox"
                 checked={currentStyle.uppercase}
                 onChange={(e) => handleUpdate({ uppercase: e.target.checked })}
-                className="w-3.5 h-3.5 accent-cyan-400"
+                className="w-3.5 h-3.5 accent-red-600 rounded"
               />
               <span>UPPERCASE</span>
             </label>
 
-            <label className="flex items-center gap-2 cursor-pointer text-slate-300">
+            <label className="flex items-center gap-2 cursor-pointer text-slate-700 font-medium">
               <input
                 type="checkbox"
                 checked={currentStyle.showEmojis}
                 onChange={(e) => handleUpdate({ showEmojis: e.target.checked })}
-                className="w-3.5 h-3.5 accent-cyan-400"
+                className="w-3.5 h-3.5 accent-red-600 rounded"
               />
               <span>Auto Emojis</span>
             </label>
 
-            <label className="flex items-center gap-2 cursor-pointer text-slate-300">
+            <label className="flex items-center gap-2 cursor-pointer text-slate-700 font-medium">
               <input
                 type="checkbox"
                 checked={currentStyle.enableSFX}
                 onChange={(e) => handleUpdate({ enableSFX: e.target.checked })}
-                className="w-3.5 h-3.5 accent-cyan-400"
+                className="w-3.5 h-3.5 accent-red-600 rounded"
               />
               <span>Pop Sound FX</span>
             </label>
@@ -423,19 +423,19 @@ export const StyleTab: React.FC<StyleTabProps> = ({ currentStyle, onChange }) =>
               onClick={() => handleSelectPreset(tile.id)}
               className={`relative h-24 rounded-2xl border transition-all flex flex-col items-center justify-center p-2.5 overflow-hidden group cursor-pointer ${
                 isSelected
-                  ? 'border-cyan-400 ring-2 ring-cyan-400/50 bg-[#161F30] shadow-md shadow-cyan-500/10'
-                  : 'border-[#283344] bg-[#111827] hover:border-slate-500 hover:bg-[#161F30]'
+                  ? 'border-red-500 ring-2 ring-red-500/20 bg-red-50/40 shadow-xs'
+                  : 'border-slate-200/90 bg-white hover:border-slate-300 hover:bg-slate-50/60 shadow-xs'
               }`}
             >
               {/* Badges on Tile (New / Premium) */}
               {tile.isNew && (
-                <span className="absolute top-2 left-2 text-[9px] font-bold px-1.5 py-0.2 rounded-full bg-slate-800 text-slate-300 border border-slate-700">
+                <span className="absolute top-2 left-2 text-[9px] font-bold px-1.5 py-0.2 rounded-full bg-slate-100 text-slate-700 border border-slate-200">
                   New
                 </span>
               )}
               {tile.isPopular && (
-                <span className="absolute top-2 left-2 text-[10px] text-amber-400">
-                  <Zap className="w-3 h-3 fill-amber-400" />
+                <span className="absolute top-2 left-2 text-[10px] text-amber-500">
+                  <Zap className="w-3 h-3 fill-amber-500" />
                 </span>
               )}
 
@@ -445,7 +445,7 @@ export const StyleTab: React.FC<StyleTabProps> = ({ currentStyle, onChange }) =>
               </div>
 
               {/* Preset Label */}
-              <span className="absolute bottom-1.5 text-[10px] text-slate-500 group-hover:text-slate-300 transition-colors font-medium">
+              <span className="absolute bottom-1.5 text-[10px] text-slate-500 group-hover:text-slate-900 transition-colors font-semibold">
                 {tile.name}
               </span>
             </button>

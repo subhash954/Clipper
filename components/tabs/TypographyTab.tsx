@@ -22,15 +22,15 @@ export const TypographyTab: React.FC<TypographyTabProps> = ({ currentStyle, onCh
   };
 
   const colorSwatches = [
-    { name: 'Clipper Cyan', hex: '#06B6D4' },
-    { name: 'Aqua Focus', hex: '#22D3EE' },
+    { name: 'Clipper Red', hex: '#DC2626' },
+    { name: 'Rose Pop', hex: '#F43F5E' },
     { name: 'Electric Gold', hex: '#FACC15' },
     { name: 'Emerald Pulse', hex: '#22C55E' },
     { name: 'Bold Amber', hex: '#F97316' },
     { name: 'Clean White', hex: '#FFFFFF' }
   ];
 
-  // Section 16: Clipper Presets (Signal, Punch, Minimal, Focus, Studio, Kinetic, Mono, Highlight)
+  // Section 16: Clipper Presets
   const presetsConfig: Array<{
     id: SubtitlePreset;
     title: string;
@@ -42,78 +42,78 @@ export const TypographyTab: React.FC<TypographyTabProps> = ({ currentStyle, onCh
       id: 'signal',
       title: 'Signal',
       tag: 'Clipper Signature',
-      description: 'Inter • Electric Cyan Pop • Punchy Karaoke',
-      accentColor: 'border-cyan-500 text-cyan-400 bg-cyan-950/40',
+      description: 'Inter • Electric Red Pop • Punchy Karaoke',
+      accentColor: 'border-red-500 text-red-700 bg-red-50/80',
     },
     {
       id: 'punch',
       title: 'Punch',
       tag: 'High Energy',
       description: 'Impact Font • Gold Pop • Heavy Outline',
-      accentColor: 'border-amber-500 text-amber-400 bg-amber-950/40',
+      accentColor: 'border-amber-500 text-amber-700 bg-amber-50/80',
     },
     {
       id: 'minimal',
       title: 'Minimal',
       tag: 'Understated',
       description: 'Light Sans • Subtle Shadow • Clean Modern',
-      accentColor: 'border-slate-500 text-slate-300 bg-slate-900',
+      accentColor: 'border-slate-400 text-slate-700 bg-slate-50',
     },
     {
       id: 'focus',
       title: 'Focus',
       tag: 'Clean Read',
-      description: 'Montserrat • Aqua Highlight • High Legibility',
-      accentColor: 'border-cyan-400 text-cyan-300 bg-cyan-950/30',
+      description: 'Montserrat • Red Highlight • High Legibility',
+      accentColor: 'border-rose-400 text-rose-700 bg-rose-50/80',
     },
     {
       id: 'studio',
       title: 'Studio',
       tag: 'Creator Pro',
-      description: 'Montserrat • Rose Accents • Crisp Broadcast',
-      accentColor: 'border-rose-500 text-rose-400 bg-rose-950/40',
+      description: 'Montserrat • Crimson Accents • Crisp Broadcast',
+      accentColor: 'border-red-600 text-red-800 bg-red-100/60',
     },
     {
       id: 'kinetic',
       title: 'Kinetic',
       tag: 'Fast Pace',
       description: 'Trebuchet MS • Amber Fire • Rapid Sync',
-      accentColor: 'border-orange-500 text-orange-400 bg-orange-950/40',
+      accentColor: 'border-orange-500 text-orange-700 bg-orange-50/80',
     },
     {
       id: 'mono',
       title: 'Mono',
       tag: 'Tech & Code',
       description: 'Courier Monospace • Cyber Glow • Standout',
-      accentColor: 'border-teal-500 text-teal-300 bg-teal-950/40',
+      accentColor: 'border-slate-500 text-slate-800 bg-slate-100',
     },
     {
       id: 'highlight',
       title: 'Highlight',
       tag: 'Vibrant',
       description: 'System Sans • Emerald Glow • Karaoke Pop',
-      accentColor: 'border-emerald-500 text-emerald-400 bg-emerald-950/40',
+      accentColor: 'border-emerald-500 text-emerald-700 bg-emerald-50/80',
     },
   ];
 
   return (
-    <div className="space-y-5 text-[#F8FAFC]">
+    <div className="space-y-6 text-slate-900">
       
       {/* 1. Original Clipper Creator Presets */}
-      <div className="p-4 rounded-xl bg-[#111827] border border-[#283344] space-y-3">
-        <div className="flex items-center justify-between border-b border-[#1F2937] pb-2.5">
+      <div className="p-5 rounded-2xl bg-white border border-slate-200/90 shadow-[0_4px_20px_-2px_rgba(0,0,0,0.05)] space-y-3.5">
+        <div className="flex items-center justify-between border-b border-slate-100 pb-3">
           <div className="flex items-center gap-2">
-            <Palette className="w-4 h-4 text-cyan-400" />
-            <h3 className="text-xs font-bold text-white uppercase tracking-wider">
+            <Palette className="w-4 h-4 text-red-600" />
+            <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider">
               Signature Typography Presets
             </h3>
           </div>
-          <span className="text-[10px] text-cyan-400 font-bold bg-cyan-950 px-2 py-0.5 rounded-full border border-cyan-800/60">
+          <span className="text-[10px] text-red-700 font-bold bg-red-50 px-2.5 py-0.5 rounded-full border border-red-200 shadow-xs">
             Live Preview
           </span>
         </div>
 
-        <div className="grid grid-cols-2 gap-2.5">
+        <div className="grid grid-cols-2 gap-3">
           {presetsConfig.map((p) => {
             const isSelected = currentStyle.preset === p.id;
             return (
@@ -121,19 +121,19 @@ export const TypographyTab: React.FC<TypographyTabProps> = ({ currentStyle, onCh
                 key={p.id}
                 type="button"
                 onClick={() => handlePresetSelect(p.id)}
-                className={`p-3 rounded-xl border text-left transition-all cursor-pointer ${
+                className={`p-3.5 rounded-xl border text-left transition-all cursor-pointer ${
                   isSelected
-                    ? `${p.accentColor} shadow-cyan-sm ring-1 ring-cyan-400`
-                    : 'border-[#283344] bg-[#0E1524] hover:border-slate-600 hover:bg-[#161F30]'
+                    ? `${p.accentColor} shadow-xs ring-1 ring-red-400`
+                    : 'border-slate-200 bg-slate-50/60 hover:border-slate-300 hover:bg-white'
                 }`}
               >
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-white">{p.title}</span>
-                  <span className="text-[9px] px-1.5 py-0.5 rounded-md bg-slate-800 text-slate-300 font-medium border border-slate-700">
+                  <span className="text-xs font-bold text-slate-900">{p.title}</span>
+                  <span className="text-[9px] px-1.5 py-0.5 rounded-md bg-white text-slate-600 font-semibold border border-slate-200 shadow-2xs">
                     {p.tag}
                   </span>
                 </div>
-                <p className="text-[10px] text-slate-400 mt-1">{p.description}</p>
+                <p className="text-[10px] text-slate-500 mt-1">{p.description}</p>
               </button>
             );
           })}
@@ -141,30 +141,30 @@ export const TypographyTab: React.FC<TypographyTabProps> = ({ currentStyle, onCh
       </div>
 
       {/* 2. Color & Highlights */}
-      <div className="p-4 rounded-xl bg-[#111827] border border-[#283344] space-y-3">
-        <div className="flex items-center gap-2 border-b border-[#1F2937] pb-2.5">
-          <Type className="w-4 h-4 text-cyan-400" />
-          <h3 className="text-xs font-bold text-white uppercase tracking-wider">
+      <div className="p-5 rounded-2xl bg-white border border-slate-200/90 shadow-[0_4px_20px_-2px_rgba(0,0,0,0.05)] space-y-4">
+        <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
+          <Type className="w-4 h-4 text-red-600" />
+          <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider">
             Color &amp; Word Highlights
           </h3>
         </div>
 
-        <div className="space-y-3">
+        <div className="space-y-4">
           <div>
-            <label className="text-[11px] font-bold text-slate-400 block mb-1.5">
+            <label className="text-[11px] font-bold text-slate-700 block mb-2">
               Active Highlight Pop Color
             </label>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2.5">
               {colorSwatches.map((color) => (
                 <button
                   key={color.hex}
                   type="button"
                   onClick={() => handleUpdate({ highlightColor: color.hex })}
                   style={{ backgroundColor: color.hex }}
-                  className={`w-7 h-7 rounded-full border-2 transition-transform cursor-pointer ${
+                  className={`w-7 h-7 rounded-full border-2 transition-transform cursor-pointer shadow-2xs ${
                     currentStyle.highlightColor.toLowerCase() === color.hex.toLowerCase()
-                      ? 'border-white scale-110 shadow-md ring-2 ring-cyan-400'
-                      : 'border-transparent hover:scale-105'
+                      ? 'border-slate-900 scale-110 shadow-md ring-2 ring-red-400'
+                      : 'border-slate-200 hover:scale-105'
                   }`}
                   title={color.name}
                 />
@@ -173,10 +173,10 @@ export const TypographyTab: React.FC<TypographyTabProps> = ({ currentStyle, onCh
           </div>
 
           {/* Font Size & Position Slider */}
-          <div className="grid grid-cols-2 gap-3 pt-2">
+          <div className="grid grid-cols-2 gap-4 pt-2">
             <div>
-              <label className="text-[11px] font-bold text-slate-400 block mb-1">
-                Font Size: <span className="font-mono text-cyan-400">{currentStyle.fontSize}px</span>
+              <label className="text-[11px] font-bold text-slate-700 block mb-1">
+                Font Size: <span className="font-mono text-red-600 font-bold">{currentStyle.fontSize}px</span>
               </label>
               <input
                 type="range"
@@ -184,24 +184,24 @@ export const TypographyTab: React.FC<TypographyTabProps> = ({ currentStyle, onCh
                 max="68"
                 value={currentStyle.fontSize}
                 onChange={(e) => handleUpdate({ fontSize: Number(e.target.value) })}
-                className="w-full accent-cyan-400 cursor-pointer"
+                className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-red-600"
               />
             </div>
 
             <div>
-              <label className="text-[11px] font-bold text-slate-400 block mb-1">
+              <label className="text-[11px] font-bold text-slate-700 block mb-1">
                 Vertical Placement
               </label>
-              <div className="flex rounded-lg bg-[#0E1524] border border-[#283344] p-0.5">
+              <div className="flex rounded-lg bg-slate-100 border border-slate-200 p-0.5">
                 {(['bottom', 'middle', 'top'] as const).map((pos) => (
                   <button
                     key={pos}
                     type="button"
                     onClick={() => handleUpdate({ position: pos })}
-                    className={`flex-1 py-1 text-[10px] font-bold rounded capitalize transition-colors ${
+                    className={`flex-1 py-1 text-[10px] font-bold rounded capitalize transition-colors cursor-pointer ${
                       currentStyle.position === pos
-                        ? 'bg-cyan-500 text-slate-950 font-bold'
-                        : 'text-slate-400 hover:text-white'
+                        ? 'bg-red-600 text-white font-bold shadow-2xs'
+                        : 'text-slate-600 hover:text-slate-900'
                     }`}
                   >
                     {pos}
@@ -212,34 +212,34 @@ export const TypographyTab: React.FC<TypographyTabProps> = ({ currentStyle, onCh
           </div>
 
           {/* Toggles */}
-          <div className="pt-2 border-t border-[#1F2937] space-y-2">
-            <label className="flex items-center justify-between text-xs text-slate-300 cursor-pointer">
+          <div className="pt-2 border-t border-slate-100 space-y-3">
+            <label className="flex items-center justify-between text-xs text-slate-800 cursor-pointer">
               <span>All Caps (High-Retention Format)</span>
               <input
                 type="checkbox"
                 checked={currentStyle.uppercase}
                 onChange={(e) => handleUpdate({ uppercase: e.target.checked })}
-                className="w-4 h-4 accent-cyan-400"
+                className="w-4 h-4 accent-red-600 rounded"
               />
             </label>
 
-            <label className="flex items-center justify-between text-xs text-slate-300 cursor-pointer">
+            <label className="flex items-center justify-between text-xs text-slate-800 cursor-pointer">
               <span>Auto-Insert Emphasized Emojis 🚀🔥</span>
               <input
                 type="checkbox"
                 checked={currentStyle.showEmojis}
                 onChange={(e) => handleUpdate({ showEmojis: e.target.checked })}
-                className="w-4 h-4 accent-cyan-400"
+                className="w-4 h-4 accent-red-600 rounded"
               />
             </label>
 
-            <label className="flex items-center justify-between text-xs text-slate-300 cursor-pointer">
+            <label className="flex items-center justify-between text-xs text-slate-800 cursor-pointer">
               <span>Pop Transition Audio Cues (SFX)</span>
               <input
                 type="checkbox"
                 checked={currentStyle.enableSFX}
                 onChange={(e) => handleUpdate({ enableSFX: e.target.checked })}
-                className="w-4 h-4 accent-cyan-400"
+                className="w-4 h-4 accent-red-600 rounded"
               />
             </label>
           </div>
@@ -248,29 +248,29 @@ export const TypographyTab: React.FC<TypographyTabProps> = ({ currentStyle, onCh
       </div>
 
       {/* 3. Global Reach & Languages */}
-      <div className="p-4 rounded-xl bg-[#111827] border border-[#283344] space-y-3">
-        <div className="flex items-center justify-between border-b border-[#1F2937] pb-2.5">
+      <div className="p-5 rounded-2xl bg-white border border-slate-200/90 shadow-[0_4px_20px_-2px_rgba(0,0,0,0.05)] space-y-3.5">
+        <div className="flex items-center justify-between border-b border-slate-100 pb-3">
           <div className="flex items-center gap-2">
-            <Globe className="w-4 h-4 text-cyan-400" />
-            <h3 className="text-xs font-bold text-white uppercase tracking-wider">
+            <Globe className="w-4 h-4 text-red-600" />
+            <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider">
               Caption Language
             </h3>
           </div>
-          <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 font-medium border border-slate-700">
+          <span className="text-[10px] px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-700 font-semibold border border-slate-200">
             Multi-Language
           </span>
         </div>
 
-        <div className="grid grid-cols-5 gap-1.5">
+        <div className="grid grid-cols-5 gap-2">
           {(['en', 'hi', 'es', 'fr', 'de'] as SubtitleLanguage[]).map((lang) => (
             <button
               key={lang}
               type="button"
               onClick={() => handleUpdate({ language: lang })}
-              className={`py-1.5 text-xs font-bold rounded-lg uppercase border transition-colors cursor-pointer ${
+              className={`py-2 text-xs font-bold rounded-xl uppercase border transition-colors cursor-pointer ${
                 currentStyle.language === lang
-                  ? 'border-cyan-500 bg-cyan-950 text-cyan-300 shadow-cyan-sm'
-                  : 'border-[#283344] bg-[#0E1524] text-slate-400 hover:text-white hover:border-slate-600'
+                  ? 'border-red-500 bg-red-50 text-red-700 shadow-2xs'
+                  : 'border-slate-200 bg-slate-50 text-slate-600 hover:text-slate-900 hover:bg-white'
               }`}
             >
               {lang}
@@ -278,16 +278,16 @@ export const TypographyTab: React.FC<TypographyTabProps> = ({ currentStyle, onCh
           ))}
         </div>
 
-        <div className="pt-2 flex items-center justify-between border-t border-[#1F2937]">
+        <div className="pt-3 flex items-center justify-between border-t border-slate-100">
           <div>
-            <p className="text-xs font-bold text-slate-200">Dual-Language Subtitles</p>
-            <p className="text-[10px] text-slate-400">Show primary speech + translated captions simultaneously</p>
+            <p className="text-xs font-bold text-slate-900">Dual-Language Subtitles</p>
+            <p className="text-[10px] text-slate-500">Show primary speech + translated captions simultaneously</p>
           </div>
           <input
             type="checkbox"
             checked={currentStyle.showDualLanguage}
             onChange={(e) => handleUpdate({ showDualLanguage: e.target.checked })}
-            className="w-4 h-4 accent-cyan-400 cursor-pointer"
+            className="w-4 h-4 accent-red-600 rounded cursor-pointer"
           />
         </div>
       </div>

@@ -139,19 +139,19 @@ export const CreatorTimeline: React.FC<CreatorTimelineProps> = ({
   }, [clipStart, duration, cuts, brollOperations]);
 
   return (
-    <div className="w-full bg-[#111827] rounded-2xl border border-[#283344] p-4 shadow-xl space-y-3 select-none text-[#F8FAFC]">
+    <div className="w-full bg-white rounded-2xl border border-slate-200/90 p-4 shadow-sm space-y-3 select-none text-slate-900">
       {/* Timeline Header & Timecode Display */}
-      <div className="flex items-center justify-between border-b border-[#1F2937] pb-2.5">
+      <div className="flex items-center justify-between border-b border-slate-200/80 pb-2.5">
         <div className="flex items-center gap-2">
-          <Film className="w-4 h-4 text-cyan-400" />
-          <span className="text-xs font-bold text-white tracking-wider uppercase">
+          <Film className="w-4 h-4 text-red-600" />
+          <span className="text-xs font-bold text-slate-900 tracking-wider uppercase">
             Semantic Multi-Track Timeline
           </span>
-          <span className="text-[10px] px-2 py-0.5 rounded-full bg-cyan-950 text-cyan-400 font-mono font-bold border border-cyan-800/40">
+          <span className="text-[10px] px-2 py-0.5 rounded-full bg-red-50 text-red-700 font-mono font-bold border border-red-200/80">
             {duration.toFixed(1)}s
           </span>
           {reframeTrack && (
-            <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-800 text-cyan-300 font-mono border border-slate-700">
+            <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 font-mono border border-slate-200">
               Reframe: {reframeTrack.trackingMode} ({reframeTrack.aspectRatio})
             </span>
           )}
@@ -159,14 +159,14 @@ export const CreatorTimeline: React.FC<CreatorTimelineProps> = ({
 
         {/* Timecode */}
         <div className="flex items-center gap-2 font-mono text-xs">
-          <span className="text-cyan-400 font-bold">{relativeCurrent.toFixed(1)}s</span>
-          <span className="text-slate-600">/</span>
-          <span className="text-slate-400 font-medium">{duration.toFixed(1)}s</span>
+          <span className="text-red-600 font-bold">{relativeCurrent.toFixed(1)}s</span>
+          <span className="text-slate-400">/</span>
+          <span className="text-slate-500 font-medium">{duration.toFixed(1)}s</span>
         </div>
       </div>
 
       {/* Semantic Marker Strip */}
-      <div className="relative w-full h-6 bg-[#0B0F17] rounded-lg border border-[#1F2937] px-2 flex items-center overflow-hidden">
+      <div className="relative w-full h-6 bg-slate-100/90 rounded-lg border border-slate-200/80 px-2 flex items-center overflow-hidden shadow-xs">
         {semanticMarkers.map((marker, idx) => {
           const markerPercent = Math.min(94, Math.max(1, (marker.relativeTime / duration) * 100));
 
@@ -194,31 +194,31 @@ export const CreatorTimeline: React.FC<CreatorTimelineProps> = ({
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
-        className="relative w-full bg-[#0B0F17] rounded-xl overflow-hidden cursor-ew-resize pt-4 pb-2 px-1 space-y-1.5 touch-none border border-[#1F2937]"
+        className="relative w-full bg-slate-100/80 rounded-xl overflow-hidden cursor-ew-resize pt-4 pb-2 px-1 space-y-1.5 touch-none border border-slate-200"
       >
         {/* Playhead Vertical Line */}
         <div
           className="absolute top-0 bottom-0 z-30 pointer-events-none transition-transform"
           style={{ left: `${playheadPercent}%`, transform: 'translateX(-50%)' }}
         >
-          <div className="w-3.5 h-3.5 bg-cyan-400 rounded-full shadow-lg shadow-cyan-400/50 -mt-1 mx-auto" />
-          <div className="w-0.5 h-full bg-cyan-400 mx-auto shadow-sm" />
+          <div className="w-3.5 h-3.5 bg-red-600 rounded-full shadow-md shadow-red-500/50 -mt-1 mx-auto" />
+          <div className="w-0.5 h-full bg-red-600 mx-auto shadow-xs" />
         </div>
 
         {/* TRACK 1: Video Footage Track */}
-        <div className="relative h-6 w-full rounded-md bg-[#161F30] border border-[#283344] overflow-hidden flex items-center px-2">
-          <div className="flex items-center gap-1.5 text-[9px] font-bold text-slate-300">
-            <Video className="w-3 h-3 text-cyan-400" />
+        <div className="relative h-6 w-full rounded-md bg-white border border-slate-200/90 shadow-xs overflow-hidden flex items-center px-2">
+          <div className="flex items-center gap-1.5 text-[9px] font-bold text-slate-800">
+            <Video className="w-3 h-3 text-red-600" />
             <span>VIDEO • {reframeTrack ? `${reframeTrack.targetWidth}x${reframeTrack.targetHeight} (${reframeTrack.aspectRatio})` : '1080x1920 (9:16)'}</span>
           </div>
-          <div className="absolute inset-0 bg-cyan-500/10 border-l-2 border-r-2 border-cyan-400 pointer-events-none" />
+          <div className="absolute inset-0 bg-red-500/10 border-l-2 border-r-2 border-red-600 pointer-events-none" />
         </div>
 
         {/* TRACK 2: Reframe Subject Keyframes Track */}
         {reframeTrack && reframeTrack.keyframes && reframeTrack.keyframes.length > 0 && (
-          <div className="relative h-6 w-full rounded-md bg-[#161F30] border border-[#283344] overflow-hidden flex items-center px-2">
-            <div className="flex items-center gap-1.5 text-[9px] font-bold text-cyan-300 shrink-0 mr-2 z-10">
-              <Crosshair className="w-3 h-3 text-cyan-400" />
+          <div className="relative h-6 w-full rounded-md bg-white border border-slate-200/90 shadow-xs overflow-hidden flex items-center px-2">
+            <div className="flex items-center gap-1.5 text-[9px] font-bold text-red-700 shrink-0 mr-2 z-10">
+              <Crosshair className="w-3 h-3 text-red-600" />
               <span>REFRAME</span>
             </div>
             <div className="relative w-full h-4">
@@ -233,7 +233,7 @@ export const CreatorTimeline: React.FC<CreatorTimelineProps> = ({
                       onSeek(clipStart + kf.time);
                     }}
                     style={{ left: `${kfPct}%` }}
-                    className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-2.5 h-2.5 rotate-45 bg-cyan-400 hover:scale-150 transition-transform cursor-pointer border border-cyan-900 shadow-xs"
+                    className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-2.5 h-2.5 rotate-45 bg-red-600 hover:scale-150 transition-transform cursor-pointer border border-white shadow-xs"
                     title={`Keyframe at ${kf.time.toFixed(1)}s (X: ${Math.round(kf.x * 100)}%, Y: ${Math.round(kf.y * 100)}%)`}
                   />
                 );
@@ -244,7 +244,7 @@ export const CreatorTimeline: React.FC<CreatorTimelineProps> = ({
 
         {/* TRACK 3: B-Roll Overlays Track */}
         {brollOperations.length > 0 && (
-          <div className="relative h-6 w-full rounded-md bg-[#161F30] border border-[#283344] overflow-hidden flex items-center px-2">
+          <div className="relative h-6 w-full rounded-md bg-white border border-slate-200/90 shadow-xs overflow-hidden flex items-center px-2">
             <div className="flex items-center gap-1.5 text-[9px] font-bold text-indigo-300 shrink-0 mr-2 z-10">
               <Layers className="w-3 h-3 text-indigo-400" />
               <span>B-ROLL</span>
@@ -271,9 +271,9 @@ export const CreatorTimeline: React.FC<CreatorTimelineProps> = ({
         )}
 
         {/* TRACK 4: Dynamic Captions Track */}
-        <div className="relative h-6 w-full rounded-md bg-[#161F30] border border-[#283344] overflow-hidden flex items-center px-2">
-          <div className="flex items-center gap-1.5 text-[9px] font-bold text-amber-300 shrink-0 mr-2 z-10">
-            <Type className="w-3 h-3 text-amber-400" />
+        <div className="relative h-6 w-full rounded-md bg-white border border-slate-200/90 shadow-xs overflow-hidden flex items-center px-2">
+          <div className="flex items-center gap-1.5 text-[9px] font-bold text-amber-700 shrink-0 mr-2 z-10">
+            <Type className="w-3 h-3 text-amber-500" />
             <span>CAPTIONS</span>
           </div>
           <div className="relative w-full h-4">
@@ -285,7 +285,7 @@ export const CreatorTimeline: React.FC<CreatorTimelineProps> = ({
               return (
                 <div
                   key={i}
-                  className="absolute top-0 bottom-0 bg-amber-400/30 border border-amber-300/50 rounded-xs"
+                  className="absolute top-0 bottom-0 bg-amber-400/25 border border-amber-400/50 rounded-xs"
                   style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
                   title={w.word}
                 />
@@ -295,9 +295,9 @@ export const CreatorTimeline: React.FC<CreatorTimelineProps> = ({
         </div>
 
         {/* TRACK 5: Cuts / Silence / Filler Track */}
-        <div className="relative h-6 w-full rounded-md bg-[#161F30] border border-[#283344] overflow-hidden flex items-center px-2">
-          <div className="flex items-center gap-1.5 text-[9px] font-bold text-rose-400 shrink-0 mr-2 z-10">
-            <Scissors className="w-3 h-3 text-rose-400" />
+        <div className="relative h-6 w-full rounded-md bg-white border border-slate-200/90 shadow-xs overflow-hidden flex items-center px-2">
+          <div className="flex items-center gap-1.5 text-[9px] font-bold text-rose-700 shrink-0 mr-2 z-10">
+            <Scissors className="w-3 h-3 text-rose-500" />
             <span>CUTS</span>
           </div>
           <div className="relative w-full h-4">
@@ -309,7 +309,7 @@ export const CreatorTimeline: React.FC<CreatorTimelineProps> = ({
               return (
                 <div
                   key={idx}
-                  className="absolute top-0 bottom-0 bg-rose-600/80 border border-rose-400 rounded-xs flex items-center justify-center text-[7px] font-bold text-white uppercase"
+                  className="absolute top-0 bottom-0 bg-rose-500/80 border border-rose-400 rounded-xs flex items-center justify-center text-[7px] font-bold text-white uppercase"
                   style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
                   title={`${cut.reason}: ${cut.start.toFixed(1)}s - ${cut.end.toFixed(1)}s`}
                 >
@@ -321,12 +321,12 @@ export const CreatorTimeline: React.FC<CreatorTimelineProps> = ({
         </div>
 
         {/* TRACK 6: Audio Waveform Track */}
-        <div className="relative h-5 w-full rounded-md bg-[#161F30] border border-[#283344] overflow-hidden flex items-center px-2">
-          <div className="flex items-center gap-1.5 text-[9px] font-bold text-emerald-400 shrink-0 mr-2 z-10">
-            <Music2 className="w-3 h-3 text-emerald-400" />
+        <div className="relative h-5 w-full rounded-md bg-white border border-slate-200/90 shadow-xs overflow-hidden flex items-center px-2">
+          <div className="flex items-center gap-1.5 text-[9px] font-bold text-emerald-700 shrink-0 mr-2 z-10">
+            <Music2 className="w-3 h-3 text-emerald-500" />
             <span>AUDIO</span>
           </div>
-          <div className="flex items-center justify-between w-full h-3 opacity-60">
+          <div className="flex items-center justify-between w-full h-3 opacity-70">
             {Array.from({ length: 48 }).map((_, barIdx) => {
               const height = 25 + Math.sin(barIdx * 0.4) * 45 + ((barIdx * 7) % 30);
               return (
