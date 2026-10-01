@@ -24,7 +24,8 @@ export function renderSubtitlesOnCanvas(
   visualSettings: VisualLayoutSettings,
   canvasWidth: number,
   canvasHeight: number,
-  showFreeWatermark: boolean = false
+  showFreeWatermark: boolean = false,
+  clipStartTime: number = 0
 ) {
   // Clear previous overlay frame
   ctx.clearRect(0, 0, canvasWidth, canvasHeight);
@@ -101,9 +102,12 @@ export function renderSubtitlesOnCanvas(
 
   // 4. Feature 8, 10, 11, 12: Dynamic Animated Subtitles & Translations
   if (words && words.length > 0) {
-    const activeIndex = words.findIndex(
-      w => currentTime >= w.start && currentTime <= w.end
-    );
+    // Convert absolute timestamps to relative clip time if words have absolute time
+    const activeIndex = words.findIndex((w) => {
+      const wStart = clipStartTime > 0 && w.start >= clipStartTime ? w.start - clipStartTime : w.start;
+      const wEnd = clipStartTime > 0 && w.end >= clipStartTime ? w.end - clipStartTime : w.end;
+      return currentTime >= wStart && currentTime <= wEnd;
+    });
 
     if (activeIndex !== -1) {
       const currentWord = words[activeIndex];
@@ -166,8 +170,10 @@ export function renderSubtitlesOnCanvas(
         ctx.save();
 
         if (isActive) {
-          // Bouncy progress calculation
-          const progress = (currentTime - wordObj.start) / Math.max(0.1, wordObj.end - wordObj.start);
+          // Bouncy progress calculation using relative time
+          const wStart = clipStartTime > 0 && wordObj.start >= clipStartTime ? wordObj.start - clipStartTime : wordObj.start;
+          const wEnd = clipStartTime > 0 && wordObj.end >= clipStartTime ? wordObj.end - clipStartTime : wordObj.end;
+          const progress = (currentTime - wStart) / Math.max(0.1, wEnd - wStart);
           const bounce = Math.sin(progress * Math.PI) * 0.15;
           const wordScale = 1.0 + bounce;
 

@@ -14,6 +14,7 @@ interface VideoPreviewPlayerProps {
   visualSettings: VisualLayoutSettings;
   audioSettings: AudioStudioSettings;
   isProUser: boolean;
+  clipStartTime?: number;
   onTimeUpdate?: (time: number) => void;
 }
 
@@ -24,7 +25,7 @@ export interface VideoPreviewPlayerRef {
 }
 
 export const VideoPreviewPlayer = forwardRef<VideoPreviewPlayerRef, VideoPreviewPlayerProps>(
-  ({ videoUrl, words, subtitleStyle, visualSettings, audioSettings, isProUser, onTimeUpdate }, ref) => {
+  ({ videoUrl, words, subtitleStyle, visualSettings, audioSettings, isProUser, clipStartTime = 0, onTimeUpdate }, ref) => {
     const videoRef = useRef<HTMLVideoElement>(null);
     const secondaryVideoRef = useRef<HTMLVideoElement>(null);
     const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -70,7 +71,8 @@ export const VideoPreviewPlayer = forwardRef<VideoPreviewPlayerRef, VideoPreview
               visualSettings,
               canvas.width,
               canvas.height,
-              !isProUser
+              !isProUser,
+              clipStartTime
             );
           }
 

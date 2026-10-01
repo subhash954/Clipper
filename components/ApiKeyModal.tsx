@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { X, Key, Check, ExternalLink, ShieldCheck, Sparkles, AlertCircle } from 'lucide-react';
+import { X, Key, Check, ShieldCheck, AlertCircle, ExternalLink, Server } from 'lucide-react';
 
 interface ApiKeyModalProps {
   isOpen: boolean;
@@ -9,39 +9,25 @@ interface ApiKeyModalProps {
 }
 
 export const ApiKeyModal: React.FC<ApiKeyModalProps> = ({ isOpen, onClose }) => {
-  const [geminiKey, setGeminiKey] = useState('');
-  const [deepgramKey, setDeepgramKey] = useState('');
-  const [pexelsKey, setPexelsKey] = useState('');
-  const [pixabayKey, setPixabayKey] = useState('');
-  const [falKey, setFalKey] = useState('');
-  const [savedSuccess, setSavedSuccess] = useState(false);
+  const [providerStatus, setProviderStatus] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (typeof window !== 'undefined') {
-      setGeminiKey(localStorage.getItem('CLIPPER_GEMINI_KEY') || '');
-      setDeepgramKey(localStorage.getItem('CLIPPER_DEEPGRAM_KEY') || '');
-      setPexelsKey(localStorage.getItem('CLIPPER_PEXELS_KEY') || '');
-      setPixabayKey(localStorage.getItem('CLIPPER_PIXABAY_KEY') || '');
-      setFalKey(localStorage.getItem('CLIPPER_FAL_KEY') || '');
+    if (isOpen) {
+      setLoading(true);
+      fetch('/api/config/providers')
+        .then((res) => res.json())
+        .then((data) => {
+          if (data.providers) {
+            setProviderStatus(data.providers);
+          }
+        })
+        .catch((err) => console.warn('Provider check error:', err))
+        .finally(() => setLoading(false));
     }
   }, [isOpen]);
 
   if (!isOpen) return null;
-
-  const handleSaveKeys = () => {
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('CLIPPER_GEMINI_KEY', geminiKey.trim());
-      localStorage.setItem('CLIPPER_DEEPGRAM_KEY', deepgramKey.trim());
-      localStorage.setItem('CLIPPER_PEXELS_KEY', pexelsKey.trim());
-      localStorage.setItem('CLIPPER_PIXABAY_KEY', pixabayKey.trim());
-      localStorage.setItem('CLIPPER_FAL_KEY', falKey.trim());
-    }
-    setSavedSuccess(true);
-    setTimeout(() => {
-      setSavedSuccess(false);
-      onClose();
-    }, 1200);
-  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
@@ -50,7 +36,7 @@ export const ApiKeyModal: React.FC<ApiKeyModalProps> = ({ isOpen, onClose }) => 
         {/* Close Button */}
         <button
           onClick={onClose}
-          className="absolute top-5 right-5 p-1.5 rounded-full hover:bg-slate-100 text-slate-400 hover:text-slate-700 transition-colors"
+          className="absolute top-5 right-5 p-1.5 rounded-full hover:bg-slate-100 text-slate-400 hover:text-slate-700 transition-colors cursor-pointer"
         >
           <X className="w-4 h-4" />
         </button>
@@ -58,172 +44,141 @@ export const ApiKeyModal: React.FC<ApiKeyModalProps> = ({ isOpen, onClose }) => 
         {/* Modal Header */}
         <div className="flex items-center gap-2.5">
           <div className="w-10 h-10 rounded-xl bg-red-50 text-red-600 flex items-center justify-center border border-red-200">
-            <Key className="w-5 h-5" />
+            <Server className="w-5 h-5" />
           </div>
           <div>
-            <h3 className="text-base font-bold text-slate-900">Connect Real AI Services</h3>
-            <p className="text-xs text-slate-500">Provide your API keys to enable live real-time AI processing.</p>
+            <h3 className="text-base font-bold text-slate-900">AI Services &amp; Provider Security</h3>
+            <p className="text-xs text-slate-500">Production-grade server-side credential isolation</p>
           </div>
         </div>
 
-        {/* Info Box */}
-        <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-600 flex items-start gap-2">
-          <ShieldCheck className="w-4 h-4 text-emerald-600 flex-shrink-0 mt-0.5" />
-          <span>Keys are stored securely in your browser &amp; environment variables. Free tier keys work for all features.</span>
+        {/* Security Notice */}
+        <div className="p-3.5 rounded-xl bg-emerald-50/80 border border-emerald-200 text-xs text-emerald-900 flex items-start gap-2.5">
+          <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+          <div className="space-y-0.5">
+            <p className="font-bold">Zero Client-Side Exposure</p>
+            <p className="text-[11px] text-emerald-800">
+              API credentials are never stored in browser localStorage or transmitted in request headers. All keys are encrypted and managed strictly server-side in <code>.env.local</code>.
+            </p>
+          </div>
         </div>
 
-        {/* Form Fields */}
-        <div className="space-y-3.5 text-xs">
-          
-          {/* 1. Google Gemini API */}
-          <div>
-            <div className="flex justify-between items-center mb-1">
-              <label className="font-semibold text-slate-700 flex items-center gap-1">
-                <span>1. Google Gemini API Key</span>
-                <span className="text-[10px] text-red-600 font-bold">(Hook &amp; Script AI)</span>
-              </label>
-              <a
-                href="https://aistudio.google.com/app/apikey"
-                target="_blank"
-                rel="noreferrer"
-                className="text-[11px] text-blue-600 hover:underline flex items-center gap-0.5"
-              >
-                <span>Get Free Key</span>
-                <ExternalLink className="w-3 h-3" />
-              </a>
-            </div>
-            <input
-              type="password"
-              value={geminiKey}
-              onChange={(e) => setGeminiKey(e.target.value)}
-              placeholder="AIzaSy..."
-              className="w-full p-2.5 rounded-xl border border-slate-200 bg-white font-mono text-slate-800 focus:outline-none focus:border-red-500"
-            />
-          </div>
-
-          {/* 2. Deepgram / Groq Whisper API */}
-          <div>
-            <div className="flex justify-between items-center mb-1">
-              <label className="font-semibold text-slate-700 flex items-center gap-1">
-                <span>2. Deepgram / Groq API Key</span>
-                <span className="text-[10px] text-red-600 font-bold">(Word-level STT)</span>
-              </label>
-              <a
-                href="https://console.deepgram.com"
-                target="_blank"
-                rel="noreferrer"
-                className="text-[11px] text-blue-600 hover:underline flex items-center gap-0.5"
-              >
-                <span>$200 Free Credit</span>
-                <ExternalLink className="w-3 h-3" />
-              </a>
-            </div>
-            <input
-              type="password"
-              value={deepgramKey}
-              onChange={(e) => setDeepgramKey(e.target.value)}
-              placeholder="gsk_... or deepgram token"
-              className="w-full p-2.5 rounded-xl border border-slate-200 bg-white font-mono text-slate-800 focus:outline-none focus:border-red-500"
-            />
-          </div>
-
-          {/* 3. Pexels Stock B-Roll API */}
-          <div>
-            <div className="flex justify-between items-center mb-1">
-              <label className="font-semibold text-slate-700 flex items-center gap-1">
-                <span>3. Pexels API Key</span>
-                <span className="text-[10px] text-emerald-600 font-bold">(Recommended: 9:16 Vertical B-Roll)</span>
-              </label>
-              <a
-                href="https://www.pexels.com/api/"
-                target="_blank"
-                rel="noreferrer"
-                className="text-[11px] text-blue-600 hover:underline flex items-center gap-0.5"
-              >
-                <span>Free Pexels Key</span>
-                <ExternalLink className="w-3 h-3" />
-              </a>
-            </div>
-            <input
-              type="password"
-              value={pexelsKey}
-              onChange={(e) => setPexelsKey(e.target.value)}
-              placeholder="Pexels secret key..."
-              className="w-full p-2.5 rounded-xl border border-slate-200 bg-white font-mono text-slate-800 focus:outline-none focus:border-red-500"
-            />
-          </div>
-
-          {/* 4. Pixabay API (Secondary B-Roll & SFX) */}
-          <div>
-            <div className="flex justify-between items-center mb-1">
-              <label className="font-semibold text-slate-700 flex items-center gap-1">
-                <span>4. Pixabay API Key</span>
-                <span className="text-[10px] text-blue-600 font-bold">(Alternative: B-Roll &amp; SFX Music)</span>
-              </label>
-              <a
-                href="https://pixabay.com/api/docs/"
-                target="_blank"
-                rel="noreferrer"
-                className="text-[11px] text-blue-600 hover:underline flex items-center gap-0.5"
-              >
-                <span>Free Pixabay Key</span>
-                <ExternalLink className="w-3 h-3" />
-              </a>
-            </div>
-            <input
-              type="password"
-              value={pixabayKey}
-              onChange={(e) => setPixabayKey(e.target.value)}
-              placeholder="Pixabay API key..."
-              className="w-full p-2.5 rounded-xl border border-slate-200 bg-white font-mono text-slate-800 focus:outline-none focus:border-red-500"
-            />
-          </div>
-
-          {/* 4. Fal.ai / Replicate (Flux AI Image) */}
-          <div>
-            <div className="flex justify-between items-center mb-1">
-              <label className="font-semibold text-slate-700 flex items-center gap-1">
-                <span>4. Fal.ai API Key</span>
-                <span className="text-[10px] text-slate-400 font-normal">(Optional: Flux AI Images)</span>
-              </label>
-              <a
-                href="https://fal.ai"
-                target="_blank"
-                rel="noreferrer"
-                className="text-[11px] text-blue-600 hover:underline flex items-center gap-0.5"
-              >
-                <span>Fal.ai Dashboard</span>
-                <ExternalLink className="w-3 h-3" />
-              </a>
-            </div>
-            <input
-              type="password"
-              value={falKey}
-              onChange={(e) => setFalKey(e.target.value)}
-              placeholder="fal_key_..."
-              className="w-full p-2.5 rounded-xl border border-slate-200 bg-white font-mono text-slate-800 focus:outline-none focus:border-red-500"
-            />
-          </div>
-
-        </div>
-
-        {/* Save Button */}
-        <button
-          type="button"
-          onClick={handleSaveKeys}
-          className="w-full py-3 rounded-xl bg-red-600 hover:bg-red-700 text-white font-bold text-xs shadow-md shadow-red-600/20 flex items-center justify-center gap-2 transition-all"
-        >
-          {savedSuccess ? (
-            <>
-              <Check className="w-4 h-4" />
-              <span>Keys Saved Successfully!</span>
-            </>
+        {/* Live Provider Status List */}
+        <div className="space-y-2.5 text-xs">
+          {loading ? (
+            <div className="p-6 text-center text-slate-500">Checking provider statuses...</div>
           ) : (
             <>
-              <Sparkles className="w-4 h-4" />
-              <span>Save &amp; Activate Real AI APIs</span>
+              {/* 1. Gemini */}
+              <div className="p-3 rounded-xl border border-slate-200 bg-slate-50/60 flex items-center justify-between">
+                <div className="space-y-0.5">
+                  <div className="flex items-center gap-1.5">
+                    <span className="font-bold text-slate-900">Google Gemini 2.5 Flash</span>
+                    <span className="text-[10px] text-slate-500 font-mono">(Hook Mining)</span>
+                  </div>
+                  <p className="text-[11px] text-slate-500">Analyzes real transcripts and aligns viral moments</p>
+                </div>
+                {providerStatus?.gemini?.isConfigured ? (
+                  <span className="px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700 font-bold text-[10px] border border-emerald-200 flex items-center gap-1">
+                    <Check className="w-3 h-3" /> Active
+                  </span>
+                ) : (
+                  <span className="px-2.5 py-1 rounded-full bg-amber-50 text-amber-700 font-bold text-[10px] border border-amber-200 flex items-center gap-1">
+                    <AlertCircle className="w-3 h-3" /> Not Set
+                  </span>
+                )}
+              </div>
+
+              {/* 2. Deepgram */}
+              <div className="p-3 rounded-xl border border-slate-200 bg-slate-50/60 flex items-center justify-between">
+                <div className="space-y-0.5">
+                  <div className="flex items-center gap-1.5">
+                    <span className="font-bold text-slate-900">Deepgram Nova-2</span>
+                    <span className="text-[10px] text-slate-500 font-mono">(Word-Level STT)</span>
+                  </div>
+                  <p className="text-[11px] text-slate-500">Speech-to-text with exact millisecond timestamps</p>
+                </div>
+                {providerStatus?.deepgram?.isConfigured ? (
+                  <span className="px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700 font-bold text-[10px] border border-emerald-200 flex items-center gap-1">
+                    <Check className="w-3 h-3" /> Active
+                  </span>
+                ) : (
+                  <span className="px-2.5 py-1 rounded-full bg-amber-50 text-amber-700 font-bold text-[10px] border border-amber-200 flex items-center gap-1">
+                    <AlertCircle className="w-3 h-3" /> Not Set
+                  </span>
+                )}
+              </div>
+
+              {/* 3. Pexels */}
+              <div className="p-3 rounded-xl border border-slate-200 bg-slate-50/60 flex items-center justify-between">
+                <div className="space-y-0.5">
+                  <div className="flex items-center gap-1.5">
+                    <span className="font-bold text-slate-900">Pexels Video API</span>
+                    <span className="text-[10px] text-slate-500 font-mono">(9:16 B-Roll Primary)</span>
+                  </div>
+                  <p className="text-[11px] text-slate-500">Vertical HD stock footage with commercial metadata</p>
+                </div>
+                {providerStatus?.pexels?.isConfigured ? (
+                  <span className="px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700 font-bold text-[10px] border border-emerald-200 flex items-center gap-1">
+                    <Check className="w-3 h-3" /> Active
+                  </span>
+                ) : (
+                  <span className="px-2.5 py-1 rounded-full bg-amber-50 text-amber-700 font-bold text-[10px] border border-amber-200 flex items-center gap-1">
+                    <AlertCircle className="w-3 h-3" /> Not Set
+                  </span>
+                )}
+              </div>
+
+              {/* 4. Pixabay */}
+              <div className="p-3 rounded-xl border border-slate-200 bg-slate-50/60 flex items-center justify-between">
+                <div className="space-y-0.5">
+                  <div className="flex items-center gap-1.5">
+                    <span className="font-bold text-slate-900">Pixabay API</span>
+                    <span className="text-[10px] text-slate-500 font-mono">(B-Roll &amp; SFX Fallback)</span>
+                  </div>
+                  <p className="text-[11px] text-slate-500">Secondary stock assets and audio effects</p>
+                </div>
+                {providerStatus?.pixabay?.isConfigured ? (
+                  <span className="px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700 font-bold text-[10px] border border-emerald-200 flex items-center gap-1">
+                    <Check className="w-3 h-3" /> Active
+                  </span>
+                ) : (
+                  <span className="px-2.5 py-1 rounded-full bg-amber-50 text-amber-700 font-bold text-[10px] border border-amber-200 flex items-center gap-1">
+                    <AlertCircle className="w-3 h-3" /> Not Set
+                  </span>
+                )}
+              </div>
+
+              {/* 5. Supabase */}
+              <div className="p-3 rounded-xl border border-slate-200 bg-slate-50/60 flex items-center justify-between">
+                <div className="space-y-0.5">
+                  <div className="flex items-center gap-1.5">
+                    <span className="font-bold text-slate-900">Supabase PostgreSQL</span>
+                    <span className="text-[10px] text-slate-500 font-mono">(Database &amp; RLS)</span>
+                  </div>
+                  <p className="text-[11px] text-slate-500">Persistent storage for projects, clips, and render jobs</p>
+                </div>
+                {providerStatus?.supabase?.isConfigured ? (
+                  <span className="px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700 font-bold text-[10px] border border-emerald-200 flex items-center gap-1">
+                    <Check className="w-3 h-3" /> Connected
+                  </span>
+                ) : (
+                  <span className="px-2.5 py-1 rounded-full bg-slate-100 text-slate-600 font-medium text-[10px] border border-slate-200">
+                    Local Storage (Dev Mode)
+                  </span>
+                )}
+              </div>
             </>
           )}
+        </div>
+
+        {/* Close Button */}
+        <button
+          type="button"
+          onClick={onClose}
+          className="w-full py-3 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs shadow-md transition-colors cursor-pointer"
+        >
+          Done
         </button>
 
       </div>

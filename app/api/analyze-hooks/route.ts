@@ -1,69 +1,58 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { analyzeTranscriptWithGemini } from '@/lib/providers/geminiProvider';
+import { calculateViralScore } from '@/lib/scoring/viralScoring';
 
 export async function POST(req: NextRequest) {
   try {
-    const { transcript, title, clientApiKey } = await req.json();
-    const apiKey = clientApiKey || process.env.GEMINI_API_KEY;
+    const { transcript, title = 'Video Hook Analysis', channelName = 'Creator', targetClipCount = 3 } = await req.json();
 
-    if (!apiKey) {
-      return NextResponse.json({
-        isLiveAI: false,
-        message: "No Gemini API Key provided. Running local hook engine.",
-        viralHooks: [
-          {
-            title: "The $10,000 Speed Secret",
-            score: 98,
-            hookReason: "Contrarian hook opening that attacks overthinking.",
-            bRollSearchKeywords: ["fast sports car", "stock chart rising", "focused creator"]
-          }
-        ]
-      });
+    if (!transcript || typeof transcript !== 'string' || transcript.trim().length < 40) {
+      return NextResponse.json(
+        { error: 'A valid transcript of at least 40 characters is required for hook analysis.' },
+        { status: 400 }
+      );
     }
 
-    // Call Real Google Gemini 2.5 Flash API
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [
-            {
-              role: 'user',
-              parts: [
-                {
-                  text: `You are an expert short-form video editor for YouTube Shorts and TikTok.
-Analyze this video transcript and return a valid JSON array of 3 viral shorts segments.
-Each object must have:
-- "title": (Punchy high-CTR short title)
-- "viralScore": (number between 90 and 99)
-- "hookReason": (Why viewers won't skip)
-- "bRollSearchKeywords": (3 visual search terms for stock video)
+    const candidateMoments = await analyzeTranscriptWithGemini({
+      videoTitle: title,
+      channelName,
+      transcriptText: transcript,
+      targetClipCount: Math.min(10, Math.max(1, Number(targetClipCount) || 3)),
+    });
 
-Transcript: "${(transcript || title || 'If you want to build a ten thousand dollar business, stop overthinking and start creating value every single day! Speed wins the game every time.').slice(0, 4000)}"`
-                }
-              ]
-            }
-          ],
-          generationConfig: {
-            temperature: 0.3,
-            responseMimeType: 'application/json'
-          }
-        })
-      }
-    );
+    const evaluatedHooks = candidateMoments.map((moment) => {
+      const scoreResult = calculateViralScore({
+        title: moment.title,
+        importantLine: moment.importantLine,
+        whyThisLineIsImportant: moment.whyThisLineIsImportant,
+        keyMomentType: moment.keyMomentType,
+        duration: 45,
+        wordsCount: moment.importantLine.split(' ').length + 25,
+      });
 
-    const data = await response.json();
-    const textOutput = data.candidates?.[0]?.content?.parts?.[0]?.text;
-    const parsed = textOutput ? JSON.parse(textOutput) : null;
+      return {
+        ...moment,
+        viralScore: scoreResult.viralScore,
+        confidence: scoreResult.confidence,
+        scoreBreakdown: scoreResult.scoreBreakdown,
+        scoreLabel: scoreResult.label,
+      };
+    });
 
     return NextResponse.json({
-      isLiveAI: true,
+      success: true,
       modelUsed: 'gemini-2.5-flash',
-      viralHooks: parsed || []
+      hooksCount: evaluatedHooks.length,
+      viralHooks: evaluatedHooks,
     });
-  } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : 'Unknown error';
-    return NextResponse.json({ isLiveAI: false, error: message }, { status: 500 });
+  } catch (error: any) {
+    console.error('Analyze hooks API error:', error);
+    return NextResponse.json(
+      {
+        success: false,
+        error: error?.message || 'Failed to analyze transcript hooks.',
+      },
+      { status: 500 }
+    );
   }
 }

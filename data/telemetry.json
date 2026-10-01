@@ -1,0 +1,12 @@
+[
+  {
+    "projectId": "proj-B_9c1hJGCsw",
+    "serviceName": "gemini_flash",
+    "model": "gemini-2.5-flash",
+    "unitsUsed": 8108,
+    "unitType": "tokens",
+    "costInUSD": 0.0006,
+    "isEstimated": false,
+    "id": "telemetry-1790832675064"
+  }
+]

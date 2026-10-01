@@ -89,7 +89,7 @@ export const ViralClipSelector: React.FC<ViralClipSelectorProps> = ({
                 </div>
 
                 <div className="flex items-center gap-1">
-                  {clip.tags.slice(0, 2).map((tag, idx) => (
+                  {clip.tags?.slice(0, 2).map((tag, idx) => (
                     <span
                       key={idx}
                       className="px-1.5 py-0.5 rounded bg-slate-700/60 text-slate-300 text-[9px]"

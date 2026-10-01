@@ -119,31 +119,43 @@ export const SAMPLE_TRANSLATIONS: Record<SubtitleLanguage, Record<string, string
   }
 };
 
-// Feature 1: Viral Hooks with Retention Metrics
+// Feature 1: Viral Hooks with Retention Metrics (Isolated Demo Sample)
 export const SAMPLE_VIRAL_CLIPS: ViralClip[] = [
   {
     id: "clip-1",
+    rank: 1,
     title: "🔥 The $10,000 Secret Rule",
     hookSummary: "High-energy contrarian opening about speed vs perfection in business.",
+    importantLine: "Speed wins the game every single time — stop waiting for perfection.",
+    whyThisLineIsImportant: "Attacks overthinking and compels immediate viewer agreement.",
+    keyMomentType: "Contrarian Truth",
     start: 0,
     end: 8.5,
+    duration: 8.5,
     viralScore: 98,
     tags: ["High Energy", "Strong Hook", "Retention > 88%"],
     hookStrength: 98,
     retentionEstimate: 89,
-    energyLevel: 'Extreme'
+    energyLevel: 'Extreme',
+    words: SAMPLE_WORDS.slice(0, 15)
   },
   {
     id: "clip-2",
+    rank: 2,
     title: "⚡ Speed Over Perfection",
     hookSummary: "Direct psychological punchline revealing why 90% of beginners fail.",
+    importantLine: "If you want to build a real business, take imperfect action today.",
+    whyThisLineIsImportant: "Direct psychological punchline revealing why beginners fail.",
+    keyMomentType: "Core Framework",
     start: 8.8,
     end: 14.5,
+    duration: 5.7,
     viralScore: 94,
     tags: ["Mindset", "Motivational", "Shareable"],
     hookStrength: 93,
     retentionEstimate: 84,
-    energyLevel: 'High'
+    energyLevel: 'High',
+    words: SAMPLE_WORDS.slice(15, 30)
   }
 ];
 

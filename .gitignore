@@ -32,3 +32,8 @@ next-env.d.ts
 # OS metadata
 .DS_Store
 *.pem
+
+# Generated Media / Render exports
+public/exports/*.mp4
+public/exports/*.ass
+data/temp_renders/

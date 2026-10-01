@@ -261,6 +261,7 @@ export default function StudioPage() {
                   visualSettings={visualSettings}
                   audioSettings={audioSettings}
                   isProUser={isProUser}
+                  clipStartTime={clips.find((c) => c.id === activeClipId)?.start || 0}
                 />
               </div>
 
@@ -413,6 +414,10 @@ export default function StudioPage() {
         onClose={() => setIsExportOpen(false)}
         isProUser={isProUser}
         onOpenPricing={() => setIsPricingOpen(true)}
+        activeClip={clips.find((c) => c.id === activeClipId) || clips[0] || null}
+        videoUrl={videoUrl}
+        subtitleStyle={subtitleStyle}
+        visualSettings={visualSettings}
         videoElement={playerRef.current?.getVideoElement() || null}
         canvasElement={playerRef.current?.getCanvasElement() || null}
       />

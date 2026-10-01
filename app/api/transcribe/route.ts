@@ -1,52 +1,53 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { transcribeWithDeepgram } from '@/lib/providers/deepgramProvider';
 
 export async function POST(req: NextRequest) {
   try {
-    const { audioUrl } = await req.json();
-    const apiKey = process.env.DEEPGRAM_API_KEY;
+    const contentType = req.headers.get('content-type') || '';
+    let audioUrl: string | undefined;
+    let audioBuffer: Buffer | undefined;
 
-    if (!apiKey) {
-      return NextResponse.json({
-        isLiveTranscription: false,
-        message: "No Deepgram key configured. Using local transcription timestamps."
-      });
+    if (contentType.includes('application/json')) {
+      const body = await req.json();
+      audioUrl = body.audioUrl;
+    } else if (contentType.includes('multipart/form-data')) {
+      const formData = await req.formData();
+      const file = formData.get('file') as File | null;
+      if (file) {
+        const bytes = await file.arrayBuffer();
+        audioBuffer = Buffer.from(bytes);
+      }
     }
 
-    // Call Real Deepgram Nova-2 API
-    const targetUrl = audioUrl || "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4";
+    if (!audioUrl && !audioBuffer) {
+      return NextResponse.json(
+        { error: 'An audioUrl or audio file upload is required for transcription.' },
+        { status: 400 }
+      );
+    }
 
-    const response = await fetch(
-      "https://api.deepgram.com/v1/listen?model=nova-2&smart_format=true&punctuate=true&utterances=true&words=true",
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Token ${apiKey}`,
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({ url: targetUrl })
-      }
-    );
-
-    const data = await response.json();
-    const words = data.results?.channels?.[0]?.alternatives?.[0]?.words || [];
-    const transcript = data.results?.channels?.[0]?.alternatives?.[0]?.transcript || "";
-
-    const mappedWords = words.map((w: { word: string; start: number; end: number }) => ({
-      word: w.word.toUpperCase(),
-      start: parseFloat(w.start.toFixed(2)),
-      end: parseFloat(w.end.toFixed(2))
-    }));
+    const transcript = await transcribeWithDeepgram({
+      audioUrl,
+      audioBuffer,
+    });
 
     return NextResponse.json({
-      isLiveTranscription: true,
-      provider: "deepgram_nova_2",
-      account: "subhashy197@gmail.com",
-      transcript,
-      wordsCount: mappedWords.length,
-      words: mappedWords
+      success: true,
+      provider: 'deepgram_nova_2',
+      transcript: transcript.text,
+      wordsCount: transcript.words.length,
+      words: transcript.words,
+      utterances: transcript.utterances || [],
+      language: transcript.language,
     });
-  } catch (error: unknown) {
-    const message = error instanceof Error ? error.message : "Unknown error";
-    return NextResponse.json({ isLiveTranscription: false, error: message }, { status: 500 });
+  } catch (error: any) {
+    console.error('Transcription API error:', error);
+    return NextResponse.json(
+      {
+        success: false,
+        error: error?.message || 'Failed to transcribe audio with Deepgram.',
+      },
+      { status: error?.statusCode || 500 }
+    );
   }
 }
