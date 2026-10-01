@@ -142,6 +142,8 @@ export async function POST(req: NextRequest) {
       text: transcriptText,
       words: wordTimestamps,
       source: 'youtube_captions',
+      timingPrecision: 'approximate_cue',
+      timingLabel: 'YouTube Caption Cues (Approximate Timing)',
       language: 'en',
     };
 
@@ -194,6 +196,18 @@ export async function POST(req: NextRequest) {
       workflowType: 'youtube_to_shorts',
       durationSeconds: totalDurationSeconds,
       status: 'clips_ready',
+      isMediaAvailable: false, // YouTube ingestion retrieves captions; video file upload required for FFmpeg rendering
+      media: {
+        sourceUrl: cleanUrl,
+        sourceType: 'youtube',
+        sourceMetadata: {
+          title: videoTitle,
+          duration: totalDurationSeconds,
+          author: authorName,
+          thumbnail: thumbnailUrl,
+        },
+        isMediaAvailable: false,
+      },
       clipsCount: generatedClips.length,
       clips: generatedClips,
       transcript,
@@ -214,7 +228,7 @@ export async function POST(req: NextRequest) {
     const storage = getStorage();
     await storage.saveProject(project);
 
-    // Record cost telemetry
+    // Record cost telemetry with honest isEstimated flag
     await storage.recordCostTelemetry({
       projectId: project.id,
       serviceName: 'gemini_flash',
@@ -222,7 +236,7 @@ export async function POST(req: NextRequest) {
       unitsUsed: Math.round(transcriptText.length / 4),
       unitType: 'tokens',
       costInUSD: geminiFlashLLMCost,
-      isEstimated: false,
+      isEstimated: true, // Character heuristic used, marked explicitly as estimated
     });
 
     return NextResponse.json({

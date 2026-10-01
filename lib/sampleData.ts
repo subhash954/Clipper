@@ -1,7 +1,12 @@
 import { WordTimestamp, ViralClip, SubtitleStyle, SubtitleLanguage } from './types';
 
-// High-converting entrepreneur sample video
-export const SAMPLE_VIDEO_URL = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4";
+/**
+ * EXPLICIT DEMO FIXTURES ONLY
+ * These constants are strictly used when the user clicks "Try Demo" in the Studio.
+ * Production projects MUST use authentic user media, uploaded videos, or ingested YouTube transcripts.
+ */
+export const DEMO_PROJECT_LABEL = "DEMO PROJECT — Entrepreneur Mindset";
+export const DEMO_VIDEO_URL = "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4";
 
 // Feature 18: Satisfying split-screen background gameplay (Subway / Parkour / Minecraft loop)
 export const SATISFYING_VIDEO_URLS = {
@@ -12,7 +17,7 @@ export const SATISFYING_VIDEO_URLS = {
 };
 
 // Word-by-word timestamps matching energetic speech
-export const SAMPLE_WORDS: WordTimestamp[] = [
+export const DEMO_WORDS: WordTimestamp[] = [
   { word: "IF", start: 0.2, end: 0.5 },
   { word: "YOU", start: 0.5, end: 0.8 },
   { word: "WANT", start: 0.8, end: 1.1 },
@@ -45,6 +50,10 @@ export const SAMPLE_WORDS: WordTimestamp[] = [
   { word: "EVERY", start: 13.4, end: 13.8 },
   { word: "TIME.", start: 13.8, end: 14.5 }
 ];
+
+// Backwards compatibility alias for components
+export const SAMPLE_WORDS = DEMO_WORDS;
+export const SAMPLE_VIDEO_URL = DEMO_VIDEO_URL;
 
 // Feature 10 & 11: Multi-language Translations for Dual Subtitles
 export const SAMPLE_TRANSLATIONS: Record<SubtitleLanguage, Record<string, string>> = {
@@ -98,75 +107,100 @@ export const SAMPLE_TRANSLATIONS: Record<SubtitleLanguage, Record<string, string
   },
   fr: {
     "IF": "SI",
-    "YOU": "VOUS",
-    "WANT": "VOULEZ",
-    "BUILD": "CONSTRUIRE",
-    "DOLLAR": "$10,000,",
-    "STOP": "ARRÊTEZ",
-    "START": "COMMENCEZ",
+    "YOU": "TU VEUX",
+    "WANT": "CRÉER",
+    "BUILD": "UN BUSINESS",
+    "DOLLAR": "DE 10K,",
+    "STOP": "ARRÊTE DE",
+    "OVERTHINKING": "TROP PENSER",
+    "START": "ET COMMENCE",
+    "CREATING": "À CRÉER",
+    "VALUE": "DE LA VALEUR",
     "SPEED": "LA VITESSE",
-    "WINS": "GAGNE"
+    "WINS": "GAGNE",
+    "GAME": "LE JEU"
   },
   de: {
     "IF": "WENN",
     "YOU": "DU",
     "WANT": "WILLST",
-    "BUILD": "AUFBAUEN",
-    "DOLLAR": "$10,000,",
-    "STOP": "STOPP",
+    "BUILD": "EIN BUSINESS",
+    "DOLLAR": "VON $10K,",
+    "STOP": "HÖR AUF ZU",
+    "OVERTHINKING": "GRÜBELN",
+    "START": "UND FANG AN",
+    "CREATING": "MEHRWERT",
+    "VALUE": "ZU SCHAFFEN",
     "SPEED": "GESCHWINDIGKEIT",
-    "WINS": "GEWINNT"
+    "WINS": "GEWINNT",
+    "GAME": "DAS SPIEL"
   }
 };
 
-// Feature 1: Viral Hooks with Retention Metrics (Isolated Demo Sample)
-export const SAMPLE_VIRAL_CLIPS: ViralClip[] = [
+// Demo Clips for explicit demo mode exploration
+export const DEMO_VIRAL_CLIPS: ViralClip[] = [
   {
-    id: "clip-1",
+    id: "demo-clip-1",
     rank: 1,
-    title: "🔥 The $10,000 Secret Rule",
-    hookSummary: "High-energy contrarian opening about speed vs perfection in business.",
-    importantLine: "Speed wins the game every single time — stop waiting for perfection.",
+    title: "⚡ Stop Overthinking ($10k Business Secret)",
+    hookSummary: "Challenges the perfectionism trap directly in the first 3 seconds.",
+    importantLine: "If you want to build a ten thousand dollar business, stop overthinking.",
     whyThisLineIsImportant: "Attacks overthinking and compels immediate viewer agreement.",
     keyMomentType: "Contrarian Truth",
     start: 0,
     end: 8.5,
     duration: 8.5,
-    viralScore: 98,
-    tags: ["High Energy", "Strong Hook", "Retention > 88%"],
-    hookStrength: 98,
-    retentionEstimate: 89,
-    energyLevel: 'Extreme',
-    words: SAMPLE_WORDS.slice(0, 15)
+    viralScore: 88,
+    scoreBreakdown: {
+      hook: 92,
+      curiosity: 86,
+      value: 88,
+      emotion: 84,
+      standalone: 90
+    },
+    confidence: 0.95,
+    alignmentStatus: 'verified',
+    alignmentConfidence: 0.96,
+    qualityStatus: 'verified',
+    tags: ["High Energy", "Strong Hook", "Mindset"],
+    hookStrength: 92,
+    retentionEstimate: 85,
+    energyLevel: 'High',
+    words: DEMO_WORDS.slice(0, 19)
   },
   {
-    id: "clip-2",
+    id: "demo-clip-2",
     rank: 2,
-    title: "⚡ Speed Over Perfection",
-    hookSummary: "Direct psychological punchline revealing why 90% of beginners fail.",
-    importantLine: "If you want to build a real business, take imperfect action today.",
-    whyThisLineIsImportant: "Direct psychological punchline revealing why beginners fail.",
+    title: "⚡ Speed Over Perfection Wins The Game",
+    hookSummary: "Direct psychological punchline revealing why most creators hesitate.",
+    importantLine: "Most people wait for perfection, but speed wins the game every time.",
+    whyThisLineIsImportant: "Contrasts delayed perfection with immediate execution speed.",
     keyMomentType: "Core Framework",
     start: 8.8,
     end: 14.5,
     duration: 5.7,
-    viralScore: 94,
-    tags: ["Mindset", "Motivational", "Shareable"],
-    hookStrength: 93,
-    retentionEstimate: 84,
+    viralScore: 84,
+    scoreBreakdown: {
+      hook: 85,
+      curiosity: 82,
+      value: 86,
+      emotion: 80,
+      standalone: 87
+    },
+    confidence: 0.92,
+    alignmentStatus: 'verified',
+    alignmentConfidence: 0.94,
+    qualityStatus: 'verified',
+    tags: ["Actionable", "Motivational", "Shareable"],
+    hookStrength: 85,
+    retentionEstimate: 80,
     energyLevel: 'High',
-    words: SAMPLE_WORDS.slice(15, 30)
+    words: DEMO_WORDS.slice(19, 31)
   }
 ];
 
-// Feature 4: Filler words cut demonstration
-export const DETECTED_FILLER_WORDS = [
-  { word: "Umm", timestamp: "0:04.2", duration: "0.6s" },
-  { word: "Uhh", timestamp: "0:08.6", duration: "0.8s" },
-  { word: "Silence Pause", timestamp: "0:11.1", duration: "1.1s" }
-];
+export const SAMPLE_VIRAL_CLIPS = DEMO_VIRAL_CLIPS;
 
-// Feature 5 & 25: AI Generated Titles & Viral Hashtags
 export const AI_SOCIAL_METADATA = {
   viralTitles: [
     "The harsh truth about making your first $10k 🤫 #shorts",
@@ -179,18 +213,22 @@ export const AI_SOCIAL_METADATA = {
 
 // Feature 26: AI Best Frame Thumbnails
 export const AI_THUMBNAILS = [
-  { time: 3.4, label: "Peak Passion Face (Score: 98)" },
-  { time: 8.0, label: "Confident Hook Stare (Score: 95)" },
-  { time: 12.2, label: "Victory Gesture (Score: 91)" }
+  { time: 3.4, label: "Peak Conviction Frame" },
+  { time: 8.0, label: "Direct Hook Stare" },
+  { time: 12.2, label: "Dynamic Speech Gesture" }
 ];
 
+/**
+ * ORIGINAL CLIPPER PRESET STYLES
+ * Professional typography system with distinctive brand presets.
+ */
 export const PRESET_STYLES: Record<string, SubtitleStyle> = {
-  hormozi: {
-    preset: 'hormozi',
-    fontFamily: 'Impact, sans-serif',
+  impact: {
+    preset: 'impact',
+    fontFamily: 'Impact, Arial Black, sans-serif',
     fontSize: 52,
     primaryColor: '#FFFFFF',
-    highlightColor: '#FACC15',
+    highlightColor: '#FACC15', // Electric Gold
     strokeColor: '#000000',
     strokeWidth: 6,
     position: 'middle',
@@ -201,14 +239,62 @@ export const PRESET_STYLES: Record<string, SubtitleStyle> = {
     showDualLanguage: false,
     enableSFX: true
   },
-  beast: {
-    preset: 'beast',
-    fontFamily: 'system-ui, sans-serif',
+  pulse: {
+    preset: 'pulse',
+    fontFamily: 'system-ui, -apple-system, sans-serif',
     fontSize: 48,
     primaryColor: '#FFFFFF',
-    highlightColor: '#22C55E',
+    highlightColor: '#22C55E', // Emerald Pulse
     strokeColor: '#000000',
     strokeWidth: 5,
+    position: 'bottom',
+    uppercase: true,
+    showEmojis: true,
+    animation: 'bounce',
+    language: 'en',
+    showDualLanguage: false,
+    enableSFX: true
+  },
+  clean: {
+    preset: 'clean',
+    fontFamily: 'Inter, system-ui, sans-serif',
+    fontSize: 42,
+    primaryColor: '#F8FAFC',
+    highlightColor: '#38BDF8', // Cyan Highlight
+    strokeColor: '#0F172A',
+    strokeWidth: 4,
+    position: 'bottom',
+    uppercase: false,
+    showEmojis: false,
+    animation: 'karaoke',
+    language: 'en',
+    showDualLanguage: false,
+    enableSFX: false
+  },
+  studio: {
+    preset: 'studio',
+    fontFamily: 'Montserrat, sans-serif',
+    fontSize: 46,
+    primaryColor: '#FFFFFF',
+    highlightColor: '#E11D48', // Clipper Crimson
+    strokeColor: '#09090B',
+    strokeWidth: 5,
+    position: 'middle',
+    uppercase: true,
+    showEmojis: true,
+    animation: 'pop',
+    language: 'en',
+    showDualLanguage: false,
+    enableSFX: true
+  },
+  bold: {
+    preset: 'bold',
+    fontFamily: 'Trebuchet MS, sans-serif',
+    fontSize: 50,
+    primaryColor: '#FEF08A',
+    highlightColor: '#F97316', // Bold Amber
+    strokeColor: '#000000',
+    strokeWidth: 6,
     position: 'bottom',
     uppercase: true,
     showEmojis: true,
@@ -220,11 +306,11 @@ export const PRESET_STYLES: Record<string, SubtitleStyle> = {
   minimal: {
     preset: 'minimal',
     fontFamily: 'Inter, sans-serif',
-    fontSize: 40,
+    fontSize: 38,
     primaryColor: '#F8FAFC',
-    highlightColor: '#38BDF8',
-    strokeColor: '#0F172A',
-    strokeWidth: 4,
+    highlightColor: '#94A3B8',
+    strokeColor: '#000000',
+    strokeWidth: 3,
     position: 'bottom',
     uppercase: false,
     showEmojis: false,

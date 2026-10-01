@@ -3,7 +3,7 @@
 import React from 'react';
 import { SubtitleStyle, SubtitlePreset, SubtitleLanguage } from '@/lib/types';
 import { PRESET_STYLES } from '@/lib/sampleData';
-import { Palette, Type, AlignVerticalJustifyCenter, Smile, Volume2, Globe, Sparkles, Upload } from 'lucide-react';
+import { Palette, Type, AlignVerticalJustifyCenter, Smile, Volume2, Globe, Sparkles } from 'lucide-react';
 
 interface TypographyTabProps {
   currentStyle: SubtitleStyle;
@@ -22,24 +22,89 @@ export const TypographyTab: React.FC<TypographyTabProps> = ({ currentStyle, onCh
   };
 
   const colorSwatches = [
-    { name: 'Hormozi Gold', hex: '#FACC15' },
-    { name: 'Beast Green', hex: '#22C55E' },
-    { name: 'Electric Cyan', hex: '#06B6D4' },
-    { name: 'YouTube Red', hex: '#FF0000' },
-    { name: 'Hot Pink', hex: '#F43F5E' },
+    { name: 'Electric Gold', hex: '#FACC15' },
+    { name: 'Emerald Pulse', hex: '#22C55E' },
+    { name: 'Cyan Highlight', hex: '#38BDF8' },
+    { name: 'Clipper Crimson', hex: '#E11D48' },
+    { name: 'Bold Amber', hex: '#F97316' },
     { name: 'Clean White', hex: '#FFFFFF' }
+  ];
+
+  const presetsConfig: Array<{
+    id: SubtitlePreset;
+    title: string;
+    tag: string;
+    description: string;
+    borderColor: string;
+    activeBg: string;
+  }> = [
+    {
+      id: 'impact',
+      title: 'Impact',
+      tag: 'Dynamic Pop',
+      description: 'Bold Impact • Gold Pop • Heavy Outline',
+      borderColor: 'border-amber-400',
+      activeBg: 'bg-amber-50/70',
+    },
+    {
+      id: 'pulse',
+      title: 'Pulse',
+      tag: 'High Energy',
+      description: 'System Sans • Emerald Pulse • Bounce',
+      borderColor: 'border-emerald-500',
+      activeBg: 'bg-emerald-50/70',
+    },
+    {
+      id: 'clean',
+      title: 'Clean',
+      tag: 'Modern',
+      description: 'Inter Font • Cyan Karaoke • Readable',
+      borderColor: 'border-sky-500',
+      activeBg: 'bg-sky-50/70',
+    },
+    {
+      id: 'studio',
+      title: 'Studio',
+      tag: 'Creator-First',
+      description: 'Montserrat • Crimson Accents • Crisp',
+      borderColor: 'border-red-500',
+      activeBg: 'bg-red-50/70',
+    },
+    {
+      id: 'bold',
+      title: 'Bold',
+      tag: 'Punchy',
+      description: 'Trebuchet MS • Amber Fire • Fast Pacing',
+      borderColor: 'border-orange-500',
+      activeBg: 'bg-orange-50/70',
+    },
+    {
+      id: 'minimal',
+      title: 'Minimal',
+      tag: 'Understated',
+      description: 'Light Sans • Subtle Shadow • Cinematic',
+      borderColor: 'border-slate-400',
+      activeBg: 'bg-slate-100',
+    },
+    {
+      id: 'neon',
+      title: 'Neon',
+      tag: 'Vibrant',
+      description: 'Rose & Cyan • Cyber Glow • Standout',
+      borderColor: 'border-pink-500',
+      activeBg: 'bg-pink-50/70',
+    },
   ];
 
   return (
     <div className="space-y-4">
-      
-      {/* 1. Viral Creator Presets */}
+      {/* 1. Original Clipper Creator Presets */}
       <div className="p-5 rounded-2xl bg-white border border-slate-200 shadow-2xs space-y-3">
         <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
           <div className="flex items-center gap-2">
             <Palette className="w-4 h-4 text-red-600" />
             <h3 className="text-xs font-extrabold text-slate-900 uppercase tracking-wider">
-              Creator Presets &amp; Styles
+              Original Creator Caption Presets
             </h3>
           </div>
           <span className="text-[10px] text-red-600 font-extrabold bg-red-50 px-2 py-0.5 rounded-full border border-red-200">
@@ -48,69 +113,29 @@ export const TypographyTab: React.FC<TypographyTabProps> = ({ currentStyle, onCh
         </div>
 
         <div className="grid grid-cols-2 gap-2.5">
-          <button
-            type="button"
-            onClick={() => handlePresetSelect('hormozi')}
-            className={`p-3 rounded-xl border text-left transition-all cursor-pointer ${
-              currentStyle.preset === 'hormozi'
-                ? 'border-amber-400 bg-amber-50/60 shadow-sm ring-1 ring-amber-400'
-                : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50'
-            }`}
-          >
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-amber-700">Alex Hormozi</span>
-              <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800 font-extrabold">#1 Pop</span>
-            </div>
-            <p className="text-[10px] text-slate-500 mt-1">Bold Impact • Yellow Pop • Emojis</p>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => handlePresetSelect('beast')}
-            className={`p-3 rounded-xl border text-left transition-all cursor-pointer ${
-              currentStyle.preset === 'beast'
-                ? 'border-emerald-500 bg-emerald-50/60 shadow-sm ring-1 ring-emerald-500'
-                : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50'
-            }`}
-          >
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-emerald-700">MrBeast</span>
-              <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 font-extrabold">Punchy</span>
-            </div>
-            <p className="text-[10px] text-slate-500 mt-1">Punchy Sans • Green Flash • Bounce</p>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => handlePresetSelect('minimal')}
-            className={`p-3 rounded-xl border text-left transition-all cursor-pointer ${
-              currentStyle.preset === 'minimal'
-                ? 'border-sky-500 bg-sky-50/60 shadow-sm ring-1 ring-sky-500'
-                : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50'
-            }`}
-          >
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-sky-700">Clean Minimal</span>
-              <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-sky-100 text-sky-800 font-extrabold">Modern</span>
-            </div>
-            <p className="text-[10px] text-slate-500 mt-1">Inter Font • Cyan Glow • Subtle</p>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => handlePresetSelect('neon')}
-            className={`p-3 rounded-xl border text-left transition-all cursor-pointer ${
-              currentStyle.preset === 'neon'
-                ? 'border-pink-500 bg-pink-50/60 shadow-sm ring-1 ring-pink-500'
-                : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50'
-            }`}
-          >
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-pink-700">Neon Cyber</span>
-              <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-pink-100 text-pink-800 font-extrabold">Vibrant</span>
-            </div>
-            <p className="text-[10px] text-slate-500 mt-1">Pink &amp; Cyan • High Energy</p>
-          </button>
+          {presetsConfig.map((p) => {
+            const isSelected = currentStyle.preset === p.id;
+            return (
+              <button
+                key={p.id}
+                type="button"
+                onClick={() => handlePresetSelect(p.id)}
+                className={`p-3 rounded-xl border text-left transition-all cursor-pointer ${
+                  isSelected
+                    ? `${p.borderColor} ${p.activeBg} shadow-sm ring-1 ${p.borderColor}`
+                    : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50'
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-slate-900">{p.title}</span>
+                  <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-white text-slate-700 font-extrabold border border-slate-200">
+                    {p.tag}
+                  </span>
+                </div>
+                <p className="text-[10px] text-slate-500 mt-1">{p.description}</p>
+              </button>
+            );
+          })}
         </div>
       </div>
 
@@ -120,7 +145,7 @@ export const TypographyTab: React.FC<TypographyTabProps> = ({ currentStyle, onCh
           <div className="flex items-center gap-2">
             <Globe className="w-4 h-4 text-red-600" />
             <h3 className="text-xs font-extrabold text-slate-900 uppercase tracking-wider">
-              10 &amp; 11. Multi &amp; Dual-Language
+              Caption Language
             </h3>
           </div>
           <span className="text-[10px] px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-700 font-bold border border-slate-200">
@@ -141,182 +166,134 @@ export const TypographyTab: React.FC<TypographyTabProps> = ({ currentStyle, onCh
                   : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
               }`}
             >
-              {lang === 'hi' ? '🇮🇳 HI' : lang === 'es' ? '🇪🇸 ES' : lang === 'fr' ? '🇫🇷 FR' : lang === 'de' ? '🇩🇪 DE' : '🇺🇸 EN'}
+              {lang}
             </button>
           ))}
         </div>
 
-        {/* Dual Language Stacked Toggle */}
-        <div className="flex items-center justify-between pt-2 border-t border-slate-100">
+        {/* Dual Language Toggle */}
+        <div className="pt-2 flex items-center justify-between border-t border-slate-100">
           <div>
-            <p className="text-xs font-bold text-slate-900">Dual-Language Subtitles</p>
-            <p className="text-[10px] text-slate-500">Stack original English on top + translated language below</p>
+            <p className="text-xs font-bold text-slate-800">Dual-Language Subtitles</p>
+            <p className="text-[10px] text-slate-500">Show primary + translated captions simultaneously</p>
           </div>
-          <button
-            type="button"
-            onClick={() => handleUpdate({ showDualLanguage: !currentStyle.showDualLanguage })}
-            className={`w-11 h-6 rounded-full transition-colors relative cursor-pointer ${
-              currentStyle.showDualLanguage ? 'bg-red-600' : 'bg-slate-200'
-            }`}
-          >
-            <div
-              className={`w-4 h-4 rounded-full bg-white transition-transform absolute top-1 shadow-sm ${
-                currentStyle.showDualLanguage ? 'left-6' : 'left-1'
-              }`}
-            />
-          </button>
+          <input
+            type="checkbox"
+            checked={currentStyle.showDualLanguage}
+            onChange={(e) => handleUpdate({ showDualLanguage: e.target.checked })}
+            className="w-4 h-4 accent-red-600 cursor-pointer"
+          />
         </div>
       </div>
 
-      {/* Feature 8 & 9: Karaoke Glow, Sound Effects, and Auto Emojis */}
-      <div className="p-5 rounded-2xl bg-white border border-slate-200 shadow-2xs space-y-3.5">
-        <div className="flex items-center gap-2 border-b border-slate-100 pb-2">
-          <Sparkles className="w-4 h-4 text-red-600" />
+      {/* 2. Color & Highlights */}
+      <div className="p-5 rounded-2xl bg-white border border-slate-200 shadow-2xs space-y-3">
+        <div className="flex items-center gap-2 border-b border-slate-100 pb-2.5">
+          <Type className="w-4 h-4 text-red-600" />
           <h3 className="text-xs font-extrabold text-slate-900 uppercase tracking-wider">
-            Animation &amp; Sound FX
+            Color &amp; Word Highlights
           </h3>
         </div>
 
-        {/* Feature 9: SFX Toggle */}
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Volume2 className="w-4 h-4 text-amber-500" />
-            <div>
-              <p className="text-xs font-bold text-slate-900">Keyword Pop Sound Effects</p>
-              <p className="text-[10px] text-slate-500">Plays cash register chime 💰 &amp; whoosh on punchlines</p>
+        <div className="space-y-3">
+          <div>
+            <label className="text-[11px] font-bold text-slate-600 block mb-1.5">
+              Highlight Word Accent Color
+            </label>
+            <div className="flex items-center gap-2">
+              {colorSwatches.map((color) => (
+                <button
+                  key={color.hex}
+                  type="button"
+                  onClick={() => handleUpdate({ highlightColor: color.hex })}
+                  className={`w-7 h-7 rounded-full border-2 transition-transform cursor-pointer ${
+                    currentStyle.highlightColor.toLowerCase() === color.hex.toLowerCase()
+                      ? 'border-slate-900 scale-110 shadow-sm'
+                      : 'border-slate-300 hover:scale-105'
+                  }`}
+                  style={{ backgroundColor: color.hex }}
+                  title={color.name}
+                />
+              ))}
+              <input
+                type="color"
+                value={currentStyle.highlightColor}
+                onChange={(e) => handleUpdate({ highlightColor: e.target.value })}
+                className="w-7 h-7 rounded-full overflow-hidden border border-slate-300 p-0 cursor-pointer"
+              />
             </div>
           </div>
-          <button
-            type="button"
-            onClick={() => handleUpdate({ enableSFX: !currentStyle.enableSFX })}
-            className={`w-11 h-6 rounded-full transition-colors relative cursor-pointer ${
-              currentStyle.enableSFX ? 'bg-red-600' : 'bg-slate-200'
-            }`}
-          >
-            <div
-              className={`w-4 h-4 rounded-full bg-white transition-transform absolute top-1 shadow-sm ${
-                currentStyle.enableSFX ? 'left-6' : 'left-1'
-              }`}
-            />
-          </button>
-        </div>
 
-        {/* Feature 12: Auto Emojis */}
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Smile className="w-4 h-4 text-amber-500" />
-            <div>
-              <p className="text-xs font-bold text-slate-900">Dynamic Animated Emojis</p>
-              <p className="text-[10px] text-slate-500">Auto-detects high-impact words (🚀, 💰, ⚡)</p>
+          <div>
+            <label className="text-[11px] font-bold text-slate-600 block mb-1.5">
+              Primary Caption Text Color
+            </label>
+            <div className="flex items-center gap-2">
+              <input
+                type="color"
+                value={currentStyle.primaryColor}
+                onChange={(e) => handleUpdate({ primaryColor: e.target.value })}
+                className="w-7 h-7 rounded-full overflow-hidden border border-slate-300 p-0 cursor-pointer"
+              />
+              <span className="text-xs font-mono text-slate-700 font-bold">{currentStyle.primaryColor}</span>
             </div>
-          </div>
-          <button
-            type="button"
-            onClick={() => handleUpdate({ showEmojis: !currentStyle.showEmojis })}
-            className={`w-11 h-6 rounded-full transition-colors relative cursor-pointer ${
-              currentStyle.showEmojis ? 'bg-red-600' : 'bg-slate-200'
-            }`}
-          >
-            <div
-              className={`w-4 h-4 rounded-full bg-white transition-transform absolute top-1 shadow-sm ${
-                currentStyle.showEmojis ? 'left-6' : 'left-1'
-              }`}
-            />
-          </button>
-        </div>
-
-        {/* Feature 8: Animation Style */}
-        <div className="pt-2">
-          <label className="text-[11px] font-bold text-slate-600 block mb-1.5">
-            Highlight Animation Style
-          </label>
-          <div className="grid grid-cols-3 gap-2">
-            {(['pop', 'bounce', 'glow'] as const).map((anim) => (
-              <button
-                key={anim}
-                type="button"
-                onClick={() => handleUpdate({ animation: anim })}
-                className={`py-2 text-xs font-bold rounded-xl uppercase border transition-colors cursor-pointer ${
-                  currentStyle.animation === anim
-                    ? 'border-red-500 bg-red-50 text-red-700 shadow-2xs'
-                    : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
-                }`}
-              >
-                {anim}
-              </button>
-            ))}
           </div>
         </div>
       </div>
 
-      {/* Feature 7: Custom Font & Color Customizer */}
-      <div className="p-5 rounded-2xl bg-white border border-slate-200 shadow-2xs space-y-3.5">
-        <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
-          <div className="flex items-center gap-2">
-            <Type className="w-4 h-4 text-red-600" />
-            <h3 className="text-xs font-extrabold text-slate-900 uppercase tracking-wider">
-              7. Custom Font &amp; Brand Kit
-            </h3>
-          </div>
-          <label className="text-[10px] text-red-600 font-bold cursor-pointer hover:underline flex items-center gap-1">
-            <Upload className="w-3 h-3" /> Upload .TTF
-            <input type="file" accept=".ttf,.otf,.woff2" className="hidden" />
-          </label>
+      {/* 3. Typography Adjustments */}
+      <div className="p-5 rounded-2xl bg-white border border-slate-200 shadow-2xs space-y-4">
+        <div className="flex items-center gap-2 border-b border-slate-100 pb-2.5">
+          <AlignVerticalJustifyCenter className="w-4 h-4 text-red-600" />
+          <h3 className="text-xs font-extrabold text-slate-900 uppercase tracking-wider">
+            Layout &amp; Placement
+          </h3>
         </div>
 
-        {/* Color swatches */}
-        <div>
-          <label className="text-[11px] font-bold text-slate-600 mb-1.5 block">
-            Highlight Color
-          </label>
-          <div className="flex items-center gap-2.5">
-            {colorSwatches.map((color) => (
-              <button
-                key={color.hex}
-                onClick={() => handleUpdate({ highlightColor: color.hex })}
-                className={`w-7 h-7 rounded-full border-2 transition-transform cursor-pointer ${
-                  currentStyle.highlightColor.toLowerCase() === color.hex.toLowerCase()
-                    ? 'scale-115 border-slate-900 shadow-sm'
-                    : 'border-slate-300 hover:scale-105'
-                }`}
-                style={{ backgroundColor: color.hex }}
-                title={color.name}
-              />
-            ))}
-          </div>
-        </div>
-
-        {/* Font Size */}
-        <div>
-          <div className="flex justify-between text-xs text-slate-600 mb-1 font-semibold">
-            <span>Font Size</span>
-            <span className="font-mono text-red-600 font-bold">{currentStyle.fontSize}px</span>
+        {/* Font Size Slider */}
+        <div className="space-y-1">
+          <div className="flex justify-between text-xs">
+            <span className="text-slate-600 font-medium">Font Size</span>
+            <span className="text-slate-900 font-bold font-mono">{currentStyle.fontSize}px</span>
           </div>
           <input
             type="range"
-            min="32"
-            max="68"
-            step="2"
+            min={28}
+            max={72}
             value={currentStyle.fontSize}
-            onChange={(e) => handleUpdate({ fontSize: parseInt(e.target.value) })}
-            className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-red-600"
+            onChange={(e) => handleUpdate({ fontSize: Number(e.target.value) })}
+            className="w-full accent-red-600 cursor-pointer"
           />
         </div>
 
-        {/* Position */}
-        <div>
-          <label className="text-[11px] font-bold text-slate-600 mb-1.5 flex items-center gap-1">
-            <AlignVerticalJustifyCenter className="w-3.5 h-3.5 text-red-600" />
-            <span>Position</span>
-          </label>
+        {/* Stroke / Border Width */}
+        <div className="space-y-1">
+          <div className="flex justify-between text-xs">
+            <span className="text-slate-600 font-medium">Outline Stroke</span>
+            <span className="text-slate-900 font-bold font-mono">{currentStyle.strokeWidth}px</span>
+          </div>
+          <input
+            type="range"
+            min={0}
+            max={10}
+            value={currentStyle.strokeWidth}
+            onChange={(e) => handleUpdate({ strokeWidth: Number(e.target.value) })}
+            className="w-full accent-red-600 cursor-pointer"
+          />
+        </div>
+
+        {/* Position on Screen */}
+        <div className="space-y-1.5">
+          <span className="text-[11px] font-bold text-slate-600 block">Vertical Position</span>
           <div className="grid grid-cols-3 gap-2">
             {(['top', 'middle', 'bottom'] as const).map((pos) => (
               <button
                 key={pos}
+                type="button"
                 onClick={() => handleUpdate({ position: pos })}
                 className={`py-2 text-xs font-bold rounded-xl capitalize border transition-colors cursor-pointer ${
                   currentStyle.position === pos
-                    ? 'border-red-500 bg-red-50 text-red-700 shadow-2xs'
+                    ? 'border-red-500 bg-red-50 text-red-700'
                     : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
                 }`}
               >
@@ -325,8 +302,49 @@ export const TypographyTab: React.FC<TypographyTabProps> = ({ currentStyle, onCh
             ))}
           </div>
         </div>
-      </div>
 
+        {/* Animation & Visual Toggles */}
+        <div className="space-y-2.5 pt-2 border-t border-slate-100">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-1.5">
+              <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+              <span className="text-xs font-bold text-slate-800">ALL CAPS</span>
+            </div>
+            <input
+              type="checkbox"
+              checked={currentStyle.uppercase}
+              onChange={(e) => handleUpdate({ uppercase: e.target.checked })}
+              className="w-4 h-4 accent-red-600 cursor-pointer"
+            />
+          </div>
+
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-1.5">
+              <Smile className="w-3.5 h-3.5 text-amber-500" />
+              <span className="text-xs font-bold text-slate-800">Automatic Emoji Accents</span>
+            </div>
+            <input
+              type="checkbox"
+              checked={currentStyle.showEmojis}
+              onChange={(e) => handleUpdate({ showEmojis: e.target.checked })}
+              className="w-4 h-4 accent-red-600 cursor-pointer"
+            />
+          </div>
+
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-1.5">
+              <Volume2 className="w-3.5 h-3.5 text-blue-500" />
+              <span className="text-xs font-bold text-slate-800">Subtle Sound Effects (SFX)</span>
+            </div>
+            <input
+              type="checkbox"
+              checked={currentStyle.enableSFX}
+              onChange={(e) => handleUpdate({ enableSFX: e.target.checked })}
+              className="w-4 h-4 accent-red-600 cursor-pointer"
+            />
+          </div>
+        </div>
+      </div>
     </div>
   );
 };

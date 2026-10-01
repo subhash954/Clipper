@@ -51,12 +51,12 @@ export const AgencyAffiliateTab: React.FC<AgencyAffiliateTabProps> = ({
         {/* Stats Grid */}
         <div className="grid grid-cols-2 gap-2.5">
           <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200">
-            <span className="text-[10px] text-slate-500 font-medium">Total Referrals</span>
-            <p className="text-lg font-extrabold text-slate-900 mt-0.5">{settings.referralCount} Creators</p>
+            <span className="text-[10px] text-slate-500 font-medium">Total Active Referrals</span>
+            <p className="text-lg font-extrabold text-slate-900 mt-0.5">{settings.referralCount || 0} Creators</p>
           </div>
           <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200">
-            <span className="text-[10px] text-slate-500 font-medium">Monthly Payout (MRR)</span>
-            <p className="text-lg font-extrabold text-emerald-600 mt-0.5">${settings.affiliateEarnings}/mo</p>
+            <span className="text-[10px] text-slate-500 font-medium">Monthly Commission (MRR)</span>
+            <p className="text-lg font-extrabold text-emerald-600 mt-0.5">${settings.affiliateEarnings || 0}/mo</p>
           </div>
         </div>
 

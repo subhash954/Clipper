@@ -8,10 +8,11 @@ import { ViralClip, SubtitleStyle, VisualLayoutSettings } from '@/lib/types';
 interface ExportModalProps {
   isOpen: boolean;
   onClose: () => void;
-  isProUser: boolean;
-  onOpenPricing: () => void;
+  isProUser?: boolean;
+  onOpenPricing?: () => void;
   activeClip?: ViralClip | null;
   videoUrl?: string | null;
+  sourceUrl?: string | null;
   subtitleStyle?: SubtitleStyle;
   visualSettings?: VisualLayoutSettings;
   videoElement?: HTMLVideoElement | null;
@@ -21,10 +22,11 @@ interface ExportModalProps {
 export const ExportModal: React.FC<ExportModalProps> = ({
   isOpen,
   onClose,
-  isProUser,
+  isProUser = false,
   onOpenPricing,
   activeClip,
   videoUrl,
+  sourceUrl,
   subtitleStyle,
   visualSettings,
 }) => {
@@ -33,6 +35,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
   const [currentStage, setCurrentStage] = useState<string>('');
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [localMediaUrl, setLocalMediaUrl] = useState<string | null>(null);
   const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   // Clean up polling interval on unmount or close
@@ -45,6 +48,8 @@ export const ExportModal: React.FC<ExportModalProps> = ({
   }, []);
 
   if (!isOpen) return null;
+
+  const activeMedia = localMediaUrl || sourceUrl || videoUrl;
 
   const triggerExport = async () => {
     setIsRendering(true);
@@ -65,7 +70,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
             duration: 30,
             words: [],
           },
-          sourceUrl: videoUrl,
+          sourceUrl: activeMedia,
           subtitleStyle,
           visualSettings,
           isProUser,
@@ -202,7 +207,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
             <button
               onClick={() => {
                 onClose();
-                onOpenPricing();
+                onOpenPricing?.();
               }}
               className="px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold transition-colors cursor-pointer shadow-2xs"
             >
@@ -232,11 +237,35 @@ export const ExportModal: React.FC<ExportModalProps> = ({
 
         {/* Error Alert */}
         {errorMessage && (
-          <div className="p-3.5 rounded-xl bg-red-50 border border-red-200 text-xs text-red-700 space-y-1">
+          <div className="p-3.5 rounded-xl bg-red-50 border border-red-200 text-xs text-red-700 space-y-2">
             <p className="font-bold flex items-center gap-1">
-              <AlertCircle className="w-4 h-4 shrink-0" /> Render Failed
+              <AlertCircle className="w-4 h-4 shrink-0" /> Render Notice
             </p>
-            <p className="text-[11px]">{errorMessage}</p>
+            <p className="text-[11px] leading-relaxed">{errorMessage}</p>
+            {errorMessage.includes('media is unavailable') && (
+              <div className="pt-1">
+                <input
+                  type="file"
+                  id="modal-video-picker"
+                  accept="video/mp4,video/quicktime,video/webm"
+                  className="hidden"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) {
+                      const url = URL.createObjectURL(file);
+                      setLocalMediaUrl(url);
+                      setErrorMessage(null);
+                    }
+                  }}
+                />
+                <label
+                  htmlFor="modal-video-picker"
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-700 text-white font-bold text-xs cursor-pointer shadow-xs transition-colors"
+                >
+                  <span>Attach Video File to Render</span>
+                </label>
+              </div>
+            )}
           </div>
         )}
 

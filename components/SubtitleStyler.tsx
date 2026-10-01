@@ -22,8 +22,8 @@ export const SubtitleStyler: React.FC<SubtitleStylerProps> = ({ currentStyle, on
   };
 
   const colorSwatches = [
-    { name: 'Hormozi Gold', hex: '#FACC15' },
-    { name: 'Beast Green', hex: '#22C55E' },
+    { name: 'Creator Gold', hex: '#FACC15' },
+    { name: 'Emerald Pulse', hex: '#22C55E' },
     { name: 'Electric Cyan', hex: '#06B6D4' },
     { name: 'Hot Pink', hex: '#F43F5E' },
     { name: 'Flame Orange', hex: '#FB923C' },
@@ -53,35 +53,35 @@ export const SubtitleStyler: React.FC<SubtitleStylerProps> = ({ currentStyle, on
         </label>
         <div className="grid grid-cols-2 gap-2">
           
-          {/* Hormozi Preset */}
+          {/* Impact Preset */}
           <button
             type="button"
-            onClick={() => handlePresetSelect('hormozi')}
+            onClick={() => handlePresetSelect('impact')}
             className={`p-3 rounded-xl border text-left transition-all ${
-              currentStyle.preset === 'hormozi'
+              currentStyle.preset === 'impact'
                 ? 'border-yellow-400 bg-yellow-400/10 shadow-lg shadow-yellow-500/10'
                 : 'border-white/10 bg-slate-800/60 hover:border-white/20'
             }`}
           >
             <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-yellow-400">Alex Hormozi</span>
+              <span className="text-xs font-bold text-yellow-400">Impact</span>
               <span className="text-[10px] px-1.5 py-0.5 rounded bg-yellow-400/20 text-yellow-300">#1 Pop</span>
             </div>
             <p className="text-[10px] text-slate-400 mt-1">Bold Impact • Yellow Pop • Emojis</p>
           </button>
 
-          {/* MrBeast Preset */}
+          {/* Pulse Preset */}
           <button
             type="button"
-            onClick={() => handlePresetSelect('beast')}
+            onClick={() => handlePresetSelect('pulse')}
             className={`p-3 rounded-xl border text-left transition-all ${
-              currentStyle.preset === 'beast'
+              currentStyle.preset === 'pulse'
                 ? 'border-emerald-400 bg-emerald-400/10 shadow-lg shadow-emerald-500/10'
                 : 'border-white/10 bg-slate-800/60 hover:border-white/20'
             }`}
           >
             <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-emerald-400">MrBeast</span>
+              <span className="text-xs font-bold text-emerald-400">Pulse</span>
               <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-400/20 text-emerald-300">Punchy</span>
             </div>
             <p className="text-[10px] text-slate-400 mt-1">Punchy Sans • Green Flash • Bounce</p>

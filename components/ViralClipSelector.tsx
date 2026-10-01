@@ -71,7 +71,7 @@ export const ViralClipSelector: React.FC<ViralClipSelectorProps> = ({
                 </div>
 
                 <div className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-500/30 text-emerald-300 text-[10px] font-extrabold whitespace-nowrap">
-                  <span>{clip.viralScore}% VIRAL</span>
+                  <span>{clip.viralScore} AI Score</span>
                 </div>
               </div>
 

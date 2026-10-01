@@ -47,7 +47,7 @@ export async function analyzeTranscriptWithGemini(params: {
   // Clip transcript to reasonable token size (~12,000 words max)
   const truncatedTranscript = transcriptText.split(/\s+/).slice(0, 10000).join(' ');
 
-  const prompt = `You are Alex Hormozi's chief viral video editor.
+  const prompt = `You are an elite short-form video editor and narrative retention strategist.
 A creator submitted this long video for short-form extraction:
 Title: "${videoTitle}"
 Channel: "${channelName}"

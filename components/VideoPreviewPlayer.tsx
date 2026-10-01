@@ -251,7 +251,7 @@ export const VideoPreviewPlayer = forwardRef<VideoPreviewPlayerRef, VideoPreview
                 <div className="relative w-full h-1/2 overflow-hidden border-b-2 border-red-500/40">
                   <video
                     ref={videoRef}
-                    src={youtubeId ? "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4" : videoUrl}
+                    src={videoUrl}
                     crossOrigin="anonymous"
                     playsInline
                     loop
@@ -285,7 +285,7 @@ export const VideoPreviewPlayer = forwardRef<VideoPreviewPlayerRef, VideoPreview
               /* Standard Full-Height Vertical 9:16 Video */
               <video
                 ref={videoRef}
-                src={youtubeId ? "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4" : videoUrl}
+                src={videoUrl}
                 crossOrigin="anonymous"
                 playsInline
                 loop

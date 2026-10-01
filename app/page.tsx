@@ -57,7 +57,7 @@ export default function LandingPage() {
 
           {/* Subtitle */}
           <p className="max-w-2xl mx-auto text-base sm:text-lg text-slate-600 leading-relaxed font-normal">
-            Paste any long video or podcast URL. <strong className="text-slate-900">Clipper</strong> automatically slices high-retention clips, applies Hormozi dynamic captions, adds stock B-roll, and auto-schedules to your channel.
+            Paste any long video or podcast URL. <strong className="text-slate-900">Clipper</strong> automatically slices high-retention clips, applies dynamic kinetic captions, adds stock B-roll, and auto-schedules to your channel.
           </p>
 
           {/* CTA Buttons */}
@@ -139,7 +139,7 @@ export default function LandingPage() {
               </div>
               <h3 className="text-lg font-bold text-slate-900">1-Finger Viral Reel</h3>
               <p className="text-xs text-slate-600 leading-relaxed">
-                Drop any raw short clip. In 1 tap, AI removes awkward silence, adds big animated Hormozi captions, auto-emojis, and background music.
+                Drop any raw short clip. In 1 tap, AI removes awkward silence, adds high-impact animated captions, auto-emojis, and background music.
               </p>
               <div className="pt-2 text-[11px] font-mono font-bold text-amber-700 bg-amber-50 px-2.5 py-1 rounded-md border border-amber-200 w-fit">
                 Export Ready in 5 Seconds

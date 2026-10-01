@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Clipper - AI YouTube Video Repurposer & Viral Shorts Studio",
-  description: "Turn 1-hour long YouTube videos into 15 viral shorts with Hormozi animated subtitles, auto B-roll, and 1-click social scheduling.",
+  title: "Clipper AI — Professional Video Repurposing & Viral Shorts Studio",
+  description: "Turn long-form videos into high-retention vertical shorts with dynamic word-level subtitles, AI B-roll, and multi-track creator editing.",
 };
 
 export default function RootLayout({

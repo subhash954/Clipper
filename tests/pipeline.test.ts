@@ -2,8 +2,14 @@ import fs from 'fs';
 import path from 'path';
 import { extractYouTubeVideoId } from '../app/api/youtube/ingest/route';
 import { calculateViralScore } from '../lib/scoring/viralScoring';
-import { alignClipsToTranscript, convertToRelativeWordTimestamps } from '../lib/alignmentEngine';
-import { getStorage } from '../lib/storage';
+import { 
+  alignClipsToTranscript, 
+  convertToRelativeWordTimestamps, 
+  matchQuoteToTranscript, 
+  calculateIntervalOverlap 
+} from '../lib/alignmentEngine';
+import { detectFillerWords, detectSilences, calculateVoiceEnergy } from '../lib/edl/editDecisionList';
+import { getStorage, getMediaStorage } from '../lib/storage';
 import { renderClipWithFfmpeg } from '../lib/renderEngine';
 import { WordTimestamp, Transcript, Project } from '../lib/types';
 
@@ -102,7 +108,6 @@ async function runTests() {
     { word: 'world', start: 13.8, end: 14.5 },
   ];
 
-  // Add 40 more padding words to reach reasonable clip length
   for (let i = 1; i <= 40; i++) {
     sampleWords.push({
       word: `insight_${i}`,
@@ -140,6 +145,7 @@ async function runTests() {
   assert(aligned[0].start < aligned[0].end, 'Clip start is strictly less than clip end');
   assert(aligned[0].duration >= 15 && aligned[0].duration <= 60, 'Clip duration is bounded between 15s and 60s');
   assert(aligned[0].words.length > 0, 'Clip contains real mapped word timestamps');
+  assert(aligned[0].alignmentStatus === 'verified', 'Clip alignment status is verified');
 
   // TEST 4: Subtitle Relative Timestamp Conversion
   console.log('\n--- TEST GROUP 4: Subtitle Relative Timestamps ---');
@@ -188,8 +194,56 @@ async function runTests() {
   const updatedJob = await storage.getRenderJob(testJob.id);
   assert(updatedJob?.progress === 50, 'Render job progress update synced');
 
-  // TEST 6: Real FFmpeg 9:16 Video Composition & MP4 Output
-  console.log('\n--- TEST GROUP 6: Real FFmpeg 9:16 MP4 Rendering ---');
+  // TEST 6: Real Edit Decision List (EDL) Detection
+  console.log('\n--- TEST GROUP 6: Real Edit Decision List (EDL) ---');
+  const wordsWithFillers: WordTimestamp[] = [
+    { word: 'So', start: 0.1, end: 0.3 },
+    { word: 'um', start: 0.4, end: 0.9 },
+    { word: 'basically', start: 1.1, end: 1.7 },
+    { word: 'we', start: 2.5, end: 2.8 }, // 0.8s silence pause between 1.7 and 2.5
+    { word: 'built', start: 2.8, end: 3.1 },
+    { word: 'the', start: 3.1, end: 3.3 },
+    { word: 'the', start: 3.3, end: 3.5 }, // stutter / repeated word
+    { word: 'system', start: 3.5, end: 4.0 },
+  ];
+
+  const detectedFillers = detectFillerWords(wordsWithFillers);
+  assert(detectedFillers.length >= 2, `Detected real filler words and stutters (found ${detectedFillers.length})`);
+  assert(detectedFillers[0].reason === 'filler', 'First cut identified as filler');
+
+  const detectedSilences = detectSilences(wordsWithFillers, 0.5);
+  assert(detectedSilences.length === 1, `Detected silent pause >= 0.5s (found ${detectedSilences.length})`);
+  assert(detectedSilences[0].start === 1.7 && detectedSilences[0].end === 2.5, 'Silence bounds mapped accurately');
+
+  const energy = calculateVoiceEnergy(sampleWords);
+  assert(energy !== null, 'Voice energy cadence computed');
+  assert(energy!.wordsPerSecond > 0, `Words per second computed (${energy?.wordsPerSecond})`);
+
+  // TEST 7: Robust Alignment & Failed Match Protection (Sections 5 & 6)
+  console.log('\n--- TEST GROUP 7: Failed Match Protection & Deduplication ---');
+  const failedMatch = matchQuoteToTranscript('Non existent hallucinated phrase from an alien galaxy', sampleWords);
+  assert(failedMatch.matchType === 'none', 'Non-existent quote matchType is none');
+  assert(failedMatch.confidence === 0, 'Non-existent quote confidence is 0.00');
+
+  // Verify interval overlap computation
+  const overlap = calculateIntervalOverlap(10, 45, 15, 50); // overlap 15 to 45 (30s) / min(35, 35) = 30/35 ≈ 0.85
+  assert(overlap > 0.80, `Overlap correctly detected (${overlap.toFixed(2)})`);
+
+  // TEST 8: Media Storage Adapter (Section 16)
+  console.log('\n--- TEST GROUP 8: Media Storage Abstraction ---');
+  const mediaStorage = getMediaStorage();
+  const testBuffer = Buffer.from('test mp4 content bytes');
+  const uploadedPath = await mediaStorage.upload('unit-test-media.mp4', testBuffer, 'video/mp4');
+  assert(await mediaStorage.exists('unit-test-media.mp4'), 'Uploaded media exists in storage');
+  const downloaded = await mediaStorage.download('unit-test-media.mp4');
+  assert(downloaded.toString() === 'test mp4 content bytes', 'Downloaded media bytes match');
+  const signedUrl = await mediaStorage.getSignedUrl('unit-test-media.mp4');
+  assert(signedUrl.includes('unit-test-media.mp4'), 'Signed media URL generated');
+  await mediaStorage.delete('unit-test-media.mp4');
+  assert(!(await mediaStorage.exists('unit-test-media.mp4')), 'Deleted media no longer exists');
+
+  // TEST 9: Real FFmpeg 9:16 Video Composition & MP4 Output
+  console.log('\n--- TEST GROUP 9: Real FFmpeg 9:16 MP4 Rendering ---');
   const testRenderId = `test-render-${Date.now()}`;
   const outDir = path.join(process.cwd(), 'public', 'exports');
   fs.mkdirSync(outDir, { recursive: true });

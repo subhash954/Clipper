@@ -25,15 +25,17 @@ import {
   Scissors,
   Database,
   Quote,
-  Target
+  Target,
+  AlertCircle
 } from 'lucide-react';
-import { processYouTubeVideoToShorts, generateDocumentaryBlueprint } from '@/lib/pipelineEngine';
+import { generateDocumentaryBlueprint } from '@/lib/pipelineEngine';
 
 export default function CustomerDashboard() {
   const [activeWorkflow, setActiveWorkflow] = useState<'youtube_to_shorts' | 'one_finger_reel' | 'documentary' | 'calendar'>('youtube_to_shorts');
   const [youtubeUrl, setYoutubeUrl] = useState("https://www.youtube.com/watch?v=B_9c1hJGCsw");
   const [isProcessing, setIsProcessing] = useState(false);
   const [processingStatus, setProcessingStatus] = useState<string>('');
+  const [ingestError, setIngestError] = useState<string | null>(null);
   const [processedData, setProcessedData] = useState<any>(null);
   const [savedProjects, setSavedProjects] = useState<any[]>([]);
   const [docData, setDocData] = useState<ReturnType<typeof generateDocumentaryBlueprint> | null>(() => generateDocumentaryBlueprint("The Rise of Artificial Intelligence"));
@@ -48,8 +50,8 @@ export default function CustomerDashboard() {
         if (data.projects && data.projects.length > 0) {
           setSavedProjects(data.projects);
           setProcessedData(data.projects[0]);
-          if (data.projects[0].youtubeUrl) {
-            setYoutubeUrl(data.projects[0].youtubeUrl);
+          if (data.projects[0].sourceUrl) {
+            setYoutubeUrl(data.projects[0].sourceUrl);
           }
         }
       })
@@ -59,6 +61,7 @@ export default function CustomerDashboard() {
   const handleStartYouTubeIngest = async () => {
     if (!youtubeUrl.trim()) return;
     setIsProcessing(true);
+    setIngestError(null);
     setProcessingStatus('Fetching YouTube video metadata & oEmbed...');
 
     try {
@@ -72,7 +75,8 @@ export default function CustomerDashboard() {
       });
 
       if (!res.ok) {
-        throw new Error('Failed to ingest YouTube video');
+        const errJson = await res.json().catch(() => ({}));
+        throw new Error(errJson.error || `Ingestion failed with status ${res.status}`);
       }
 
       const data = await res.json();
@@ -84,13 +88,12 @@ export default function CustomerDashboard() {
           thumbnailUrl: data.thumbnailUrl,
           activeClip: data.clips[0],
           clips: data.clips,
+          isMediaAvailable: false,
         }));
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Ingest error:', err);
-      // Graceful fallback to client pipeline
-      const fallback = processYouTubeVideoToShorts(youtubeUrl);
-      setProcessedData(fallback);
+      setIngestError(err.message || 'YouTube processing failed.');
     } finally {
       setIsProcessing(false);
       setProcessingStatus('');
@@ -182,7 +185,7 @@ export default function CustomerDashboard() {
                       1-Hour Video to 5 Golden Shorts
                     </h2>
                     <p className="text-xs text-slate-500 max-w-xl">
-                      Paste any 30-60 min YouTube URL. AI listens to every spoken dialogue line, weeds out fluff, and extracts ONLY the 5 most critical high-retention vertical clips with Hormozi captions and automatic B-roll.
+                      Paste any 30-60 min YouTube URL. AI listens to every spoken dialogue line, weeds out fluff, and extracts ONLY the 5 most critical high-retention vertical clips with dynamic creator captions and automatic B-roll.
                     </p>
                   </div>
 
@@ -233,6 +236,17 @@ export default function CustomerDashboard() {
                     <div className="space-y-0.5">
                       <p className="text-xs font-bold text-red-900">AI Line-by-Line Ingestion Pipeline Active</p>
                       <p className="text-[11px] text-red-700 font-medium">{processingStatus || 'Analyzing speech lines & mining the top 5 retention hooks...'}</p>
+                    </div>
+                  </div>
+                )}
+
+                {/* Error Alert */}
+                {ingestError && (
+                  <div className="p-4 rounded-xl bg-red-50 border border-red-200 text-xs text-red-700 flex items-start gap-2.5">
+                    <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+                    <div>
+                      <p className="font-bold">Ingestion Notice</p>
+                      <p className="text-[11px] text-red-600/90 leading-relaxed">{ingestError}</p>
                     </div>
                   </div>
                 )}
@@ -463,7 +477,7 @@ export default function CustomerDashboard() {
               <div className="space-y-1">
                 <h3 className="text-xl font-bold text-slate-900">1-Finger Instant Viral Reel</h3>
                 <p className="text-xs text-slate-500">
-                  Upload any raw 15-60s video. In 1 tap, AI removes silence, applies Hormozi dynamic captions, adds auto-emojis, and mixes background beats.
+                  Upload any raw 15-60s video. In 1 tap, AI removes silence, applies dynamic word-by-word captions, adds auto-emojis, and mixes background beats.
                 </p>
               </div>
 

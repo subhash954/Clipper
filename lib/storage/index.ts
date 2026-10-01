@@ -402,3 +402,88 @@ export function getStorage(): IStorageAdapter {
   }
   return storageInstance;
 }
+
+/**
+ * Media Storage Adapter Interface (Section 16: Object Storage Abstraction)
+ */
+export interface MediaStorageAdapter {
+  upload(destinationPath: string, buffer: Buffer, mimeType: string): Promise<string>;
+  download(sourcePath: string): Promise<Buffer>;
+  getSignedUrl(sourcePath: string, expiresInSeconds?: number): Promise<string>;
+  delete(sourcePath: string): Promise<void>;
+  exists(sourcePath: string): Promise<boolean>;
+  cleanupStaleMedia(maxAgeMs?: number): Promise<number>;
+}
+
+/**
+ * Local Media Storage Adapter (for Development & Single-Node VPS)
+ * Includes automated cleanup of ephemeral rendered exports older than 24h.
+ */
+export class LocalMediaStorageAdapter implements MediaStorageAdapter {
+  private baseDir: string;
+
+  constructor() {
+    this.baseDir = path.join(process.cwd(), 'public', 'exports');
+    if (!fs.existsSync(this.baseDir)) {
+      fs.mkdirSync(this.baseDir, { recursive: true });
+    }
+  }
+
+  async upload(destinationPath: string, buffer: Buffer): Promise<string> {
+    const fullPath = path.join(this.baseDir, path.basename(destinationPath));
+    fs.writeFileSync(fullPath, buffer);
+    return `/exports/${path.basename(destinationPath)}`;
+  }
+
+  async download(sourcePath: string): Promise<Buffer> {
+    const fullPath = path.join(this.baseDir, path.basename(sourcePath));
+    return fs.readFileSync(fullPath);
+  }
+
+  async getSignedUrl(sourcePath: string): Promise<string> {
+    // In local dev, returns the accessible HTTP relative URL
+    return `/exports/${path.basename(sourcePath)}`;
+  }
+
+  async delete(sourcePath: string): Promise<void> {
+    const fullPath = path.join(this.baseDir, path.basename(sourcePath));
+    if (fs.existsSync(fullPath)) {
+      fs.unlinkSync(fullPath);
+    }
+  }
+
+  async exists(sourcePath: string): Promise<boolean> {
+    const fullPath = path.join(this.baseDir, path.basename(sourcePath));
+    return fs.existsSync(fullPath);
+  }
+
+  async cleanupStaleMedia(maxAgeMs: number = 86400000): Promise<number> {
+    let deletedCount = 0;
+    try {
+      const files = fs.readdirSync(this.baseDir);
+      const now = Date.now();
+      for (const file of files) {
+        if (file === '.gitkeep') continue;
+        const filePath = path.join(this.baseDir, file);
+        const stats = fs.statSync(filePath);
+        if (now - stats.mtimeMs > maxAgeMs) {
+          fs.unlinkSync(filePath);
+          deletedCount++;
+        }
+      }
+    } catch (e) {
+      console.warn('LocalMediaStorage cleanup warning:', e);
+    }
+    return deletedCount;
+  }
+}
+
+let mediaStorageInstance: MediaStorageAdapter | null = null;
+
+export function getMediaStorage(): MediaStorageAdapter {
+  if (!mediaStorageInstance) {
+    mediaStorageInstance = new LocalMediaStorageAdapter();
+  }
+  return mediaStorageInstance;
+}
+

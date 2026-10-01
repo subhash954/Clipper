@@ -114,7 +114,7 @@ export function generateAssSubtitleFile(params: {
     'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text',
   ];
 
-  // Group relative words into 2-3 word punchy chunks (Hormozi style)
+  // Group relative words into 2-3 word punchy chunks (high-retention style)
   const chunkSize = 3;
   for (let i = 0; i < words.length; i += chunkSize) {
     const chunk = words.slice(i, i + chunkSize);

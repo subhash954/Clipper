@@ -117,7 +117,7 @@ export const PricingModal: React.FC<PricingModalProps> = ({
                 </li>
                 <li className="flex items-center gap-2">
                   <Check className="w-4 h-4 text-emerald-400" />
-                  <span>Alex Hormozi & MrBeast Presets</span>
+                  <span>Signature Studio Typography Presets</span>
                 </li>
                 <li className="flex items-center gap-2">
                   <Check className="w-4 h-4 text-emerald-400" />

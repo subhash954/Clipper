@@ -130,31 +130,31 @@ CREATE POLICY "Users can update their own profile"
   ON public.profiles FOR UPDATE
   USING (auth.uid() = id);
 
--- RLS Policies: Projects
+-- RLS Policies: Projects (Strict user isolation, no NULL bypass)
 CREATE POLICY "Users can view their own projects"
   ON public.projects FOR SELECT
-  USING (auth.uid() = user_id OR user_id IS NULL);
+  USING (auth.uid() = user_id);
 
 CREATE POLICY "Users can insert their own projects"
   ON public.projects FOR INSERT
-  WITH CHECK (auth.uid() = user_id OR user_id IS NULL);
+  WITH CHECK (auth.uid() = user_id);
 
 CREATE POLICY "Users can update their own projects"
   ON public.projects FOR UPDATE
-  USING (auth.uid() = user_id OR user_id IS NULL);
+  USING (auth.uid() = user_id);
 
 CREATE POLICY "Users can delete their own projects"
   ON public.projects FOR DELETE
   USING (auth.uid() = user_id);
 
--- RLS Policies: Transcripts
+-- RLS Policies: Transcripts (Cascaded project ownership)
 CREATE POLICY "Users can view transcripts of their projects"
   ON public.transcripts FOR SELECT
   USING (
     EXISTS (
       SELECT 1 FROM public.projects
       WHERE projects.id = transcripts.project_id
-      AND (projects.user_id = auth.uid() OR projects.user_id IS NULL)
+      AND projects.user_id = auth.uid()
     )
   );
 
@@ -164,18 +164,18 @@ CREATE POLICY "Users can insert transcripts for their projects"
     EXISTS (
       SELECT 1 FROM public.projects
       WHERE projects.id = transcripts.project_id
-      AND (projects.user_id = auth.uid() OR projects.user_id IS NULL)
+      AND projects.user_id = auth.uid()
     )
   );
 
--- RLS Policies: Clips
+-- RLS Policies: Clips (Cascaded project ownership)
 CREATE POLICY "Users can view clips of their projects"
   ON public.clips FOR SELECT
   USING (
     EXISTS (
       SELECT 1 FROM public.projects
       WHERE projects.id = clips.project_id
-      AND (projects.user_id = auth.uid() OR projects.user_id IS NULL)
+      AND projects.user_id = auth.uid()
     )
   );
 
@@ -185,35 +185,41 @@ CREATE POLICY "Users can insert clips for their projects"
     EXISTS (
       SELECT 1 FROM public.projects
       WHERE projects.id = clips.project_id
-      AND (projects.user_id = auth.uid() OR projects.user_id IS NULL)
+      AND projects.user_id = auth.uid()
     )
   );
 
--- RLS Policies: Render Jobs
+-- RLS Policies: Render Jobs (Strict user isolation)
 CREATE POLICY "Users can view their own render jobs"
   ON public.render_jobs FOR SELECT
-  USING (auth.uid() = user_id OR user_id IS NULL);
+  USING (auth.uid() = user_id);
 
 CREATE POLICY "Users can create render jobs"
   ON public.render_jobs FOR INSERT
-  WITH CHECK (auth.uid() = user_id OR user_id IS NULL);
+  WITH CHECK (auth.uid() = user_id);
 
 CREATE POLICY "Users can update their own render jobs"
   ON public.render_jobs FOR UPDATE
-  USING (auth.uid() = user_id OR user_id IS NULL);
+  USING (auth.uid() = user_id);
 
 -- RLS Policies: Scheduled Posts
 CREATE POLICY "Users can manage their own scheduled posts"
   ON public.scheduled_posts FOR ALL
   USING (auth.uid() = user_id);
 
--- RLS Policies: Cost Telemetry (Read-only for project owner, Admin can view all)
+-- RLS Policies: Cost Telemetry (Read-only for project owner or Admin)
 CREATE POLICY "Users can view cost telemetry of their projects"
   ON public.cost_telemetry FOR SELECT
   USING (
     EXISTS (
       SELECT 1 FROM public.projects
       WHERE projects.id = cost_telemetry.project_id
-      AND (projects.user_id = auth.uid() OR projects.user_id IS NULL)
+      AND projects.user_id = auth.uid()
+    )
+    OR
+    EXISTS (
+      SELECT 1 FROM public.profiles
+      WHERE profiles.id = auth.uid()
+      AND profiles.is_admin = TRUE
     )
   );

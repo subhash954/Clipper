@@ -112,7 +112,7 @@ export function renderSubtitlesOnCanvas(
     if (activeIndex !== -1) {
       const currentWord = words[activeIndex];
 
-      // Hormozi fast-cut 3-word window
+      // High-retention fast-cut 3-word window
       const windowSize = 3;
       const chunkStart = Math.max(0, activeIndex - Math.floor(activeIndex % windowSize));
       const chunkEnd = Math.min(words.length, chunkStart + windowSize);
