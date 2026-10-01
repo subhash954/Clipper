@@ -114,7 +114,7 @@ export function processYouTubeVideoToShorts(
       bRollKeywords: bRollSets[i % bRollSets.length],
       aiImagePrompt: `Hyper-realistic cinematic 9:16 visual of ${bRollSets[i % bRollSets.length][0]}, 8k resolution, neon dramatic lighting.`,
       soundEffects: ["Cash Register Ding", "Swoosh Transition", "Bass Drop Impact"],
-      youtubeScheduleTime: schedDate.toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' }),
+      youtubeScheduleTime: `${schedDate.toISOString().split('T')[0]} at 18:00 UTC`,
       words: SAMPLE_WORDS,
       videoUrl: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4"
     };

@@ -156,6 +156,34 @@ export const VideoPreviewPlayer = forwardRef<VideoPreviewPlayerRef, VideoPreview
       return `${mins}:${secs < 10 ? '0' : ''}${secs}.${ms}`;
     };
 
+    // Detect YouTube Video ID
+    const extractYouTubeId = (url: string) => {
+      if (!url) return null;
+      const match = url.match(/^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|&v=)([^#&?]*).*/);
+      return match && match[2].length === 11 ? match[2] : null;
+    };
+    const youtubeId = extractYouTubeId(videoUrl);
+    const [useYouTubeEmbed, setUseYouTubeEmbed] = useState<boolean>(Boolean(youtubeId));
+
+    // Keep YouTube playback time ticker active for subtitle animation
+    useEffect(() => {
+      let interval: NodeJS.Timeout;
+      if (useYouTubeEmbed && isPlaying) {
+        interval = setInterval(() => {
+          setCurrentTime((prev) => {
+            const next = prev + 0.1;
+            const maxD = duration || 30;
+            if (next >= maxD) {
+              return 0;
+            }
+            onTimeUpdate?.(next);
+            return next;
+          });
+        }, 100);
+      }
+      return () => clearInterval(interval);
+    }, [useYouTubeEmbed, isPlaying, duration, onTimeUpdate]);
+
     const secondarySrc = visualSettings.splitScreenEnabled && visualSettings.satisfyingVideoType !== 'none'
       ? SATISFYING_VIDEO_URLS[visualSettings.satisfyingVideoType]
       : null;
@@ -163,24 +191,39 @@ export const VideoPreviewPlayer = forwardRef<VideoPreviewPlayerRef, VideoPreview
     return (
       <div className="flex flex-col items-center w-full max-w-sm mx-auto">
         
-        {/* Device Frame Header with Split Screen Indicator */}
-        <div className="flex items-center justify-between w-full px-2 mb-2 text-xs font-semibold text-slate-400">
+        {/* Device Frame Header with Split Screen & YouTube Stream Switcher */}
+        <div className="flex items-center justify-between w-full px-2 mb-2 text-xs font-semibold text-slate-500">
           <div className="flex items-center gap-1.5">
-            <Smartphone className="w-4 h-4 text-purple-400" />
-            <span>9:16 Shorts (1080x1920)</span>
+            <Smartphone className="w-4 h-4 text-red-600" />
+            <span className="font-bold text-slate-800">9:16 Shorts (1080x1920)</span>
           </div>
 
-          {visualSettings.splitScreenEnabled && (
-            <span className="flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
-              <SplitSquareVertical className="w-3 h-3" /> Split Screen Active
-            </span>
-          )}
+          <div className="flex items-center gap-1.5">
+            {youtubeId && (
+              <button
+                onClick={() => setUseYouTubeEmbed(!useYouTubeEmbed)}
+                className={`text-[10px] px-2 py-0.5 rounded-full font-bold border transition-colors ${
+                  useYouTubeEmbed
+                    ? 'bg-red-50 text-red-600 border-red-200 hover:bg-red-100'
+                    : 'bg-slate-100 text-slate-600 border-slate-200 hover:bg-slate-200'
+                }`}
+              >
+                {useYouTubeEmbed ? '▶ YT Stream' : '🎬 Canvas View'}
+              </button>
+            )}
+
+            {visualSettings.splitScreenEnabled && (
+              <span className="flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-red-50 text-red-600 border border-red-200">
+                <SplitSquareVertical className="w-3 h-3" /> Split Screen
+              </span>
+            )}
+          </div>
         </div>
 
         {/* 9:16 Vertical Phone Mockup Container */}
         <div 
           ref={containerRef}
-          className="relative w-[280px] sm:w-[320px] aspect-[9/16] rounded-[38px] p-2.5 bg-gradient-to-b from-slate-700 via-slate-900 to-slate-950 shadow-2xl shadow-purple-950/40 border border-white/10 overflow-hidden"
+          className="relative w-[280px] sm:w-[320px] aspect-[9/16] rounded-[38px] p-2.5 bg-gradient-to-b from-slate-800 via-slate-900 to-black shadow-2xl border-4 border-slate-700/60 overflow-hidden"
         >
           {/* Top Notch */}
           <div className="absolute top-4 left-1/2 -translate-x-1/2 z-30 w-24 h-4 rounded-full bg-black/90 flex items-center justify-center">
@@ -190,14 +233,23 @@ export const VideoPreviewPlayer = forwardRef<VideoPreviewPlayerRef, VideoPreview
           {/* Inner Display */}
           <div className="relative w-full h-full rounded-[30px] overflow-hidden bg-black flex flex-col items-center justify-center">
             
-            {/* Feature 18: Split-Screen Viewport or Full Vertical Viewport */}
-            {visualSettings.splitScreenEnabled && secondarySrc ? (
+            {/* If YouTube URL and embed enabled: Stream live YouTube video */}
+            {youtubeId && useYouTubeEmbed ? (
+              <div className="absolute inset-0 w-full h-full overflow-hidden pointer-events-auto">
+                <iframe
+                  src={`https://www.youtube-nocookie.com/embed/${youtubeId}?autoplay=${isPlaying ? 1 : 0}&mute=${isMuted ? 1 : 0}&controls=0&loop=1&playlist=${youtubeId}&playsinline=1&rel=0&modestbranding=1`}
+                  className="w-full h-full object-cover scale-[1.35] pointer-events-none"
+                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                />
+              </div>
+            ) : visualSettings.splitScreenEnabled && secondarySrc ? (
+              /* Feature 18: Split-Screen Viewport */
               <div className="w-full h-full flex flex-col">
                 {/* Top Video: Speaker (50%) */}
-                <div className="relative w-full h-1/2 overflow-hidden border-b-2 border-purple-500/40">
+                <div className="relative w-full h-1/2 overflow-hidden border-b-2 border-red-500/40">
                   <video
                     ref={videoRef}
-                    src={videoUrl}
+                    src={youtubeId ? "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4" : videoUrl}
                     crossOrigin="anonymous"
                     playsInline
                     loop
@@ -231,7 +283,7 @@ export const VideoPreviewPlayer = forwardRef<VideoPreviewPlayerRef, VideoPreview
               /* Standard Full-Height Vertical 9:16 Video */
               <video
                 ref={videoRef}
-                src={videoUrl}
+                src={youtubeId ? "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4" : videoUrl}
                 crossOrigin="anonymous"
                 playsInline
                 loop
@@ -252,13 +304,13 @@ export const VideoPreviewPlayer = forwardRef<VideoPreviewPlayerRef, VideoPreview
               className="absolute inset-0 w-full h-full pointer-events-none z-10"
             />
 
-            {/* Center Tap Play Button */}
-            {!isPlaying && (
+            {/* Center Tap Play Button (when not using embedded iframe) */}
+            {!isPlaying && (!youtubeId || !useYouTubeEmbed) && (
               <div 
                 onClick={togglePlay}
                 className="absolute inset-0 z-20 flex items-center justify-center bg-black/30 backdrop-blur-[2px] cursor-pointer"
               >
-                <div className="w-16 h-16 rounded-full bg-purple-600/90 text-white flex items-center justify-center shadow-lg shadow-purple-600/50 hover:scale-110 transition-transform">
+                <div className="w-16 h-16 rounded-full bg-red-600 text-white flex items-center justify-center shadow-lg shadow-red-600/50 hover:scale-110 transition-transform">
                   <Play className="w-8 h-8 fill-white ml-1" />
                 </div>
               </div>
@@ -266,25 +318,25 @@ export const VideoPreviewPlayer = forwardRef<VideoPreviewPlayerRef, VideoPreview
           </div>
         </div>
 
-        {/* Custom Modern Playback Controls Bar */}
-        <div className="w-full mt-4 p-3 rounded-2xl bg-slate-900/80 border border-white/10 space-y-2">
+        {/* Custom Modern Playback Controls Bar - Clean Light UI */}
+        <div className="w-full mt-4 p-3.5 rounded-2xl bg-white border border-slate-200 shadow-sm space-y-2.5">
           
           {/* Scrub Slider */}
           <div className="flex items-center gap-3">
-            <span className="text-[11px] font-mono text-purple-400 w-10">
+            <span className="text-[11px] font-mono text-red-600 font-bold w-10">
               {formatTime(currentTime)}
             </span>
             <input
               type="range"
               min="0"
-              max={duration || 14.5}
+              max={duration || 30}
               step="0.05"
               value={currentTime}
               onChange={handleSeek}
-              className="flex-1 h-1.5 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-purple-500"
+              className="flex-1 h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-red-600"
             />
-            <span className="text-[11px] font-mono text-slate-500 w-10 text-right">
-              {formatTime(duration || 14.5)}
+            <span className="text-[11px] font-mono text-slate-400 w-10 text-right">
+              {formatTime(duration || 30)}
             </span>
           </div>
 
@@ -292,8 +344,11 @@ export const VideoPreviewPlayer = forwardRef<VideoPreviewPlayerRef, VideoPreview
           <div className="flex items-center justify-between pt-1">
             <div className="flex items-center gap-2">
               <button
-                onClick={togglePlay}
-                className="p-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white transition-colors"
+                onClick={() => {
+                  togglePlay();
+                  setIsPlaying(!isPlaying);
+                }}
+                className="p-2.5 rounded-xl bg-red-600 hover:bg-red-700 text-white shadow-sm shadow-red-600/20 transition-all cursor-pointer"
                 title={isPlaying ? "Pause" : "Play"}
               >
                 {isPlaying ? <Pause className="w-4 h-4 fill-white" /> : <Play className="w-4 h-4 fill-white ml-0.5" />}
@@ -303,13 +358,10 @@ export const VideoPreviewPlayer = forwardRef<VideoPreviewPlayerRef, VideoPreview
                 onClick={() => {
                   if (videoRef.current) {
                     videoRef.current.currentTime = 0;
-                    setCurrentTime(0);
                   }
-                  if (secondaryVideoRef.current) {
-                    secondaryVideoRef.current.currentTime = 0;
-                  }
+                  setCurrentTime(0);
                 }}
-                className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors"
+                className="p-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 transition-colors cursor-pointer"
                 title="Restart"
               >
                 <RotateCcw className="w-4 h-4" />
@@ -318,16 +370,16 @@ export const VideoPreviewPlayer = forwardRef<VideoPreviewPlayerRef, VideoPreview
 
             <div className="flex items-center gap-2">
               {audioSettings.studioSoundEnabled && (
-                <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-semibold">
+                <span className="text-[10px] px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 font-extrabold">
                   Studio Sound ON
                 </span>
               )}
               <button
                 onClick={toggleMute}
-                className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors"
+                className="p-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 transition-colors cursor-pointer"
                 title={isMuted ? "Unmute" : "Mute"}
               >
-                {isMuted ? <VolumeX className="w-4 h-4 text-rose-400" /> : <Volume2 className="w-4 h-4" />}
+                {isMuted ? <VolumeX className="w-4 h-4 text-red-600" /> : <Volume2 className="w-4 h-4" />}
               </button>
             </div>
           </div>

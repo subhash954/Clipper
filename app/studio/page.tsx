@@ -58,6 +58,11 @@ export default function StudioPage() {
           if (parsed.videoTitle) {
             setFileName(`${parsed.videoTitle.slice(0, 36)}.mp4`);
           }
+          if (parsed.activeClip?.videoUrl) {
+            setVideoUrl(parsed.activeClip.videoUrl);
+          } else if (parsed.videoUrl) {
+            setVideoUrl(parsed.videoUrl);
+          }
           if (parsed.activeClip) {
             if (parsed.activeClip.words && parsed.activeClip.words.length > 0) {
               setWords(parsed.activeClip.words);

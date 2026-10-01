@@ -199,12 +199,13 @@ Respond ONLY with valid JSON array of objects.`;
     );
     const totalINR = Math.round(totalUSD * 86.5);
 
-    return NextResponse.json({
-      success: true,
+    const projectData = {
+      id: `proj-${videoId || Date.now()}`,
       videoTitle,
       authorName,
       channelName: authorName,
       thumbnailUrl,
+      youtubeUrl,
       durationMinutes,
       clipsCount: generatedClips.length,
       clips: generatedClips,
@@ -218,6 +219,20 @@ Respond ONLY with valid JSON array of objects.`;
         totalCostUSD: totalUSD,
         totalCostINR: totalINR,
       },
+      createdAt: new Date().toISOString(),
+    };
+
+    // Persist to local & cloud database
+    try {
+      const { saveProject } = await import('@/lib/db');
+      await saveProject(projectData);
+    } catch (dbErr) {
+      console.warn('Database save warning:', dbErr);
+    }
+
+    return NextResponse.json({
+      success: true,
+      ...projectData,
     });
   } catch (error: any) {
     console.error('YouTube ingestion error:', error);

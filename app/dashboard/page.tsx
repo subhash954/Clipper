@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { Sidebar } from '@/components/Sidebar';
 import { ApiKeyModal } from '@/components/ApiKeyModal';
@@ -22,7 +22,8 @@ import {
   Key,
   ExternalLink,
   Zap,
-  Scissors
+  Scissors,
+  Database
 } from 'lucide-react';
 import { processYouTubeVideoToShorts, generateDocumentaryBlueprint } from '@/lib/pipelineEngine';
 
@@ -32,9 +33,26 @@ export default function CustomerDashboard() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [processingStatus, setProcessingStatus] = useState<string>('');
   const [processedData, setProcessedData] = useState<any>(null);
+  const [savedProjects, setSavedProjects] = useState<any[]>([]);
   const [docData, setDocData] = useState<ReturnType<typeof generateDocumentaryBlueprint> | null>(() => generateDocumentaryBlueprint("The Rise of Artificial Intelligence"));
   const [isApiModalOpen, setIsApiModalOpen] = useState(false);
   const [scheduledSuccessId, setScheduledSuccessId] = useState<string | null>(null);
+
+  // Load saved projects from database on mount
+  useEffect(() => {
+    fetch('/api/projects')
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.projects && data.projects.length > 0) {
+          setSavedProjects(data.projects);
+          setProcessedData(data.projects[0]);
+          if (data.projects[0].youtubeUrl) {
+            setYoutubeUrl(data.projects[0].youtubeUrl);
+          }
+        }
+      })
+      .catch((err) => console.warn('Could not load database projects:', err));
+  }, []);
 
   const handleStartYouTubeIngest = async () => {
     if (!youtubeUrl.trim()) return;
@@ -337,6 +355,58 @@ export default function CustomerDashboard() {
                         </div>
                       );
                     })}
+                  </div>
+                </div>
+              )}
+
+              {/* Saved Database Projects Section */}
+              {savedProjects.length > 0 && (
+                <div className="clean-card p-6 space-y-4">
+                  <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                    <div className="flex items-center gap-2">
+                      <Database className="w-5 h-5 text-red-600" />
+                      <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wider">
+                        Recreated Projects in Database ({savedProjects.length})
+                      </h3>
+                    </div>
+                    <span className="text-xs text-emerald-700 font-bold bg-emerald-50 px-2.5 py-0.5 rounded-full border border-emerald-200">
+                      Persistent Storage Synced
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {savedProjects.map((proj) => (
+                      <div
+                        key={proj.id}
+                        className="p-4 rounded-xl border border-slate-200 bg-slate-50/60 hover:bg-slate-50 transition-colors flex gap-3.5 items-center justify-between"
+                      >
+                        <div className="flex items-center gap-3 min-w-0">
+                          {proj.thumbnailUrl && (
+                            <img
+                              src={proj.thumbnailUrl}
+                              alt={proj.videoTitle}
+                              className="w-16 h-10 object-cover rounded-lg border border-slate-200 shrink-0"
+                            />
+                          )}
+                          <div className="min-w-0">
+                            <p className="text-xs font-bold text-slate-900 truncate">{proj.videoTitle}</p>
+                            <p className="text-[10px] text-slate-500 font-medium">
+                              {proj.channelName} • {proj.clipsCount || proj.clips?.length || 0} Shorts • ${proj.costs?.totalCostUSD || '0.52'} USD
+                            </p>
+                          </div>
+                        </div>
+
+                        <button
+                          onClick={() => {
+                            setProcessedData(proj);
+                            if (proj.youtubeUrl) setYoutubeUrl(proj.youtubeUrl);
+                          }}
+                          className="px-3 py-1.5 rounded-lg bg-white hover:bg-red-50 text-red-600 border border-slate-200 hover:border-red-200 text-xs font-bold shrink-0 transition-colors cursor-pointer"
+                        >
+                          Load Shorts
+                        </button>
+                      </div>
+                    ))}
                   </div>
                 </div>
               )}
