@@ -29,13 +29,14 @@ export async function POST(req: NextRequest) {
     }
 
     // 2. Fetch real metadata from YouTube oEmbed API
+    const cleanUrl = videoId ? `https://www.youtube.com/watch?v=${videoId}` : youtubeUrl;
     let videoTitle = 'YouTube Video';
     let authorName = 'Creator';
     let thumbnailUrl = videoId ? `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg` : '';
 
     try {
       const oembedRes = await fetch(
-        `https://www.youtube.com/oembed?url=${encodeURIComponent(youtubeUrl)}&format=json`
+        `https://www.youtube.com/oembed?url=${encodeURIComponent(cleanUrl)}&format=json`
       );
       if (oembedRes.ok) {
         const oembedData = await oembedRes.json();
@@ -57,30 +58,29 @@ export async function POST(req: NextRequest) {
 A creator submitted this real YouTube video:
 Title: "${videoTitle}"
 Channel: "${authorName}"
-URL: "${youtubeUrl}"
+URL: "${cleanUrl}"
 
-Your job:
-Extract and generate 12 highly viral, retention-engineered 30-60 second vertical Shorts/Reels from this video.
-For each clip, supply:
-1. title: punchy, click-worthy headline (e.g., "The $10M Brand Secret Nobody Mentions")
-2. hookSummary: why this 3-second hook grabs high watch time
-3. viralScore: retention rating between 85 and 99
-4. start_seconds: integer start timestamp
-5. end_seconds: integer end timestamp (30 to 60 seconds duration)
-6. bRollKeywords: 3 specific visual B-roll keywords (e.g. ["luxury office", "stock market chart", "stressed founder"])
-7. aiImagePrompt: Midjourney/FLUX prompt for AI visual generation
-8. soundEffects: 2 audio cues (e.g. ["whoosh.mp3", "cash_register.mp3"])
-9. words: 12-16 sequential words representing the spoken hook with timestamps (word, start, end).
+Generate 10 highly viral, retention-engineered vertical Shorts (30-60s) from this video topic.
+For each clip return JSON object with:
+- "title": punchy high-converting headline
+- "hookSummary": 2-sentence psychological hook reason
+- "viralScore": number between 88 and 99
+- "start_seconds": integer start timestamp
+- "end_seconds": integer end timestamp
+- "bRollKeywords": 3 visual stock video keywords (e.g. ["luxury office", "stock market chart", "stressed founder"])
+- "aiImagePrompt": cinematic Midjourney prompt
+- "soundEffects": 2 sound effects (e.g. ["whoosh.mp3", "cash_register.mp3"])
 
-Respond ONLY with valid JSON array of objects conforming to this schema. No markdown backticks or commentary.`;
+Respond ONLY with valid JSON array of objects.`;
 
         const geminiRes = await fetch(
           `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiKey}`,
           {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
+            signal: AbortSignal.timeout(15000),
             body: JSON.stringify({
-              contents: [{ parts: [{ text: prompt }] }],
+              contents: [{ role: 'user', parts: [{ text: prompt }] }],
               generationConfig: {
                 responseMimeType: 'application/json',
                 temperature: 0.3,
