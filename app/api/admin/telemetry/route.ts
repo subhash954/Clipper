@@ -1,8 +1,18 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { getStorage } from '@/lib/storage';
+import { getAuthenticatedUser } from '@/lib/auth/serverAuth';
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   try {
+    const user = await getAuthenticatedUser(req);
+    if (!user) {
+      return NextResponse.json({ error: 'Authentication required. Please log in.' }, { status: 401 });
+    }
+
+    if (user.role !== 'admin' && !user.isDevUser) {
+      return NextResponse.json({ error: 'Forbidden: Admin privileges required.' }, { status: 403 });
+    }
+
     const storage = getStorage();
     const projects = await storage.listProjects();
     const renderJobs = await storage.listRenderJobs();

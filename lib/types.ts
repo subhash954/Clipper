@@ -125,13 +125,15 @@ export interface ProjectMedia {
 }
 
 export interface Project {
-  id: string;
+  id: string; // RFC 4122 UUID
   userId?: string;
+  workspaceId?: string;
   title: string;
   channelName?: string;
   thumbnailUrl?: string;
   sourceUrl?: string;
   sourceType: 'youtube' | 'upload' | 'script';
+  sourceExternalId?: string; // YouTube Video ID, TikTok ID, or external file ID
   media?: ProjectMedia;
   isMediaAvailable?: boolean;
   workflowType: 'youtube_to_shorts' | 'one_finger_reel' | 'ai_documentary';
@@ -154,6 +156,53 @@ export interface Project {
   };
   createdAt: string;
   updatedAt?: string;
+}
+
+export interface Workspace {
+  id: string;
+  name: string;
+  ownerId: string;
+  createdAt: string;
+}
+
+export interface MediaAsset {
+  id: string;
+  projectId?: string;
+  userId: string;
+  fileName: string;
+  fileUrl: string;
+  storagePath: string;
+  mimeType: string;
+  sizeBytes: number;
+  duration?: number;
+  width?: number;
+  height?: number;
+  codec?: string;
+  audioCodec?: string;
+  fps?: number;
+  createdAt: string;
+}
+
+export interface TimelineVersion {
+  id: string;
+  projectId: string;
+  versionNumber: number;
+  renderSpec: RenderSpec;
+  description?: string;
+  createdBy: string;
+  createdAt: string;
+}
+
+export interface PlatformIntegration {
+  id: string;
+  userId: string;
+  platform: 'youtube' | 'tiktok' | 'instagram';
+  accountName?: string;
+  channelId?: string;
+  status: 'connected' | 'expired' | 'disconnected';
+  scopes: string[];
+  expiresAt?: string;
+  createdAt: string;
 }
 
 export type RenderJobStatus = 'queued' | 'processing' | 'completed' | 'failed' | 'cancelled';

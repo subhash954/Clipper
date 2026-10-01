@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { spawn } from 'child_process';
-import { WordTimestamp, SubtitleStyle, VisualLayoutSettings, EditOperation } from './types';
+import { WordTimestamp, SubtitleStyle, VisualLayoutSettings, EditOperation, AudioStudioSettings } from './types';
 import {
   AspectRatio,
   TrackingMode,
@@ -46,12 +46,59 @@ export interface RenderClipOptions {
   words: WordTimestamp[];
   subtitleStyle?: SubtitleStyle;
   visualSettings?: VisualLayoutSettings;
+  audioSettings?: AudioStudioSettings;
+  cuts?: EditOperation[];
   isProUser?: boolean;
   reframeTrack?: ReframeTrack;
   aspectRatio?: AspectRatio;
   trackingMode?: TrackingMode;
   manualSettings?: ManualReframeSettings;
   brollOperations?: EditOperation[];
+}
+
+export interface TimeInterval {
+  start: number;
+  end: number;
+}
+
+export function computeKeptIntervals(
+  clipDuration: number,
+  cuts: EditOperation[] = []
+): { intervals: TimeInterval[]; effectiveDuration: number } {
+  const activeCuts = cuts
+    .filter((c) => c.enabled && c.end > c.start)
+    .sort((a, b) => a.start - b.start);
+
+  if (activeCuts.length === 0) {
+    return {
+      intervals: [{ start: 0, end: clipDuration }],
+      effectiveDuration: clipDuration,
+    };
+  }
+
+  const intervals: TimeInterval[] = [];
+  let currentPos = 0;
+
+  for (const cut of activeCuts) {
+    const cutStart = Math.max(0, Math.min(clipDuration, cut.start));
+    const cutEnd = Math.max(0, Math.min(clipDuration, cut.end));
+
+    if (cutStart > currentPos + 0.05) {
+      intervals.push({ start: Number(currentPos.toFixed(3)), end: Number(cutStart.toFixed(3)) });
+    }
+    currentPos = Math.max(currentPos, cutEnd);
+  }
+
+  if (currentPos < clipDuration - 0.05) {
+    intervals.push({ start: Number(currentPos.toFixed(3)), end: Number(clipDuration.toFixed(3)) });
+  }
+
+  const effectiveDuration = intervals.reduce((acc, seg) => acc + (seg.end - seg.start), 0);
+
+  return {
+    intervals: intervals.length > 0 ? intervals : [{ start: 0, end: clipDuration }],
+    effectiveDuration: Number(effectiveDuration.toFixed(3)),
+  };
 }
 
 export interface RenderResult {
@@ -319,7 +366,7 @@ export async function renderClipWithFfmpeg(
       targetHeight,
     });
 
-    // Stage 5: Build Reframe Crop Filtergraph
+    // Stage 5: Build Reframe Crop & EDL Cut Filtergraph
     onProgress?.(55, `Composing ${targetAspect} frame (${targetWidth}x${targetHeight}) & burning subtitles...`);
 
     const cropFilter = buildFfmpegReframeCropFilter(reframeTrack);
@@ -327,6 +374,27 @@ export async function renderClipWithFfmpeg(
     
     // Combine crop + subtitle burn-in
     let videoFilter = `${cropFilter},ass='${escapedAssPath}'`;
+    let audioFilters: string[] = [];
+
+    // Calculate kept intervals from EDL cuts (silence removal & filler word removal)
+    const { cuts = [], audioSettings } = options;
+    const { intervals, effectiveDuration } = computeKeptIntervals(duration, cuts);
+
+    if (intervals.length > 1 || (intervals.length === 1 && intervals[0].end < duration - 0.05)) {
+      const selectExpr = intervals
+        .map((i) => `between(t,${i.start.toFixed(3)},${i.end.toFixed(3)})`)
+        .join('+');
+      videoFilter += `,select='${selectExpr}',setpts=N/FRAME_RATE/TB`;
+      audioFilters.push(`aselect='${selectExpr}',asetpts=N/SR/TB`);
+    }
+
+    // Audio Enhancements (Phase 16)
+    if (audioSettings?.studioSoundEnabled) {
+      audioFilters.push('highpass=f=80,lowpass=f=12000,acompressor=threshold=-18dB:ratio=3:attack=10:release=100');
+    }
+    if (audioSettings?.volumeNormalization) {
+      audioFilters.push('loudnorm=I=-14:TP=-1.5:LRA=11');
+    }
 
     // Stage 6: Render via FFmpeg
     const args = [
@@ -335,6 +403,13 @@ export async function renderClipWithFfmpeg(
       '-t', duration.toFixed(2),
       '-i', localInputPath,
       '-vf', videoFilter,
+    ];
+
+    if (audioFilters.length > 0) {
+      args.push('-af', audioFilters.join(','));
+    }
+
+    args.push(
       '-c:v', 'libx264',
       '-preset', 'veryfast',
       '-crf', '22',
@@ -343,8 +418,8 @@ export async function renderClipWithFfmpeg(
       '-ar', '44100',
       '-pix_fmt', 'yuv420p',
       '-movflags', '+faststart',
-      finalMp4Path,
-    ];
+      finalMp4Path
+    );
 
     await new Promise<void>((resolve, reject) => {
       const child = spawn(/*turbopackIgnore: true*/ ffmpegPath, args);

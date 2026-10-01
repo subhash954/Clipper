@@ -77,7 +77,7 @@ export default function WorkspaceDashboard() {
   const handleDuplicateProject = (project: Project) => {
     const duplicated: Project = {
       ...project,
-      id: `proj-${Date.now()}`,
+      id: crypto.randomUUID(),
       title: `${project.title} (Copy)`,
       createdAt: new Date().toISOString(),
     };

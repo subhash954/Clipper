@@ -16,14 +16,28 @@ export interface IStorageAdapter {
   getCostTelemetry(): Promise<CostTelemetryRecord[]>;
 }
 
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+export function ensureValidUuid(id?: string): string {
+  if (id && UUID_REGEX.test(id)) {
+    return id;
+  }
+  return crypto.randomUUID();
+}
+
 /**
  * Production Supabase PostgreSQL Storage Adapter
  */
 export class SupabaseStorageAdapter implements IStorageAdapter {
   async saveProject(project: Project): Promise<Project> {
+    const validId = ensureValidUuid(project.id);
+    project.id = validId;
+
     const { error: projError } = await supabase.from('projects').upsert({
-      id: project.id,
+      id: validId,
       user_id: project.userId || null,
+      workspace_id: project.workspaceId || null,
+      source_external_id: project.sourceExternalId || null,
       title: project.title,
       channel_name: project.channelName || null,
       thumbnail_url: project.thumbnailUrl || null,
@@ -95,6 +109,8 @@ export class SupabaseStorageAdapter implements IStorageAdapter {
     return {
       id: data.id,
       userId: data.user_id,
+      workspaceId: data.workspace_id,
+      sourceExternalId: data.source_external_id,
       title: data.title,
       channelName: data.channel_name,
       thumbnailUrl: data.thumbnail_url,
@@ -150,6 +166,8 @@ export class SupabaseStorageAdapter implements IStorageAdapter {
     return (data || []).map((p: any) => ({
       id: p.id,
       userId: p.user_id,
+      workspaceId: p.workspace_id,
+      sourceExternalId: p.source_external_id,
       title: p.title,
       channelName: p.channel_name,
       thumbnailUrl: p.thumbnail_url,
@@ -414,6 +432,11 @@ export function getStorage(): IStorageAdapter {
     if (isSupabaseConfigured()) {
       storageInstance = new SupabaseStorageAdapter();
     } else {
+      if (process.env.NODE_ENV === 'production' && process.env.ALLOW_DEV_LOCAL_STORAGE !== 'true') {
+        throw new Error(
+          'CRITICAL PERSISTENCE ERROR: Database storage (Supabase) is not configured in production mode. Local JSON persistence is forbidden in production. Configure NEXT_PUBLIC_SUPABASE_URL or explicitly set ALLOW_DEV_LOCAL_STORAGE=true.'
+        );
+      }
       storageInstance = new LocalStorageAdapter();
     }
   }

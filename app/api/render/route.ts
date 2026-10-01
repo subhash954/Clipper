@@ -1,51 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server';
+import fs from 'fs';
 import { createRenderJob, startRenderWorkerAsync } from '@/lib/renderJobs';
 import { RenderClipOptions } from '@/lib/renderEngine';
-
-import fs from 'fs';
-import path from 'path';
-
-/**
- * Validates media URL to prevent SSRF and protocol spoofing
- */
-function isValidMediaUrl(urlStr: string): boolean {
-  // Allow local file paths and internal public/upload paths
-  if (
-    fs.existsSync(urlStr) ||
-    urlStr.startsWith('/') ||
-    urlStr.startsWith('./') ||
-    urlStr.startsWith('data/') ||
-    urlStr.startsWith('public/')
-  ) {
-    return true;
-  }
-
-  try {
-    const parsed = new URL(urlStr);
-    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-      return false;
-    }
-    const host = parsed.hostname.toLowerCase();
-    // Block local / loopback / private addresses / cloud metadata endpoints
-    if (
-      host === 'localhost' ||
-      host === '127.0.0.1' ||
-      host === '::1' ||
-      host === '169.254.169.254' ||
-      host.startsWith('10.') ||
-      host.startsWith('192.168.') ||
-      host.match(/^172\.(1[6-9]|2[0-9]|3[0-1])\./)
-    ) {
-      return false;
-    }
-    return true;
-  } catch {
-    return false;
-  }
-}
+import { getAuthenticatedUser, requireProjectAccess } from '@/lib/auth/serverAuth';
+import { validateSafeRemoteUrl } from '@/lib/security/ssrfValidator';
 
 export async function POST(req: NextRequest) {
   try {
+    const user = await getAuthenticatedUser(req);
+    if (!user) {
+      return NextResponse.json({ error: 'Authentication required. Please log in.' }, { status: 401 });
+    }
+
     const body = await req.json();
     const {
       projectId,
@@ -53,6 +19,8 @@ export async function POST(req: NextRequest) {
       sourceUrl,
       subtitleStyle,
       visualSettings,
+      audioSettings,
+      cuts,
       isProUser = false,
       reframeTrack,
       aspectRatio,
@@ -60,6 +28,14 @@ export async function POST(req: NextRequest) {
       manualSettings,
       brollOperations,
     } = body;
+
+    if (projectId) {
+      try {
+        await requireProjectAccess(user, projectId, 'editor');
+      } catch (authErr: any) {
+        return NextResponse.json({ error: authErr.message }, { status: authErr.statusCode || 403 });
+      }
+    }
 
     if (!clip || typeof clip.start !== 'number' || typeof clip.duration !== 'number') {
       return NextResponse.json(
@@ -91,18 +67,35 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Validate media URL against SSRF
-    if (!isValidMediaUrl(candidateMedia)) {
-      return NextResponse.json(
-        { error: 'Invalid or restricted media URL protocol provided.' },
-        { status: 400 }
-      );
+    // Validate media URL against SSRF if remote
+    if (candidateMedia.startsWith('http://') || candidateMedia.startsWith('https://')) {
+      const ssrfCheck = await validateSafeRemoteUrl(candidateMedia);
+      if (!ssrfCheck.isValid) {
+        return NextResponse.json(
+          { error: `Remote media URL security violation: ${ssrfCheck.error}` },
+          { status: 400 }
+        );
+      }
+    } else {
+      // Validate local media existence
+      const isLocalValid =
+        fs.existsSync(candidateMedia) ||
+        candidateMedia.startsWith('/uploads/') ||
+        candidateMedia.startsWith('/exports/');
+
+      if (!isLocalValid) {
+        return NextResponse.json(
+          { error: `Local media path not found: ${candidateMedia}` },
+          { status: 404 }
+        );
+      }
     }
 
     // 1. Create registered render job
     const job = await createRenderJob({
       projectId,
       clipId: clip.id,
+      userId: user.id,
       inputUrl: candidateMedia,
     });
 
@@ -111,6 +104,7 @@ export async function POST(req: NextRequest) {
     const resolvedTracking = trackingMode || visualSettings?.trackingMode || resolvedReframe?.trackingMode;
     const resolvedManual = manualSettings || visualSettings?.manualPosition || resolvedReframe?.manualSettings;
     const resolvedBroll = brollOperations || (clip.cuts ? clip.cuts.filter((c: any) => c.type === 'BROLL') : []);
+    const resolvedCuts = cuts || clip.cuts || [];
 
     const renderOptions: RenderClipOptions = {
       inputMedia: candidateMedia,
@@ -119,6 +113,8 @@ export async function POST(req: NextRequest) {
       words: clip.words || [],
       subtitleStyle,
       visualSettings,
+      audioSettings,
+      cuts: resolvedCuts,
       isProUser,
       reframeTrack: resolvedReframe,
       aspectRatio: resolvedAspect,
@@ -140,7 +136,7 @@ export async function POST(req: NextRequest) {
   } catch (error: any) {
     console.error('Error initiating render job:', error);
     return NextResponse.json(
-      { error: error?.message || 'Failed to initiate 9:16 video render job.' },
+      { error: error?.message || 'Failed to initiate video render job.' },
       { status: 500 }
     );
   }

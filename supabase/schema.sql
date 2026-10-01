@@ -1,11 +1,12 @@
 -- Production PostgreSQL Schema for Clipper AI Video SaaS
--- Fully aligned with application data models & Row Level Security (RLS)
+-- Mission 2: Real Media Pipeline + Enterprise Tenant Isolation + Role-Based Access Control
 
 -- 1. Profiles & Subscriptions
 CREATE TABLE IF NOT EXISTS public.profiles (
   id UUID REFERENCES auth.users ON DELETE CASCADE PRIMARY KEY,
   email TEXT UNIQUE NOT NULL,
   full_name TEXT,
+  role TEXT DEFAULT 'owner' CHECK (role IN ('owner', 'admin', 'editor', 'viewer')),
   plan_tier TEXT DEFAULT 'free' CHECK (plan_tier IN ('free', 'starter', 'pro', 'documentary_agency')),
   credits_remaining INTEGER DEFAULT 3,
   total_minutes_processed NUMERIC DEFAULT 0,
@@ -14,10 +15,20 @@ CREATE TABLE IF NOT EXISTS public.profiles (
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- 2. Video Projects
+-- 2. Workspaces (Multi-tenancy & Collaboration)
+CREATE TABLE IF NOT EXISTS public.workspaces (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  name TEXT NOT NULL,
+  owner_id UUID REFERENCES public.profiles(id) ON DELETE CASCADE NOT NULL,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- 3. Video Projects (Strict RFC 4122 UUID + source_external_id)
 CREATE TABLE IF NOT EXISTS public.projects (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  user_id UUID REFERENCES public.profiles(id) ON DELETE CASCADE,
+  user_id UUID REFERENCES public.profiles(id) ON DELETE CASCADE NOT NULL,
+  workspace_id UUID REFERENCES public.workspaces(id) ON DELETE SET NULL,
+  source_external_id TEXT, -- Stores YouTube Video ID (e.g. dQw4w9WgXcQ), TikTok ID, or external file ID
   title TEXT NOT NULL,
   channel_name TEXT,
   thumbnail_url TEXT,
@@ -25,29 +36,54 @@ CREATE TABLE IF NOT EXISTS public.projects (
   source_url TEXT,
   source_type TEXT DEFAULT 'youtube' CHECK (source_type IN ('youtube', 'upload', 'script')),
   duration_seconds NUMERIC DEFAULT 0,
-  status TEXT DEFAULT 'created' CHECK (status IN ('created', 'ingesting', 'transcribing', 'analyzing', 'clips_ready', 'rendering', 'completed', 'failed')),
+  status TEXT DEFAULT 'created' CHECK (status IN ('created', 'ingesting', 'media_ready', 'transcribing', 'transcript_ready', 'analyzing', 'clips_ready', 'editing', 'render_queued', 'rendering', 'completed', 'export_ready', 'failed')),
   error_message TEXT,
   cost_usd NUMERIC DEFAULT 0,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- 3. Transcripts (Word-level timestamps & full text)
+-- 4. Media Assets (Uploaded Video, Probed Metadata, Audio Extractions)
+CREATE TABLE IF NOT EXISTS public.media_assets (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  project_id UUID REFERENCES public.projects(id) ON DELETE CASCADE,
+  user_id UUID REFERENCES public.profiles(id) ON DELETE CASCADE NOT NULL,
+  file_name TEXT NOT NULL,
+  file_url TEXT NOT NULL,
+  storage_path TEXT NOT NULL,
+  mime_type TEXT NOT NULL,
+  size_bytes BIGINT NOT NULL,
+  duration NUMERIC,
+  width INTEGER,
+  height INTEGER,
+  codec TEXT,
+  audio_codec TEXT,
+  fps NUMERIC,
+  sample_rate INTEGER,
+  channels INTEGER,
+  bitrate BIGINT,
+  rotation INTEGER DEFAULT 0,
+  color_space TEXT,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- 5. Transcripts (Word-level timestamps & full text)
 CREATE TABLE IF NOT EXISTS public.transcripts (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  project_id UUID REFERENCES public.projects(id) ON DELETE CASCADE UNIQUE,
+  project_id UUID REFERENCES public.projects(id) ON DELETE CASCADE UNIQUE NOT NULL,
   transcript_text TEXT NOT NULL,
   words JSONB NOT NULL DEFAULT '[]'::jsonb,
   utterances JSONB DEFAULT '[]'::jsonb,
   language TEXT DEFAULT 'en',
+  timing_precision TEXT DEFAULT 'exact_word' CHECK (timing_precision IN ('exact_word', 'approximate_cue')),
   source TEXT DEFAULT 'deepgram' CHECK (source IN ('deepgram', 'youtube_captions', 'user_upload')),
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- 4. Generated Viral Clips / Outputs
+-- 6. Generated Viral Clips / Outputs
 CREATE TABLE IF NOT EXISTS public.clips (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  project_id UUID REFERENCES public.projects(id) ON DELETE CASCADE,
+  project_id UUID REFERENCES public.projects(id) ON DELETE CASCADE NOT NULL,
   rank INTEGER DEFAULT 1,
   title TEXT NOT NULL,
   hook_summary TEXT,
@@ -60,14 +96,27 @@ CREATE TABLE IF NOT EXISTS public.clips (
   end_time NUMERIC NOT NULL,
   duration NUMERIC NOT NULL,
   words JSONB NOT NULL DEFAULT '[]'::jsonb,
+  cuts JSONB DEFAULT '[]'::jsonb,
   clip_url TEXT,
   thumbnail_url TEXT,
   b_roll_keywords TEXT[] DEFAULT '{}',
   sound_effects_applied TEXT[] DEFAULT '{}',
+  alignment_status TEXT DEFAULT 'verified' CHECK (alignment_status IN ('verified', 'approximate', 'needs_review', 'rejected')),
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- 5. Render Jobs (Async 9:16 Video Composition System)
+-- 7. Timeline Versions & Non-Destructive Edit Decision Lists
+CREATE TABLE IF NOT EXISTS public.timeline_versions (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  project_id UUID REFERENCES public.projects(id) ON DELETE CASCADE NOT NULL,
+  version_number INTEGER NOT NULL,
+  render_spec JSONB NOT NULL DEFAULT '{}'::jsonb,
+  description TEXT,
+  created_by UUID REFERENCES public.profiles(id) ON DELETE SET NULL,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- 8. Render Jobs (Async Multi-Aspect Video Composition System)
 CREATE TABLE IF NOT EXISTS public.render_jobs (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   project_id UUID REFERENCES public.projects(id) ON DELETE CASCADE,
@@ -79,16 +128,19 @@ CREATE TABLE IF NOT EXISTS public.render_jobs (
   input_url TEXT NOT NULL,
   output_url TEXT,
   error_message TEXT,
+  retry_count INTEGER DEFAULT 0,
+  max_retries INTEGER DEFAULT 3,
+  heartbeat_at TIMESTAMP WITH TIME ZONE,
   started_at TIMESTAMP WITH TIME ZONE,
   completed_at TIMESTAMP WITH TIME ZONE,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- 6. Social Media Auto-Scheduler (YouTube Data API v3, TikTok, Reels)
+-- 9. Social Media Auto-Scheduler
 CREATE TABLE IF NOT EXISTS public.scheduled_posts (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  user_id UUID REFERENCES public.profiles(id) ON DELETE CASCADE,
-  clip_id UUID REFERENCES public.clips(id) ON DELETE CASCADE,
+  user_id UUID REFERENCES public.profiles(id) ON DELETE CASCADE NOT NULL,
+  clip_id UUID REFERENCES public.clips(id) ON DELETE CASCADE NOT NULL,
   platform TEXT NOT NULL CHECK (platform IN ('youtube_shorts', 'tiktok', 'instagram_reels')),
   title TEXT NOT NULL,
   description TEXT,
@@ -99,41 +151,83 @@ CREATE TABLE IF NOT EXISTS public.scheduled_posts (
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- 7. Real-Time API Cost Telemetry (For Admin Telemetry Panel)
+-- 10. Platform OAuth Integrations
+CREATE TABLE IF NOT EXISTS public.integrations (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  user_id UUID REFERENCES public.profiles(id) ON DELETE CASCADE NOT NULL,
+  platform TEXT NOT NULL CHECK (platform IN ('youtube', 'tiktok', 'instagram')),
+  account_name TEXT,
+  channel_id TEXT,
+  status TEXT DEFAULT 'connected' CHECK (status IN ('connected', 'expired', 'disconnected')),
+  scopes TEXT[] DEFAULT '{}',
+  encrypted_token TEXT,
+  encrypted_refresh_token TEXT,
+  token_expires_at TIMESTAMP WITH TIME ZONE,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- 11. Real-Time API Cost Telemetry
 CREATE TABLE IF NOT EXISTS public.cost_telemetry (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   project_id UUID REFERENCES public.projects(id) ON DELETE SET NULL,
+  user_id UUID REFERENCES public.profiles(id) ON DELETE SET NULL,
   service_name TEXT NOT NULL CHECK (service_name IN ('deepgram_stt', 'gemini_flash', 'pexels_broll', 'pixabay_broll', 'ffmpeg_render', 'flux_image', 'r2_storage')),
   model TEXT,
   units_used NUMERIC NOT NULL,
-  unit_type TEXT NOT NULL, -- e.g. 'minutes', 'tokens', 'renders', 'requests'
+  unit_type TEXT NOT NULL,
   cost_in_usd NUMERIC NOT NULL,
   is_estimated BOOLEAN DEFAULT FALSE,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- Enable Row Level Security (RLS)
+-- -------------------------------------------------------------
+-- ROW LEVEL SECURITY (RLS) POLICIES
+-- Strict multi-tenant isolation; zero nullable ownership loopholes
+-- -------------------------------------------------------------
+
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.workspaces ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.projects ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.media_assets ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.transcripts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.clips ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.timeline_versions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.render_jobs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.scheduled_posts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.integrations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.cost_telemetry ENABLE ROW LEVEL SECURITY;
 
--- RLS Policies: Profiles
+-- Helper to check if current user is admin
+CREATE OR REPLACE FUNCTION public.is_admin()
+RETURNS BOOLEAN AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM public.profiles
+    WHERE id = auth.uid() AND role = 'admin'
+  );
+$$ LANGUAGE sql SECURITY DEFINER;
+
+-- Profiles
 CREATE POLICY "Users can view their own profile"
   ON public.profiles FOR SELECT
-  USING (auth.uid() = id);
+  USING (auth.uid() = id OR public.is_admin());
 
 CREATE POLICY "Users can update their own profile"
   ON public.profiles FOR UPDATE
   USING (auth.uid() = id);
 
--- RLS Policies: Projects (Strict user isolation, no NULL bypass)
+-- Workspaces
+CREATE POLICY "Users can view their workspaces"
+  ON public.workspaces FOR SELECT
+  USING (owner_id = auth.uid() OR public.is_admin());
+
+CREATE POLICY "Users can manage their workspaces"
+  ON public.workspaces FOR ALL
+  USING (owner_id = auth.uid());
+
+-- Projects
 CREATE POLICY "Users can view their own projects"
   ON public.projects FOR SELECT
-  USING (auth.uid() = user_id);
+  USING (auth.uid() = user_id OR public.is_admin());
 
 CREATE POLICY "Users can insert their own projects"
   ON public.projects FOR INSERT
@@ -141,20 +235,33 @@ CREATE POLICY "Users can insert their own projects"
 
 CREATE POLICY "Users can update their own projects"
   ON public.projects FOR UPDATE
-  USING (auth.uid() = user_id);
+  USING (auth.uid() = user_id OR public.is_admin());
 
 CREATE POLICY "Users can delete their own projects"
   ON public.projects FOR DELETE
-  USING (auth.uid() = user_id);
+  USING (auth.uid() = user_id OR public.is_admin());
 
--- RLS Policies: Transcripts (Cascaded project ownership)
+-- Media Assets
+CREATE POLICY "Users can view their media assets"
+  ON public.media_assets FOR SELECT
+  USING (auth.uid() = user_id OR public.is_admin());
+
+CREATE POLICY "Users can insert their media assets"
+  ON public.media_assets FOR INSERT
+  WITH CHECK (auth.uid() = user_id);
+
+CREATE POLICY "Users can delete their media assets"
+  ON public.media_assets FOR DELETE
+  USING (auth.uid() = user_id OR public.is_admin());
+
+-- Transcripts (Inherited project ownership)
 CREATE POLICY "Users can view transcripts of their projects"
   ON public.transcripts FOR SELECT
   USING (
     EXISTS (
       SELECT 1 FROM public.projects
       WHERE projects.id = transcripts.project_id
-      AND projects.user_id = auth.uid()
+      AND (projects.user_id = auth.uid() OR public.is_admin())
     )
   );
 
@@ -168,14 +275,14 @@ CREATE POLICY "Users can insert transcripts for their projects"
     )
   );
 
--- RLS Policies: Clips (Cascaded project ownership)
+-- Clips (Inherited project ownership)
 CREATE POLICY "Users can view clips of their projects"
   ON public.clips FOR SELECT
   USING (
     EXISTS (
       SELECT 1 FROM public.projects
       WHERE projects.id = clips.project_id
-      AND projects.user_id = auth.uid()
+      AND (projects.user_id = auth.uid() OR public.is_admin())
     )
   );
 
@@ -189,10 +296,31 @@ CREATE POLICY "Users can insert clips for their projects"
     )
   );
 
--- RLS Policies: Render Jobs (Strict user isolation)
+-- Timeline Versions (Inherited project ownership)
+CREATE POLICY "Users can view timeline versions of their projects"
+  ON public.timeline_versions FOR SELECT
+  USING (
+    EXISTS (
+      SELECT 1 FROM public.projects
+      WHERE projects.id = timeline_versions.project_id
+      AND (projects.user_id = auth.uid() OR public.is_admin())
+    )
+  );
+
+CREATE POLICY "Users can insert timeline versions for their projects"
+  ON public.timeline_versions FOR INSERT
+  WITH CHECK (
+    EXISTS (
+      SELECT 1 FROM public.projects
+      WHERE projects.id = timeline_versions.project_id
+      AND projects.user_id = auth.uid()
+    )
+  );
+
+-- Render Jobs
 CREATE POLICY "Users can view their own render jobs"
   ON public.render_jobs FOR SELECT
-  USING (auth.uid() = user_id);
+  USING (auth.uid() = user_id OR public.is_admin());
 
 CREATE POLICY "Users can create render jobs"
   ON public.render_jobs FOR INSERT
@@ -200,26 +328,29 @@ CREATE POLICY "Users can create render jobs"
 
 CREATE POLICY "Users can update their own render jobs"
   ON public.render_jobs FOR UPDATE
-  USING (auth.uid() = user_id);
+  USING (auth.uid() = user_id OR public.is_admin());
 
--- RLS Policies: Scheduled Posts
+-- Scheduled Posts
 CREATE POLICY "Users can manage their own scheduled posts"
   ON public.scheduled_posts FOR ALL
-  USING (auth.uid() = user_id);
+  USING (auth.uid() = user_id OR public.is_admin());
 
--- RLS Policies: Cost Telemetry (Read-only for project owner or Admin)
+-- Integrations
+CREATE POLICY "Users can manage their own integrations"
+  ON public.integrations FOR ALL
+  USING (auth.uid() = user_id OR public.is_admin());
+
+-- Cost Telemetry
 CREATE POLICY "Users can view cost telemetry of their projects"
   ON public.cost_telemetry FOR SELECT
   USING (
+    user_id = auth.uid()
+    OR
     EXISTS (
       SELECT 1 FROM public.projects
       WHERE projects.id = cost_telemetry.project_id
       AND projects.user_id = auth.uid()
     )
     OR
-    EXISTS (
-      SELECT 1 FROM public.profiles
-      WHERE profiles.id = auth.uid()
-      AND profiles.is_admin = TRUE
-    )
+    public.is_admin()
   );

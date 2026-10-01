@@ -47,20 +47,20 @@ export const SocialPublishTab: React.FC<SocialPublishTabProps> = ({
           </span>
         </div>
 
-        {/* Platform Connection Cards */}
+        {/* Platform Connection Status Cards */}
         <div className="space-y-2">
           <div className="p-3 rounded-xl border border-slate-200 bg-slate-50 flex items-center justify-between">
             <div>
               <p className="text-xs font-bold text-slate-900">YouTube Shorts</p>
-              <p className="text-[10px] text-slate-500">Auto-publish directly to your YouTube channel</p>
+              <p className="text-[10px] text-slate-500">Auto-publish via YouTube Data API v3</p>
             </div>
-            <button
-              type="button"
-              className="px-3 py-1.5 rounded-lg text-xs font-bold bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 transition-colors flex items-center gap-1 cursor-pointer"
+            <a
+              href="/admin"
+              className="px-2.5 py-1 rounded-lg text-[10px] font-bold bg-white hover:bg-slate-100 text-slate-600 border border-slate-200 transition-colors flex items-center gap-1 cursor-pointer"
             >
-              <span>Connect</span>
-              <ExternalLink className="w-3 h-3 text-slate-400" />
-            </button>
+              <span>Setup OAuth in Admin</span>
+              <ExternalLink className="w-2.5 h-2.5 text-slate-400" />
+            </a>
           </div>
 
           <div className="p-3 rounded-xl border border-slate-200 bg-slate-50 flex items-center justify-between">
@@ -68,8 +68,8 @@ export const SocialPublishTab: React.FC<SocialPublishTabProps> = ({
               <p className="text-xs font-bold text-slate-900">TikTok</p>
               <p className="text-[10px] text-slate-500">Direct Content Posting API</p>
             </div>
-            <span className="text-[10px] px-2.5 py-1 rounded-md bg-slate-200/70 text-slate-600 font-bold">
-              Coming Soon
+            <span className="text-[10px] px-2 py-0.5 rounded-md bg-slate-100 text-slate-500 font-semibold border border-slate-200">
+              Not Configured
             </span>
           </div>
 
@@ -78,8 +78,8 @@ export const SocialPublishTab: React.FC<SocialPublishTabProps> = ({
               <p className="text-xs font-bold text-slate-900">Instagram Reels</p>
               <p className="text-[10px] text-slate-500">Meta Graph API for Creators</p>
             </div>
-            <span className="text-[10px] px-2.5 py-1 rounded-md bg-slate-200/70 text-slate-600 font-bold">
-              Coming Soon
+            <span className="text-[10px] px-2 py-0.5 rounded-md bg-slate-100 text-slate-500 font-semibold border border-slate-200">
+              Not Configured
             </span>
           </div>
         </div>

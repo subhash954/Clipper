@@ -1,8 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { transcribeWithDeepgram } from '@/lib/providers/deepgramProvider';
+import { getAuthenticatedUser } from '@/lib/auth/serverAuth';
 
 export async function POST(req: NextRequest) {
   try {
+    const user = await getAuthenticatedUser(req);
+    if (!user) {
+      return NextResponse.json({ error: 'Authentication required. Please log in.' }, { status: 401 });
+    }
+
     const contentType = req.headers.get('content-type') || '';
     let audioUrl: string | undefined;
     let audioBuffer: Buffer | undefined;

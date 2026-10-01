@@ -140,19 +140,15 @@ export const CaptionsTab: React.FC<CaptionsTabProps> = ({
   };
 
   const handleOptimizeCaptions = () => {
-    setIsOptimizing(true);
-    setTimeout(() => {
-      // Capitalize first letters and remove duplicate spaces
-      const optimized = words.map((w, idx) => {
-        let text = w.word.trim();
-        if (idx === 0 || words[idx - 1]?.word.endsWith('.') || words[idx - 1]?.word.endsWith('।')) {
-          text = text.charAt(0).toUpperCase() + text.slice(1);
-        }
-        return { ...w, word: text };
-      });
-      onWordsChange(optimized);
-      setIsOptimizing(false);
-    }, 600);
+    // Capitalize first letters and sanitize spacing
+    const optimized = words.map((w, idx) => {
+      let text = w.word.trim();
+      if (idx === 0 || words[idx - 1]?.word.endsWith('.') || words[idx - 1]?.word.endsWith('।')) {
+        text = text.charAt(0).toUpperCase() + text.slice(1);
+      }
+      return { ...w, word: text };
+    });
+    onWordsChange(optimized);
   };
 
   const languageOptions: { id: SubtitleLanguage; label: string }[] = [

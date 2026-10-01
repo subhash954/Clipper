@@ -20,6 +20,11 @@ import {
 } from '../lib/reframe/reframeEngine';
 import { ReframeTrack, ReframeKeyframe } from '../lib/reframe/types';
 import { execSync } from 'child_process';
+import { getAuthenticatedUser, requireProjectAccess, DEV_USER_ID } from '../lib/auth/serverAuth';
+import { probeMedia, validateMediaFileSignature } from '../lib/media/probeService';
+import { validateSafeRemoteUrl, isPrivateOrReservedIpv4 } from '../lib/security/ssrfValidator';
+import { computeKeptIntervals } from '../lib/renderEngine';
+import { NextRequest } from 'next/server';
 
 async function runTests() {
   console.log('====================================================');
@@ -435,7 +440,121 @@ async function runTests() {
   }
   assert(missingMediaThrew, 'Render pipeline cleanly fails when media is missing (NO fake synthetic fallback)');
 
-  // Clean up test scratch
+  // --- TEST GROUP 14: Server-Side Auth & Tenant Isolation ---
+  console.log('\n--- TEST GROUP 14: Server-Side Auth & Tenant Isolation ---');
+  const testStorage = getStorage();
+  const aliceUserId = '11111111-1111-4111-8111-111111111111';
+  const bobUserId = '22222222-2222-4222-8222-222222222222';
+  const isolationProjId = '33333333-3333-4333-8333-333333333333';
+
+  await testStorage.saveProject({
+    id: isolationProjId,
+    userId: aliceUserId,
+    title: "Alice's Secret Project",
+    durationSeconds: 120,
+    status: 'completed',
+    sourceType: 'youtube',
+    workflowType: 'youtube_to_shorts',
+    clips: [],
+    createdAt: new Date().toISOString(),
+  });
+
+  const aliceUser = { id: aliceUserId, email: 'alice@clipper.ai', role: 'owner' as const };
+  const bobUser = { id: bobUserId, email: 'bob@clipper.ai', role: 'owner' as const };
+  const adminUser = { id: '99999999-9999-4999-8999-999999999999', email: 'admin@clipper.ai', role: 'admin' as const };
+
+  let aliceAccessPassed = false;
+  try {
+    await requireProjectAccess(aliceUser, isolationProjId);
+    aliceAccessPassed = true;
+  } catch {}
+  assert(aliceAccessPassed, 'Owner (Alice) is granted access to own project');
+
+  let bobAccessBlocked = false;
+  try {
+    await requireProjectAccess(bobUser, isolationProjId);
+  } catch (err: any) {
+    bobAccessBlocked = err.statusCode === 403;
+  }
+  assert(bobAccessBlocked, 'Cross-user tenant breach blocked: Bob cannot access Alice project (HTTP 403)');
+
+  let adminAccessPassed = false;
+  try {
+    await requireProjectAccess(adminUser, isolationProjId);
+    adminAccessPassed = true;
+  } catch {}
+  assert(adminAccessPassed, 'Global Admin role is granted authorized administrative access');
+
+  // --- TEST GROUP 15: Media Probing & File Signatures (FFprobe) ---
+  console.log('\n--- TEST GROUP 15: Media Probing & File Signatures ---');
+  const dummyTextFile = path.join(tempTestDir, 'fake_video.mp4');
+  fs.writeFileSync(dummyTextFile, 'This is plain text disguised as MP4');
+  const textSig = validateMediaFileSignature(dummyTextFile);
+  assert(textSig.isValid === false, 'Disguised text file fails magic byte signature check');
+
+  const mp4Sig = validateMediaFileSignature(testInputVideo);
+  assert(mp4Sig.isValid === true, 'Real generated video passes magic byte signature check');
+
+  console.log('Probing 1080p source video container with FFprobe...');
+  const probeResult = await probeMedia(testInputVideo);
+  assert(probeResult.isValid === true, 'FFprobe successfully inspected media container');
+  assert(probeResult.width === 1920, `Probed width is 1920 (got ${probeResult.width})`);
+  assert(probeResult.height === 1080, `Probed height is 1080 (got ${probeResult.height})`);
+  assert(probeResult.hasVideo === true, 'Probed media has valid video stream');
+  assert(probeResult.duration > 0, `Probed duration is positive (${probeResult.duration}s)`);
+
+  // --- TEST GROUP 16: Advanced SSRF & DNS-Rebinding Protection ---
+  console.log('\n--- TEST GROUP 16: Advanced SSRF & DNS-Rebinding Protection ---');
+  assert(isPrivateOrReservedIpv4('127.0.0.1') === true, 'Detects 127.0.0.1 as loopback subnet');
+  assert(isPrivateOrReservedIpv4('10.0.1.5') === true, 'Detects 10.0.0.0/8 as private RFC 1918');
+  assert(isPrivateOrReservedIpv4('172.20.0.1') === true, 'Detects 172.16.0.0/12 as private RFC 1918');
+  assert(isPrivateOrReservedIpv4('192.168.1.100') === true, 'Detects 192.168.0.0/16 as private RFC 1918');
+  assert(isPrivateOrReservedIpv4('169.254.169.254') === true, 'Detects 169.254.0.0/16 as cloud metadata IP');
+  assert(isPrivateOrReservedIpv4('8.8.8.8') === false, 'Identifies 8.8.8.8 as public routable IP');
+
+  const cloudMetadataCheck = await validateSafeRemoteUrl('http://169.254.169.254/latest/meta-data');
+  assert(cloudMetadataCheck.isValid === false, 'Blocks AWS/GCP cloud metadata endpoint (169.254.169.254)');
+
+  const loopbackCheck = await validateSafeRemoteUrl('http://127.0.0.1:8080/secrets');
+  assert(loopbackCheck.isValid === false, 'Blocks loopback address (127.0.0.1)');
+
+  const protocolCheck = await validateSafeRemoteUrl('file:///etc/passwd');
+  assert(protocolCheck.isValid === false, 'Rejects file:// protocol URI');
+
+  // --- TEST GROUP 17: EDL Cuts Applied to FFmpeg Video Rendering ---
+  console.log('\n--- TEST GROUP 17: EDL Cuts Applied to FFmpeg Rendering ---');
+  const { intervals, effectiveDuration } = computeKeptIntervals(10, [
+    { id: 'cut-1', type: 'CUT', start: 3, end: 5, enabled: true },
+  ]);
+  assert(intervals.length === 2, `Computed 2 kept intervals around cut (got ${intervals.length})`);
+  assert(intervals[0].start === 0 && intervals[0].end === 3, 'First kept interval is [0, 3]');
+  assert(intervals[1].start === 5 && intervals[1].end === 10, 'Second kept interval is [5, 10]');
+  assert(effectiveDuration === 8, `Effective duration reduced by 2s cut (got ${effectiveDuration}s)`);
+
+  // Render clip with real cut applied to FFmpeg filtergraph
+  const cutJobId = `edl-cut-${Date.now()}`;
+  console.log('Rendering 9:16 video with real silence/filler word cut excised...');
+  const cutRenderResult = await renderClipWithFfmpeg(cutJobId, {
+    inputMedia: testInputVideo,
+    startTime: 0,
+    duration: 5,
+    words: [{ word: 'AUTHENTIC', start: 0.2, end: 1.5 }],
+    cuts: [{ id: 'cut-silence', type: 'CUT', start: 2.0, end: 3.5, enabled: true }],
+    audioSettings: {
+      studioSoundEnabled: true,
+      volumeNormalization: true,
+      backgroundMusicEnabled: false,
+      musicTrack: 'lofi',
+      musicVolume: 0.2,
+      autoDucking: false,
+      dubbingEnabled: false,
+      dubbingLanguage: 'en',
+    },
+    isProUser: true,
+  });
+  assert(fs.existsSync(cutRenderResult.filePath), 'EDL cut video was successfully rendered to MP4');
+  assert(cutRenderResult.fileSizeBytes > 10000, `Rendered MP4 has valid non-zero size (${cutRenderResult.fileSizeBytes} bytes)`);
+  try { fs.unlinkSync(cutRenderResult.filePath); } catch {}
   try {
     fs.rmSync(tempTestDir, { recursive: true, force: true });
   } catch {}

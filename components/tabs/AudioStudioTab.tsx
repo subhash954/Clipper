@@ -24,11 +24,32 @@ export const AudioStudioTab: React.FC<AudioStudioTabProps> = ({ settings, onChan
     { id: 'synthwave', name: 'Retro 80s Synth', genre: 'Tech / Futuristic' },
   ] as const;
 
-  const handleGenerateTTS = () => {
+  const [ttsFeedback, setTtsFeedback] = useState<string | null>(null);
+
+  const handleGenerateTTS = async () => {
+    if (!ttsScript.trim()) return;
+
     setIsGeneratingVoice(true);
-    setTimeout(() => {
+    setTtsFeedback(null);
+
+    try {
+      const res = await fetch('/api/audio/tts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: ttsScript.trim() }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        setTtsFeedback(data.details || data.error || 'Voice generation provider not configured.');
+      } else {
+        setTtsFeedback(`Voice generated successfully via ${data.provider}! Ready for timeline.`);
+      }
+    } catch (err: any) {
+      setTtsFeedback('Voice generation provider not configured.');
+    } finally {
       setIsGeneratingVoice(false);
-    }, 1200);
+    }
   };
 
   return (
@@ -209,8 +230,14 @@ export const AudioStudioTab: React.FC<AudioStudioTabProps> = ({ settings, onChan
           className="w-full py-2.5 rounded-xl bg-red-600 hover:bg-red-700 text-white text-xs font-bold shadow-md shadow-red-600/20 flex items-center justify-center gap-2 transition-all cursor-pointer"
         >
           <Sparkles className="w-3.5 h-3.5" />
-          <span>{isGeneratingVoice ? 'Synthesizing Ultra-Realistic Voice...' : 'Generate AI Voice Track'}</span>
+          <span>{isGeneratingVoice ? 'Calling ElevenLabs Voice API...' : 'Generate AI Voice Track'}</span>
         </button>
+
+        {ttsFeedback && (
+          <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200 text-[11px] text-slate-700 leading-relaxed font-medium">
+            {ttsFeedback}
+          </div>
+        )}
       </div>
 
       {/* Feature 17: TikTok LUFS Volume Normalization */}

@@ -1,8 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { searchStockMedia } from '@/lib/providers/stockMediaProvider';
+import { getAuthenticatedUser } from '@/lib/auth/serverAuth';
 
 export async function GET(req: NextRequest) {
   try {
+    const user = await getAuthenticatedUser(req);
+    if (!user) {
+      return NextResponse.json({ error: 'Authentication required. Please log in.' }, { status: 401 });
+    }
+
     const { searchParams } = new URL(req.url);
     const query = searchParams.get('query') || 'business growth';
     const orientation = (searchParams.get('orientation') as 'portrait' | 'landscape') || 'portrait';

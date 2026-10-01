@@ -1,9 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { analyzeTranscriptWithGemini } from '@/lib/providers/geminiProvider';
 import { calculateViralScore } from '@/lib/scoring/viralScoring';
+import { getAuthenticatedUser } from '@/lib/auth/serverAuth';
 
 export async function POST(req: NextRequest) {
   try {
+    const user = await getAuthenticatedUser(req);
+    if (!user) {
+      return NextResponse.json({ error: 'Authentication required. Please log in.' }, { status: 401 });
+    }
+
     const { transcript, title = 'Video Hook Analysis', channelName = 'Creator', targetClipCount = 3 } = await req.json();
 
     if (!transcript || typeof transcript !== 'string' || transcript.trim().length < 40) {

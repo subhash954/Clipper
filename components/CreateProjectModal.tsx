@@ -48,6 +48,8 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
     { title: "Preparing recommendations", desc: "Synthesizing AI Editorial Signals" }
   ];
 
+  const [currentStageText, setCurrentStageText] = useState<string>('Initializing pipeline...');
+
   const handleStartAnalysis = async () => {
     if (!youtubeUrl.trim() && !uploadedFile) {
       setErrorMsg("Please paste a valid video URL or upload a video file.");
@@ -56,57 +58,112 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
 
     setIsAnalyzing(true);
     setErrorMsg(null);
-    setAnalysisStage(0);
 
     try {
-      // Meaningful progressive stages (Section 24)
-      const stageTimer1 = setTimeout(() => setAnalysisStage(1), 1000);
-      const stageTimer2 = setTimeout(() => setAnalysisStage(2), 2200);
-      const stageTimer3 = setTimeout(() => setAnalysisStage(3), 3600);
+      if (uploadedFile) {
+        // Step 1: Upload media file & probe container
+        setCurrentStageText('Uploading & verifying video signature with FFprobe...');
+        setAnalysisStage(0);
 
-      const res = await fetch('/api/youtube/ingest', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          youtubeUrl: youtubeUrl.trim(),
-          clipCount: 5 
-        }),
-      });
+        const uploadFormData = new FormData();
+        uploadFormData.append('file', uploadedFile);
 
-      clearTimeout(stageTimer1);
-      clearTimeout(stageTimer2);
-      clearTimeout(stageTimer3);
+        const uploadRes = await fetch('/api/media/upload', {
+          method: 'POST',
+          body: uploadFormData,
+        });
 
-      if (!res.ok) {
-        const errData = await res.json().catch(() => ({}));
-        throw new Error(errData.error || `Analysis request returned status ${res.status}`);
-      }
+        if (!uploadRes.ok) {
+          const errData = await uploadRes.json().catch(() => ({}));
+          throw new Error(errData.error || `Upload failed with status ${uploadRes.status}`);
+        }
 
-      const data = await res.json();
-      setAnalysisStage(4);
+        const uploadData = await uploadRes.json();
+        const mediaAsset = uploadData.mediaAsset;
 
-      // Save to canonical local active project
-      if (typeof window !== 'undefined' && data?.clips?.length > 0) {
-        localStorage.setItem('clipper_active_project', JSON.stringify({
-          videoTitle: data.videoTitle,
-          channelName: data.channelName,
-          thumbnailUrl: data.thumbnailUrl,
-          activeClip: data.clips[0],
-          clips: data.clips,
-          isMediaAvailable: false,
-          timingPrecision: data.timingPrecision || 'approximate_cue',
-        }));
-      }
+        // Step 2: Create project record
+        setCurrentStageText('Registering project in database...');
+        setAnalysisStage(1);
 
-      if (onProjectCreated) {
-        onProjectCreated(data);
-      }
+        const projectRes = await fetch('/api/projects', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            title: uploadedFile.name.replace(/\.[^/.]+$/, ''),
+            sourceUrl: mediaAsset.fileUrl,
+            sourceType: 'upload',
+            durationSeconds: mediaAsset.duration || 60,
+            status: 'ingesting',
+            workflowType: 'youtube_to_shorts',
+            isMediaAvailable: true,
+          }),
+        });
 
-      // Transition smoothly to Studio with database project ID
-      setTimeout(() => {
+        if (!projectRes.ok) {
+          const errData = await projectRes.json().catch(() => ({}));
+          throw new Error(errData.error || 'Failed to create project.');
+        }
+
+        const projectData = await projectRes.json();
+        const createdProject = projectData.project;
+        const projectId = createdProject.id;
+
+        // Step 3: Run audio extraction, transcription & AI analysis
+        setCurrentStageText('Extracting audio & transcribing with Deepgram Nova-2...');
+        setAnalysisStage(2);
+
+        const ingestRes = await fetch(`/api/projects/${projectId}/ingest`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ clipCount: 5 }),
+        });
+
+        if (!ingestRes.ok) {
+          const errData = await ingestRes.json().catch(() => ({}));
+          throw new Error(errData.error || 'Speech transcription and analysis failed.');
+        }
+
+        const finalIngestData = await ingestRes.json();
+        setCurrentStageText('Clips ready! Launching Studio...');
+        setAnalysisStage(3);
+
+        if (onProjectCreated) {
+          onProjectCreated(finalIngestData.project);
+        }
+
+        onClose();
+        router.push(`/studio?projectId=${projectId}`);
+
+      } else {
+        // YouTube Ingestion Path
+        setCurrentStageText('Fetching metadata & transcript cues from YouTube...');
+        setAnalysisStage(1);
+
+        const res = await fetch('/api/youtube/ingest', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ 
+            youtubeUrl: youtubeUrl.trim(),
+            clipCount: 5 
+          }),
+        });
+
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(errData.error || `Analysis request returned status ${res.status}`);
+        }
+
+        const data = await res.json();
+        setCurrentStageText('Clips ready! Launching Studio...');
+        setAnalysisStage(3);
+
+        if (onProjectCreated) {
+          onProjectCreated(data);
+        }
+
         onClose();
         router.push(data.id ? `/studio?projectId=${data.id}` : '/studio');
-      }, 700);
+      }
 
     } catch (err: any) {
       console.error('Ingest error:', err);
@@ -351,9 +408,12 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
         {/* Meaningful Loading Stages */}
         {isAnalyzing && (
           <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-3 animate-in fade-in">
-            <p className="text-xs font-bold text-red-600 uppercase tracking-wider flex items-center gap-2">
-              <Sparkles className="w-3.5 h-3.5 animate-pulse" /> AI Video Ingestion in Progress
-            </p>
+            <div className="flex items-center justify-between">
+              <p className="text-xs font-bold text-red-600 uppercase tracking-wider flex items-center gap-2">
+                <Sparkles className="w-3.5 h-3.5 animate-pulse" /> AI Video Ingestion in Progress
+              </p>
+              <span className="text-[11px] font-medium text-slate-600 truncate max-w-[260px]">{currentStageText}</span>
+            </div>
             <div className="space-y-2">
               {analysisStages.map((stage, idx) => {
                 const isDone = analysisStage > idx;

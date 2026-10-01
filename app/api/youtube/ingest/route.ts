@@ -4,6 +4,7 @@ import { WordTimestamp, Transcript, Project, ViralClip } from '@/lib/types';
 import { analyzeTranscriptWithGemini } from '@/lib/providers/geminiProvider';
 import { alignClipsToTranscript } from '@/lib/alignmentEngine';
 import { getStorage } from '@/lib/storage';
+import { getAuthenticatedUser } from '@/lib/auth/serverAuth';
 
 /**
  * Robustly parses YouTube URLs across all standard formats:
@@ -34,6 +35,11 @@ export function extractYouTubeVideoId(url: string): string | null {
 
 export async function POST(req: NextRequest) {
   try {
+    const user = await getAuthenticatedUser(req);
+    if (!user) {
+      return NextResponse.json({ error: 'Authentication required. Please log in.' }, { status: 401 });
+    }
+
     const body = await req.json();
     const { youtubeUrl, clipCount = 5 } = body;
 
@@ -166,8 +172,9 @@ export async function POST(req: NextRequest) {
       totalDurationSeconds,
     });
 
-    // Attach video source URL and thumbnail to each clip
+    // Attach video source URL, thumbnail, and valid UUID to each clip
     generatedClips.forEach((c) => {
+      c.id = crypto.randomUUID();
       c.videoUrl = cleanUrl;
       c.thumbnailUrl = thumbnailUrl;
     });
@@ -185,9 +192,12 @@ export async function POST(req: NextRequest) {
     );
     const totalCostINR = Math.round(totalCostUSD * 86.5);
 
-    // 7. Assemble Project entity
+    // 7. Assemble Project entity with RFC 4122 UUID and sourceExternalId
     const project: Project = {
-      id: `proj-${videoId}`,
+      id: crypto.randomUUID(),
+      userId: user.id,
+      workspaceId: user.workspaceId,
+      sourceExternalId: videoId,
       title: videoTitle,
       channelName: authorName,
       thumbnailUrl,

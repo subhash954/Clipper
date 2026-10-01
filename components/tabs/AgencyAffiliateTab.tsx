@@ -16,7 +16,7 @@ export const AgencyAffiliateTab: React.FC<AgencyAffiliateTabProps> = ({
   onOpenPricing
 }) => {
   const [copiedLink, setCopiedLink] = useState(false);
-  const [webhookUrl, setWebhookUrl] = useState("https://hooks.zapier.com/hooks/catch/12345/repurpose-video");
+  const [webhookUrl, setWebhookUrl] = useState("");
   const [webhookSaved, setWebhookSaved] = useState(false);
 
   const handleUpdate = (updates: Partial<AgencySettings>) => {
