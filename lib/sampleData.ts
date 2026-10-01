@@ -223,6 +223,102 @@ export const AI_THUMBNAILS = [
  * Professional typography system with distinctive brand presets.
  */
 export const PRESET_STYLES: Record<string, SubtitleStyle> = {
+  signal: {
+    preset: 'signal',
+    fontFamily: 'Inter, system-ui, sans-serif',
+    fontSize: 46,
+    primaryColor: '#FFFFFF',
+    highlightColor: '#06B6D4', // Clipper Cyan
+    strokeColor: '#0B0F17',
+    strokeWidth: 5,
+    position: 'bottom',
+    uppercase: true,
+    showEmojis: true,
+    animation: 'pop',
+    language: 'en',
+    showDualLanguage: false,
+    enableSFX: true
+  },
+  punch: {
+    preset: 'punch',
+    fontFamily: 'Impact, Arial Black, sans-serif',
+    fontSize: 52,
+    primaryColor: '#FFFFFF',
+    highlightColor: '#FACC15', // Gold Punch
+    strokeColor: '#000000',
+    strokeWidth: 6,
+    position: 'middle',
+    uppercase: true,
+    showEmojis: true,
+    animation: 'bounce',
+    language: 'en',
+    showDualLanguage: false,
+    enableSFX: true
+  },
+  focus: {
+    preset: 'focus',
+    fontFamily: 'Montserrat, sans-serif',
+    fontSize: 44,
+    primaryColor: '#F8FAFC',
+    highlightColor: '#22D3EE', // Aqua Focus
+    strokeColor: '#0F172A',
+    strokeWidth: 4,
+    position: 'bottom',
+    uppercase: false,
+    showEmojis: false,
+    animation: 'karaoke',
+    language: 'en',
+    showDualLanguage: false,
+    enableSFX: false
+  },
+  kinetic: {
+    preset: 'kinetic',
+    fontFamily: 'Trebuchet MS, sans-serif',
+    fontSize: 50,
+    primaryColor: '#FFFFFF',
+    highlightColor: '#F97316', // Orange Kinetic
+    strokeColor: '#000000',
+    strokeWidth: 6,
+    position: 'middle',
+    uppercase: true,
+    showEmojis: true,
+    animation: 'pop',
+    language: 'en',
+    showDualLanguage: false,
+    enableSFX: true
+  },
+  mono: {
+    preset: 'mono',
+    fontFamily: 'Courier New, monospace',
+    fontSize: 40,
+    primaryColor: '#22D3EE',
+    highlightColor: '#FFFFFF',
+    strokeColor: '#0B0F17',
+    strokeWidth: 4,
+    position: 'bottom',
+    uppercase: true,
+    showEmojis: false,
+    animation: 'glow',
+    language: 'en',
+    showDualLanguage: false,
+    enableSFX: false
+  },
+  highlight: {
+    preset: 'highlight',
+    fontFamily: 'system-ui, -apple-system, sans-serif',
+    fontSize: 46,
+    primaryColor: '#FEF08A',
+    highlightColor: '#10B981', // Emerald Highlight
+    strokeColor: '#000000',
+    strokeWidth: 5,
+    position: 'bottom',
+    uppercase: true,
+    showEmojis: true,
+    animation: 'pop',
+    language: 'en',
+    showDualLanguage: false,
+    enableSFX: true
+  },
   impact: {
     preset: 'impact',
     fontFamily: 'Impact, Arial Black, sans-serif',

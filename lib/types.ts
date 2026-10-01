@@ -188,8 +188,21 @@ export interface BrollAsset {
   height?: number;
 }
 
-// Original Clipper Caption Presets (no trademarked or unauthorized creator names)
-export type SubtitlePreset = 'impact' | 'pulse' | 'clean' | 'studio' | 'bold' | 'minimal' | 'neon';
+// Original Clipper Caption Presets (Section 16: Signal, Punch, Minimal, Focus, Studio, Kinetic, Mono, Highlight)
+export type SubtitlePreset = 
+  | 'signal' 
+  | 'punch' 
+  | 'minimal' 
+  | 'focus' 
+  | 'studio' 
+  | 'kinetic' 
+  | 'mono' 
+  | 'highlight' 
+  | 'impact' 
+  | 'pulse' 
+  | 'clean' 
+  | 'bold' 
+  | 'neon';
 export type SubtitleLanguage = 'en' | 'hi' | 'es' | 'fr' | 'de';
 
 export interface SubtitleStyle {

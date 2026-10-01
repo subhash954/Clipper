@@ -2,8 +2,8 @@
 
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import Link from 'next/link';
-import { Sidebar } from '@/components/Sidebar';
-import { ApiKeyModal } from '@/components/ApiKeyModal';
+import { AppShell } from '@/components/AppShell';
+import { CreateProjectModal } from '@/components/CreateProjectModal';
 import { VideoUploader } from '@/components/VideoUploader';
 import { VideoPreviewPlayer, VideoPreviewPlayerRef } from '@/components/VideoPreviewPlayer';
 import { CreatorTimeline } from '@/components/CreatorTimeline';
@@ -36,10 +36,10 @@ import {
 import { 
   Download, 
   RefreshCw, 
-  Flame, 
+  Sparkles, 
   Type, 
   Mic2, 
-  SplitSquareVertical, 
+  Crop, 
   Share2, 
   Building2,
   Key,
@@ -48,12 +48,19 @@ import {
   Youtube,
   Play,
   AlertCircle,
-  FileVideo
+  FileVideo,
+  Undo2,
+  Redo2,
+  Bot,
+  Sliders,
+  Layers,
+  ChevronRight,
+  Eye
 } from 'lucide-react';
 
 export default function StudioPage() {
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
-  const [fileName, setFileName] = useState<string>("Untitled_Project.mp4");
+  const [projectName, setProjectName] = useState<string>("My Podcast Short");
   const [words, setWords] = useState<WordTimestamp[]>([]);
   const [clips, setClips] = useState<ViralClip[]>([]);
   const [activeClipId, setActiveClipId] = useState<string | null>(null);
@@ -61,24 +68,20 @@ export default function StudioPage() {
   const [isMediaAvailable, setIsMediaAvailable] = useState<boolean>(true);
   const [currentTime, setCurrentTime] = useState<number>(0);
   const [activeCuts, setActiveCuts] = useState<EditOperation[]>([]);
+  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
 
-  // Active Navigation Tab for Panels
-  const [activeTab, setActiveTab] = useState<'intelligence' | 'typography' | 'audio' | 'layout' | 'social' | 'agency'>('intelligence');
+  // Active Tool for Editor (Section 14)
+  const [activeTool, setActiveTool] = useState<'moments' | 'captions' | 'reframe' | 'broll' | 'audio' | 'publish'>('moments');
 
-  // Quick YouTube Ingest State inside Studio
-  const [quickYoutubeUrl, setQuickYoutubeUrl] = useState('');
-  const [isIngestingYoutube, setIsIngestingYoutube] = useState(false);
-  const [ingestError, setIngestError] = useState<string | null>(null);
-
-  // Subtitle styling using original Clipper preset 'impact'
-  const [subtitleStyle, setSubtitleStyle] = useState<SubtitleStyle>(PRESET_STYLES.impact);
+  // Subtitle styling using original Clipper preset 'signal'
+  const [subtitleStyle, setSubtitleStyle] = useState<SubtitleStyle>(PRESET_STYLES.signal || PRESET_STYLES.impact);
 
   // Visual layout settings
   const [visualSettings, setVisualSettings] = useState<VisualLayoutSettings>({
     splitScreenEnabled: false,
-    satisfyingVideoType: 'subway',
+    satisfyingVideoType: 'none',
     showProgressBar: true,
-    progressBarColor: '#E11D48',
+    progressBarColor: '#06B6D4',
     progressBarHeight: 8,
     showCustomLogo: false,
     customLogoText: '@ClipperCreator',
@@ -113,24 +116,11 @@ export default function StudioPage() {
     hashtags: AI_SOCIAL_METADATA.hashtags,
   });
 
-  // Agency & Affiliate settings
-  const [agencySettings, setAgencySettings] = useState<AgencySettings>({
-    workspaceName: "My Creator Workspace",
-    clientName: "Podcast Studio",
-    whiteLabelEnabled: false,
-    affiliateEarnings: 0,
-    referralCode: "CLIPPER",
-    referralCount: 0,
-  });
-
-  const [isProUser, setIsProUser] = useState(false);
   const [isExportOpen, setIsExportOpen] = useState(false);
   const [isPricingOpen, setIsPricingOpen] = useState(false);
-  const [isApiModalOpen, setIsApiModalOpen] = useState(false);
-
   const playerRef = useRef<VideoPreviewPlayerRef>(null);
 
-  // Load project from localStorage or URL parameter
+  // Load project from localStorage on mount
   useEffect(() => {
     if (typeof window !== 'undefined') {
       try {
@@ -138,7 +128,7 @@ export default function StudioPage() {
         if (saved) {
           const parsed = JSON.parse(saved);
           if (parsed.videoTitle) {
-            setFileName(`${parsed.videoTitle.slice(0, 36)}.mp4`);
+            setProjectName(parsed.videoTitle.slice(0, 48));
           }
           if (parsed.videoUrl) {
             setVideoUrl(parsed.videoUrl);
@@ -162,66 +152,26 @@ export default function StudioPage() {
     }
   }, []);
 
-  // Explicit Demo Loader (Isolates demo data from real production flow)
+  // Explicit Demo Loader (Section 2)
   const handleLoadDemo = () => {
     setIsDemoMode(true);
     setVideoUrl(DEMO_VIDEO_URL);
-    setFileName("Demo_Entrepreneur_Mindset.mp4");
+    setProjectName("Demo Entrepreneur Mindset");
     setWords(DEMO_WORDS);
     setClips(DEMO_VIRAL_CLIPS);
     setActiveClipId(DEMO_VIRAL_CLIPS[0].id);
     setIsMediaAvailable(true);
   };
 
-  // Video Selected via File Upload
   const handleVideoSelected = (url: string, name: string) => {
     setIsDemoMode(false);
     setVideoUrl(url);
-    setFileName(name);
+    setProjectName(name.replace(/\.[^/.]+$/, ""));
     setIsMediaAvailable(true);
-    // In a full file upload, transcription is performed; provide empty initial clips until transcribed
     if (clips.length === 0) {
       setWords([]);
       setClips([]);
       setActiveClipId(null);
-    }
-  };
-
-  // Quick Ingest from YouTube URL
-  const handleIngestYouTube = async () => {
-    if (!quickYoutubeUrl.trim()) return;
-    setIsIngestingYoutube(true);
-    setIngestError(null);
-
-    try {
-      const res = await fetch('/api/youtube/ingest', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ youtubeUrl: quickYoutubeUrl, clipCount: 5 }),
-      });
-
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || 'Failed to ingest YouTube video.');
-      }
-
-      setIsDemoMode(false);
-      setFileName(`${data.videoTitle?.slice(0, 36) || 'YouTube_Clip'}.mp4`);
-      setVideoUrl(data.sourceUrl);
-      setIsMediaAvailable(false); // YouTube captions ready, video upload required to render
-      if (data.transcript?.words) {
-        setWords(data.transcript.words);
-      }
-      if (data.clips && data.clips.length > 0) {
-        setClips(data.clips);
-        setActiveClipId(data.clips[0].id);
-      }
-      // Save canonical project to localStorage
-      localStorage.setItem('clipper_active_project', JSON.stringify(data));
-    } catch (err: any) {
-      setIngestError(err.message || 'YouTube processing failed.');
-    } finally {
-      setIsIngestingYoutube(false);
     }
   };
 
@@ -244,376 +194,340 @@ export default function StudioPage() {
     }
   };
 
+  const aiToolsList = [
+    { id: 'moments', label: 'AI Moments', icon: Sparkles, desc: 'Signal & Retention' },
+    { id: 'captions', label: 'Typography', icon: Type, desc: 'Presets & Word Sync' },
+    { id: 'reframe', label: 'Reframe', icon: Crop, desc: '9:16 Auto Crop' },
+    { id: 'broll', label: 'B-Roll', icon: Layers, desc: 'Visual Overlays' },
+    { id: 'audio', label: 'Audio & Music', icon: Mic2, desc: 'SFX & Voice Ducking' },
+    { id: 'publish', label: 'Distribution', icon: Share2, desc: 'Scheduling & Tags' },
+  ] as const;
+
   return (
-    <div className="min-h-screen bg-[#F8FAFC] text-slate-900 flex font-sans">
-      {/* 1. Left Sidebar Navigation */}
-      <Sidebar onOpenApiModal={() => setIsApiModalOpen(true)} />
-
-      {/* 2. Main Content Area */}
-      <div className="flex-1 flex flex-col min-w-0 overflow-y-auto">
-        {/* Top Header Bar */}
-        <header className="h-16 bg-white border-b border-slate-200 px-8 flex items-center justify-between sticky top-0 z-20 shadow-2xs">
-          <div className="flex items-center gap-3">
-            <h1 className="text-sm font-bold text-slate-900 tracking-tight truncate max-w-xs sm:max-w-md">
-              {fileName}
-            </h1>
-            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-red-50 text-red-600 border border-red-200 uppercase tracking-wider">
-              Studio
+    <AppShell onOpenCreateProject={() => setIsCreateModalOpen(true)}>
+      
+      {/* 1. TOP CONTEXT BAR (Section 21) */}
+      <header className="h-14 bg-[#111827] border-b border-[#1F2937] px-6 flex items-center justify-between sticky top-0 z-30 select-none">
+        
+        {/* Left: Project Name + Saved Status */}
+        <div className="flex items-center gap-3">
+          <input
+            type="text"
+            value={projectName}
+            onChange={(e) => setProjectName(e.target.value)}
+            className="text-xs font-bold text-white bg-transparent hover:bg-slate-800/40 focus:bg-[#0E1524] px-2 py-1 rounded-lg border border-transparent focus:border-cyan-500/50 outline-hidden transition-all truncate max-w-xs sm:max-w-md"
+            title="Click to rename project"
+          />
+          <span className="text-[10px] text-emerald-400 font-medium flex items-center gap-1.5 bg-emerald-950/40 border border-emerald-800/40 px-2 py-0.5 rounded-full">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 shadow-sm shadow-emerald-400" /> Saved
+          </span>
+          {isDemoMode && (
+            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-cyan-950 text-cyan-400 border border-cyan-800/60">
+              DEMO PROJECT
             </span>
-            {isDemoMode && (
-              <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-amber-50 text-amber-800 border border-amber-300">
-                DEMO PROJECT (Sample Mode)
-              </span>
-            )}
-            {!isMediaAvailable && videoUrl && (
-              <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-200">
-                Captions Sliced • Upload Video for Export
-              </span>
-            )}
-          </div>
+          )}
+        </div>
 
-          <div className="flex items-center gap-2.5">
+        {/* Center: Undo / Redo / AI Assistant */}
+        <div className="hidden md:flex items-center gap-1 bg-[#0E1524] border border-[#283344] p-1 rounded-xl">
+          <button
+            type="button"
+            className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+            title="Undo (⌘Z)"
+          >
+            <Undo2 className="w-3.5 h-3.5" />
+          </button>
+          <button
+            type="button"
+            className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+            title="Redo (⇧⌘Z)"
+          >
+            <Redo2 className="w-3.5 h-3.5" />
+          </button>
+          <div className="w-px h-3.5 bg-slate-700 mx-1" />
+          <button
+            type="button"
+            onClick={() => setActiveTool('moments')}
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-cyan-500/10 text-cyan-400 hover:bg-cyan-500/20 text-xs font-semibold transition-colors"
+          >
+            <Bot className="w-3.5 h-3.5" />
+            <span>AI Assistant</span>
+          </button>
+        </div>
+
+        {/* Right: Change Video & Export Actions */}
+        <div className="flex items-center gap-2.5">
+          {videoUrl && (
             <button
               type="button"
-              onClick={() => setIsApiModalOpen(true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-800 text-xs font-semibold border border-amber-200 transition-colors shadow-2xs cursor-pointer"
+              onClick={() => {
+                setVideoUrl(null);
+                setIsDemoMode(false);
+              }}
+              className="text-xs text-slate-400 hover:text-white px-2.5 py-1.5 rounded-lg hover:bg-slate-800 transition-colors flex items-center gap-1.5 cursor-pointer"
             >
-              <Key className="w-3.5 h-3.5 text-amber-600" />
-              <span>AI Keys</span>
+              <RefreshCw className="w-3.5 h-3.5" />
+              <span>Change Video</span>
             </button>
+          )}
 
-            {videoUrl && (
-              <button
-                type="button"
-                onClick={() => {
-                  setVideoUrl(null);
-                  setIsDemoMode(false);
-                }}
-                className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-50 hover:bg-slate-100 text-slate-700 text-xs font-semibold border border-slate-200 transition-colors cursor-pointer"
-              >
-                <RefreshCw className="w-3.5 h-3.5" />
-                <span>Change Video</span>
-              </button>
-            )}
+          <button
+            type="button"
+            onClick={() => setIsExportOpen(true)}
+            className="px-4 py-2 rounded-xl bg-gradient-to-r from-cyan-500 to-cyan-600 hover:from-cyan-400 hover:to-cyan-500 text-slate-950 font-bold text-xs flex items-center gap-2 shadow-lg shadow-cyan-500/25 transition-all hover:scale-[1.02] cursor-pointer"
+          >
+            <Download className="w-4 h-4" />
+            <span>Export 9:16 Video</span>
+          </button>
+        </div>
 
-            <button
-              type="button"
-              onClick={() => setIsExportOpen(true)}
-              className="flex items-center gap-2 px-4 py-1.5 rounded-xl bg-red-600 hover:bg-red-700 text-white font-bold text-xs shadow-md shadow-red-600/20 transition-all hover:scale-[1.02] cursor-pointer"
-            >
-              <Download className="w-4 h-4" />
-              <span>Export 9:16 Video</span>
-            </button>
-          </div>
-        </header>
+      </header>
 
-        {/* Studio Workspace */}
-        <main className="p-8 max-w-7xl w-full mx-auto space-y-6">
-          {!videoUrl ? (
-            /* Section 2: Explicit Empty State for New Users */
-            <div className="max-w-3xl mx-auto space-y-8 pt-4">
-              <div className="text-center space-y-2">
-                <div className="w-12 h-12 rounded-2xl bg-red-50 text-red-600 flex items-center justify-center mx-auto border border-red-200">
-                  <Scissors className="w-6 h-6 -rotate-45" />
+      {/* 2. EDITOR MAIN WORKSPACE (Section 14: 3-column + bottom timeline) */}
+      <main className="p-6 max-w-[1600px] w-full mx-auto space-y-6">
+        
+        {!videoUrl ? (
+          /* Empty State for New Project */
+          <div className="max-w-2xl mx-auto space-y-8 pt-8">
+            <div className="text-center space-y-2">
+              <div className="w-12 h-12 rounded-2xl bg-cyan-950/40 border border-cyan-800/40 text-cyan-400 flex items-center justify-center mx-auto">
+                <Scissors className="w-6 h-6 -rotate-45" />
+              </div>
+              <h2 className="text-2xl font-extrabold text-white tracking-tight">
+                Import Your Video to Begin
+              </h2>
+              <p className="text-xs text-slate-400 max-w-md mx-auto">
+                Upload raw footage or paste a YouTube URL to automatically detect high-retention moments and sync word captions.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Option 1: File Upload */}
+              <div className="clipper-card p-6 space-y-3">
+                <div className="flex items-center gap-2 text-cyan-400 font-bold text-xs">
+                  <Upload className="w-4 h-4" />
+                  <span>Upload Local File</span>
                 </div>
-                <h2 className="text-2xl font-black text-slate-900 tracking-tight">
-                  Import Your First Video
-                </h2>
-                <p className="text-xs text-slate-500 max-w-md mx-auto">
-                  Upload a video file or paste a YouTube URL to automatically detect viral hooks, generate synced captions, and render vertical shorts.
+                <p className="text-xs text-slate-400">
+                  Directly process MP4, MOV, or WebM videos.
                 </p>
+                <VideoUploader onVideoSelected={handleVideoSelected} />
               </div>
 
-              {/* 3 Import Options Grid */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {/* Option 1: File Upload */}
-                <div className="p-6 rounded-2xl bg-white border border-slate-200 shadow-2xs space-y-3">
-                  <div className="flex items-center gap-2">
-                    <Upload className="w-4 h-4 text-red-600" />
-                    <h3 className="text-sm font-bold text-slate-900">Upload Video File</h3>
+              {/* Option 2: YouTube Import */}
+              <div className="clipper-card p-6 flex flex-col justify-between space-y-3">
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2 text-cyan-400 font-bold text-xs">
+                    <Youtube className="w-4 h-4 text-red-500" />
+                    <span>Paste YouTube URL</span>
                   </div>
-                  <p className="text-xs text-slate-500">
-                    Supports MP4, MOV, WebM. Ideal for podcasts, talking-head videos, and reels.
+                  <p className="text-xs text-slate-400">
+                    Extract top 5 moments from official caption cues.
                   </p>
-                  <VideoUploader onVideoSelected={handleVideoSelected} />
                 </div>
-
-                {/* Option 2: Paste YouTube URL */}
-                <div className="p-6 rounded-2xl bg-white border border-slate-200 shadow-2xs space-y-3 flex flex-col justify-between">
-                  <div className="space-y-2">
-                    <div className="flex items-center gap-2">
-                      <Youtube className="w-4 h-4 text-red-600" />
-                      <h3 className="text-sm font-bold text-slate-900">Paste YouTube URL</h3>
-                    </div>
-                    <p className="text-xs text-slate-500">
-                      Slices long YouTube videos into top 5 viral shorts using authentic caption cues.
-                    </p>
-                    <div className="space-y-2 pt-2">
-                      <input
-                        type="url"
-                        placeholder="https://www.youtube.com/watch?v=..."
-                        value={quickYoutubeUrl}
-                        onChange={(e) => setQuickYoutubeUrl(e.target.value)}
-                        className="w-full text-xs p-2.5 rounded-xl border border-slate-200 bg-slate-50 focus:bg-white focus:outline-hidden focus:ring-1 focus:ring-red-500 font-mono"
-                      />
-                      {ingestError && (
-                        <p className="text-[11px] text-red-600 font-medium flex items-center gap-1">
-                          <AlertCircle className="w-3 h-3" />
-                          <span>{ingestError}</span>
-                        </p>
-                      )}
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={handleIngestYouTube}
-                    disabled={isIngestingYoutube || !quickYoutubeUrl.trim()}
-                    className="w-full py-2.5 rounded-xl bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white font-bold text-xs shadow-sm transition-all cursor-pointer flex items-center justify-center gap-2"
-                  >
-                    {isIngestingYoutube ? (
-                      <>
-                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                        <span>Extracting Captions &amp; Slicing...</span>
-                      </>
-                    ) : (
-                      <>
-                        <Play className="w-3.5 h-3.5" />
-                        <span>Ingest &amp; Extract Hooks</span>
-                      </>
-                    )}
-                  </button>
-                </div>
-              </div>
-
-              {/* Option 3: Explicit Try Demo Option */}
-              <div className="p-5 rounded-2xl bg-slate-50 border border-slate-200 text-center space-y-2">
-                <p className="text-xs text-slate-600 font-medium">
-                  Want to explore Clipper Studio first without uploading your own media?
-                </p>
                 <button
                   type="button"
-                  onClick={handleLoadDemo}
-                  className="px-4 py-2 rounded-xl bg-white hover:bg-slate-100 text-slate-800 text-xs font-bold border border-slate-300 shadow-2xs transition-colors cursor-pointer"
+                  onClick={() => setIsCreateModalOpen(true)}
+                  className="w-full py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs border border-slate-700 transition-colors flex items-center justify-center gap-2 cursor-pointer"
                 >
-                  ⚡ Try Demo — Explore with Sample Project
+                  <span>Open URL Importer</span>
+                  <ChevronRight className="w-4 h-4" />
                 </button>
               </div>
             </div>
-          ) : (
-            /* Active Studio Workstation */
-            <div className="space-y-6">
-              {/* Media Notice Banner if Video File Needed */}
-              {!isMediaAvailable && (
-                <div className="p-4 rounded-2xl bg-amber-50 border border-amber-200 text-xs text-amber-900 flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <FileVideo className="w-4 h-4 text-amber-600 shrink-0" />
-                    <span>
-                      <strong>YouTube Captions Ready:</strong> You can edit captions, hooks, and cuts. To render an authentic 1080x1920 MP4 file via FFmpeg, please provide an uploaded video file.
-                    </span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const input = document.createElement('input');
-                      input.type = 'file';
-                      input.accept = 'video/mp4,video/quicktime,video/webm';
-                      input.onchange = (e: any) => {
-                        const file = e.target.files?.[0];
-                        if (file) {
-                          const localUrl = URL.createObjectURL(file);
-                          setVideoUrl(localUrl);
-                          setIsMediaAvailable(true);
-                        }
-                      };
-                      input.click();
-                    }}
-                    className="px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs shrink-0 cursor-pointer shadow-2xs"
-                  >
-                    Upload Video File
-                  </button>
-                </div>
-              )}
 
-              {/* 2-Column Workstation: Center Preview (5 cols) + Controls/Intelligence (7 cols) */}
-              <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
-                {/* Center Preview Column */}
-                <div className="lg:col-span-5 flex flex-col items-center justify-center space-y-4">
-                  <VideoPreviewPlayer
-                    ref={playerRef}
-                    videoUrl={videoUrl}
-                    words={words}
-                    subtitleStyle={subtitleStyle}
-                    visualSettings={visualSettings}
-                    audioSettings={audioSettings}
-                    isProUser={isProUser}
-                    clipStartTime={activeClip?.start || 0}
-                  />
-
-                  {/* Multi-Track Creator Timeline */}
-                  <CreatorTimeline
-                    clip={activeClip}
-                    currentTime={currentTime}
-                    onSeek={handleJumpToTime}
-                    cuts={activeCuts}
-                    words={words}
-                  />
-                </div>
-
-                {/* Right Controls & AI Intelligence Column */}
-                <div className="lg:col-span-7 space-y-4">
-                  {/* Category Navigation Tabs */}
-                  <div className="p-1 rounded-xl bg-white border border-slate-200 grid grid-cols-3 sm:grid-cols-6 gap-1 shadow-2xs">
-                    <button
-                      type="button"
-                      onClick={() => setActiveTab('intelligence')}
-                      className={`py-2 px-1 text-center rounded-lg transition-all flex flex-col items-center gap-1 cursor-pointer ${
-                        activeTab === 'intelligence'
-                          ? 'bg-red-600 text-white shadow-xs'
-                          : 'text-slate-500 hover:text-slate-900 hover:bg-slate-50'
-                      }`}
-                    >
-                      <Flame className="w-4 h-4" />
-                      <span className="text-[10px] font-bold">Hooks &amp; AI</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => setActiveTab('typography')}
-                      className={`py-2 px-1 text-center rounded-lg transition-all flex flex-col items-center gap-1 cursor-pointer ${
-                        activeTab === 'typography'
-                          ? 'bg-red-600 text-white shadow-xs'
-                          : 'text-slate-500 hover:text-slate-900 hover:bg-slate-50'
-                      }`}
-                    >
-                      <Type className="w-4 h-4" />
-                      <span className="text-[10px] font-bold">Captions</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => setActiveTab('audio')}
-                      className={`py-2 px-1 text-center rounded-lg transition-all flex flex-col items-center gap-1 cursor-pointer ${
-                        activeTab === 'audio'
-                          ? 'bg-red-600 text-white shadow-xs'
-                          : 'text-slate-500 hover:text-slate-900 hover:bg-slate-50'
-                      }`}
-                    >
-                      <Mic2 className="w-4 h-4" />
-                      <span className="text-[10px] font-bold">Audio</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => setActiveTab('layout')}
-                      className={`py-2 px-1 text-center rounded-lg transition-all flex flex-col items-center gap-1 cursor-pointer ${
-                        activeTab === 'layout'
-                          ? 'bg-red-600 text-white shadow-xs'
-                          : 'text-slate-500 hover:text-slate-900 hover:bg-slate-50'
-                      }`}
-                    >
-                      <SplitSquareVertical className="w-4 h-4" />
-                      <span className="text-[10px] font-bold">Layout</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => setActiveTab('social')}
-                      className={`py-2 px-1 text-center rounded-lg transition-all flex flex-col items-center gap-1 cursor-pointer ${
-                        activeTab === 'social'
-                          ? 'bg-red-600 text-white shadow-xs'
-                          : 'text-slate-500 hover:text-slate-900 hover:bg-slate-50'
-                      }`}
-                    >
-                      <Share2 className="w-4 h-4" />
-                      <span className="text-[10px] font-bold">Publish</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => setActiveTab('agency')}
-                      className={`py-2 px-1 text-center rounded-lg transition-all flex flex-col items-center gap-1 cursor-pointer ${
-                        activeTab === 'agency'
-                          ? 'bg-red-600 text-white shadow-xs'
-                          : 'text-slate-500 hover:text-slate-900 hover:bg-slate-50'
-                      }`}
-                    >
-                      <Building2 className="w-4 h-4" />
-                      <span className="text-[10px] font-bold">Agency</span>
-                    </button>
-                  </div>
-
-                  {/* Tab Panes */}
-                  {activeTab === 'intelligence' && (
-                    <IntelligenceTab
-                      clips={clips}
-                      activeClipId={activeClipId}
-                      onSelectClip={handleSelectClip}
-                      onJumpToTime={handleJumpToTime}
-                      words={words}
-                      onApplyCuts={(cuts) => setActiveCuts(cuts)}
-                    />
-                  )}
-
-                  {activeTab === 'typography' && (
-                    <TypographyTab
-                      currentStyle={subtitleStyle}
-                      onChange={setSubtitleStyle}
-                    />
-                  )}
-
-                  {activeTab === 'audio' && (
-                    <AudioStudioTab
-                      settings={audioSettings}
-                      onChange={setAudioSettings}
-                    />
-                  )}
-
-                  {activeTab === 'layout' && (
-                    <VisualLayoutTab
-                      settings={visualSettings}
-                      onChange={setVisualSettings}
-                    />
-                  )}
-
-                  {activeTab === 'social' && (
-                    <SocialPublishTab
-                      settings={socialSettings}
-                      onChange={setSocialSettings}
-                      onJumpToTime={handleJumpToTime}
-                    />
-                  )}
-
-                  {activeTab === 'agency' && (
-                    <AgencyAffiliateTab
-                      settings={agencySettings}
-                      onChange={setAgencySettings}
-                      onOpenPricing={() => setIsPricingOpen(true)}
-                    />
-                  )}
-                </div>
-              </div>
+            {/* Option 3: Explicit Demo Mode */}
+            <div className="p-4 rounded-xl bg-[#0E1524] border border-[#283344] text-center space-y-2">
+              <p className="text-xs text-slate-400">
+                Want to test Clipper Studio immediately without uploading your own media?
+              </p>
+              <button
+                type="button"
+                onClick={handleLoadDemo}
+                className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-cyan-400 text-xs font-bold border border-slate-700 shadow-sm transition-colors cursor-pointer"
+              >
+                ⚡ Explore Demo Project (Pre-Loaded Clip)
+              </button>
             </div>
-          )}
-        </main>
-      </div>
+          </div>
+        ) : (
+          /* Active Workstation (3-Column Layout + Bottom Timeline) */
+          <div className="space-y-6">
+            
+            {/* Notice if Media File is needed for rendering */}
+            {!isMediaAvailable && (
+              <div className="p-3.5 rounded-xl bg-amber-950/30 border border-amber-800/40 text-xs text-amber-200 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <FileVideo className="w-4 h-4 text-amber-400 shrink-0" />
+                  <span>
+                    <strong>Captions &amp; Moments Sliced:</strong> You can edit captions, hooks, and cuts. Provide the source video file to compile the real 1080x1920 MP4 via FFmpeg.
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const input = document.createElement('input');
+                    input.type = 'file';
+                    input.accept = 'video/mp4,video/quicktime,video/webm';
+                    input.onchange = (e: any) => {
+                      const file = e.target.files?.[0];
+                      if (file) {
+                        const localUrl = URL.createObjectURL(file);
+                        setVideoUrl(localUrl);
+                        setIsMediaAvailable(true);
+                      }
+                    };
+                    input.click();
+                  }}
+                  className="px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-slate-950 font-bold text-xs shrink-0 cursor-pointer shadow-sm"
+                >
+                  Attach Video File
+                </button>
+              </div>
+            )}
 
-      {/* Modals */}
-      <ApiKeyModal isOpen={isApiModalOpen} onClose={() => setIsApiModalOpen(false)} />
-      <PricingModal
-        isOpen={isPricingOpen}
-        onClose={() => setIsPricingOpen(false)}
-        isProUser={isProUser}
-        onToggleProStatus={() => setIsProUser((prev) => !prev)}
-      />
+            {/* 3-COLUMN WORKSPACE: LEFT TOOLS (2 cols) + CENTER PREVIEW (5 cols) + RIGHT PROPERTIES (5 cols) */}
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+              
+              {/* COLUMN 1: AI Tools Menu (2 cols on large screen) */}
+              <div className="lg:col-span-2 space-y-1 bg-[#111827] border border-[#283344] p-2 rounded-2xl">
+                <p className="px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                  AI Tools
+                </p>
+                {aiToolsList.map((tool) => {
+                  const isActive = activeTool === tool.id;
+                  const Icon = tool.icon;
+
+                  return (
+                    <button
+                      key={tool.id}
+                      type="button"
+                      onClick={() => setActiveTool(tool.id)}
+                      className={`w-full p-2.5 rounded-xl text-left transition-all flex items-center gap-2.5 cursor-pointer ${
+                        isActive
+                          ? 'bg-cyan-500/10 border border-cyan-500/30 text-cyan-400'
+                          : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/40'
+                      }`}
+                    >
+                      <Icon className={`w-4 h-4 shrink-0 ${isActive ? 'text-cyan-400' : 'text-slate-400'}`} />
+                      <div className="overflow-hidden">
+                        <p className="text-xs font-bold leading-tight">{tool.label}</p>
+                        <p className="text-[10px] text-slate-500 truncate">{tool.desc}</p>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* COLUMN 2: Video Preview Player (5 cols) */}
+              <div className="lg:col-span-5 flex flex-col items-center justify-center space-y-4">
+                <VideoPreviewPlayer
+                  ref={playerRef}
+                  videoUrl={videoUrl}
+                  words={words}
+                  subtitleStyle={subtitleStyle}
+                  visualSettings={visualSettings}
+                  audioSettings={audioSettings}
+                  isProUser={false}
+                  clipStartTime={activeClip?.start || 0}
+                />
+              </div>
+
+              {/* COLUMN 3: Properties & Active Tool Panel (5 cols) */}
+              <div className="lg:col-span-5 space-y-4">
+                {activeTool === 'moments' && (
+                  <IntelligenceTab
+                    clips={clips}
+                    activeClipId={activeClipId}
+                    onSelectClip={handleSelectClip}
+                    onJumpToTime={handleJumpToTime}
+                    words={words}
+                    onApplyCuts={(cuts) => setActiveCuts(cuts)}
+                  />
+                )}
+
+                {activeTool === 'captions' && (
+                  <TypographyTab
+                    currentStyle={subtitleStyle}
+                    onChange={(st) => setSubtitleStyle(st)}
+                  />
+                )}
+
+                {activeTool === 'reframe' && (
+                  <VisualLayoutTab
+                    settings={visualSettings}
+                    onChange={(vs) => setVisualSettings(vs)}
+                    bRollKeywords={activeClip?.bRollKeywords || ['business', 'creator', 'podcast']}
+                  />
+                )}
+
+                {activeTool === 'broll' && (
+                  <VisualLayoutTab
+                    settings={visualSettings}
+                    onChange={(vs) => setVisualSettings(vs)}
+                    bRollKeywords={activeClip?.bRollKeywords || ['business', 'growth', 'marketing', 'tech']}
+                  />
+                )}
+
+                {activeTool === 'audio' && (
+                  <AudioStudioTab
+                    settings={audioSettings}
+                    onChange={(as) => setAudioSettings(as)}
+                  />
+                )}
+
+                {activeTool === 'publish' && (
+                  <SocialPublishTab
+                    settings={socialSettings}
+                    onChange={(ss) => setSocialSettings(ss)}
+                    onJumpToTime={handleJumpToTime}
+                  />
+                )}
+              </div>
+
+            </div>
+
+            {/* BOTTOM SECTION: Full Width AI-First Timeline (Section 15) */}
+            <div className="pt-2">
+              <CreatorTimeline
+                clip={activeClip}
+                currentTime={currentTime}
+                onSeek={handleJumpToTime}
+                cuts={activeCuts}
+                words={words}
+              />
+            </div>
+
+          </div>
+        )}
+
+      </main>
+
+      {/* Export Modal with Real FFmpeg Render Pipeline */}
       <ExportModal
         isOpen={isExportOpen}
         onClose={() => setIsExportOpen(false)}
         activeClip={activeClip}
-        sourceUrl={videoUrl || ''}
+        videoUrl={videoUrl}
         subtitleStyle={subtitleStyle}
         visualSettings={visualSettings}
-        isProUser={isProUser}
+        isProUser={false}
       />
-    </div>
+
+      {/* Creation Modal */}
+      <CreateProjectModal
+        isOpen={isCreateModalOpen}
+        onClose={() => setIsCreateModalOpen(false)}
+        onProjectCreated={(newProject) => {
+          if (newProject.sourceUrl) setVideoUrl(newProject.sourceUrl);
+          if (newProject.videoTitle) setProjectName(newProject.videoTitle);
+          if (newProject.clips) {
+            setClips(newProject.clips);
+            setActiveClipId(newProject.clips[0]?.id || null);
+          }
+        }}
+      />
+
+    </AppShell>
   );
 }

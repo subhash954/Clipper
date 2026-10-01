@@ -22,92 +22,93 @@ export const TypographyTab: React.FC<TypographyTabProps> = ({ currentStyle, onCh
   };
 
   const colorSwatches = [
+    { name: 'Clipper Cyan', hex: '#06B6D4' },
+    { name: 'Aqua Focus', hex: '#22D3EE' },
     { name: 'Electric Gold', hex: '#FACC15' },
     { name: 'Emerald Pulse', hex: '#22C55E' },
-    { name: 'Cyan Highlight', hex: '#38BDF8' },
-    { name: 'Clipper Crimson', hex: '#E11D48' },
     { name: 'Bold Amber', hex: '#F97316' },
     { name: 'Clean White', hex: '#FFFFFF' }
   ];
 
+  // Section 16: Clipper Presets (Signal, Punch, Minimal, Focus, Studio, Kinetic, Mono, Highlight)
   const presetsConfig: Array<{
     id: SubtitlePreset;
     title: string;
     tag: string;
     description: string;
-    borderColor: string;
-    activeBg: string;
+    accentColor: string;
   }> = [
     {
-      id: 'impact',
-      title: 'Impact',
-      tag: 'Dynamic Pop',
-      description: 'Bold Impact • Gold Pop • Heavy Outline',
-      borderColor: 'border-amber-400',
-      activeBg: 'bg-amber-50/70',
+      id: 'signal',
+      title: 'Signal',
+      tag: 'Clipper Signature',
+      description: 'Inter • Electric Cyan Pop • Punchy Karaoke',
+      accentColor: 'border-cyan-500 text-cyan-400 bg-cyan-950/40',
     },
     {
-      id: 'pulse',
-      title: 'Pulse',
+      id: 'punch',
+      title: 'Punch',
       tag: 'High Energy',
-      description: 'System Sans • Emerald Pulse • Bounce',
-      borderColor: 'border-emerald-500',
-      activeBg: 'bg-emerald-50/70',
-    },
-    {
-      id: 'clean',
-      title: 'Clean',
-      tag: 'Modern',
-      description: 'Inter Font • Cyan Karaoke • Readable',
-      borderColor: 'border-sky-500',
-      activeBg: 'bg-sky-50/70',
-    },
-    {
-      id: 'studio',
-      title: 'Studio',
-      tag: 'Creator-First',
-      description: 'Montserrat • Crimson Accents • Crisp',
-      borderColor: 'border-red-500',
-      activeBg: 'bg-red-50/70',
-    },
-    {
-      id: 'bold',
-      title: 'Bold',
-      tag: 'Punchy',
-      description: 'Trebuchet MS • Amber Fire • Fast Pacing',
-      borderColor: 'border-orange-500',
-      activeBg: 'bg-orange-50/70',
+      description: 'Impact Font • Gold Pop • Heavy Outline',
+      accentColor: 'border-amber-500 text-amber-400 bg-amber-950/40',
     },
     {
       id: 'minimal',
       title: 'Minimal',
       tag: 'Understated',
-      description: 'Light Sans • Subtle Shadow • Cinematic',
-      borderColor: 'border-slate-400',
-      activeBg: 'bg-slate-100',
+      description: 'Light Sans • Subtle Shadow • Clean Modern',
+      accentColor: 'border-slate-500 text-slate-300 bg-slate-900',
     },
     {
-      id: 'neon',
-      title: 'Neon',
+      id: 'focus',
+      title: 'Focus',
+      tag: 'Clean Read',
+      description: 'Montserrat • Aqua Highlight • High Legibility',
+      accentColor: 'border-cyan-400 text-cyan-300 bg-cyan-950/30',
+    },
+    {
+      id: 'studio',
+      title: 'Studio',
+      tag: 'Creator Pro',
+      description: 'Montserrat • Rose Accents • Crisp Broadcast',
+      accentColor: 'border-rose-500 text-rose-400 bg-rose-950/40',
+    },
+    {
+      id: 'kinetic',
+      title: 'Kinetic',
+      tag: 'Fast Pace',
+      description: 'Trebuchet MS • Amber Fire • Rapid Sync',
+      accentColor: 'border-orange-500 text-orange-400 bg-orange-950/40',
+    },
+    {
+      id: 'mono',
+      title: 'Mono',
+      tag: 'Tech & Code',
+      description: 'Courier Monospace • Cyber Glow • Standout',
+      accentColor: 'border-teal-500 text-teal-300 bg-teal-950/40',
+    },
+    {
+      id: 'highlight',
+      title: 'Highlight',
       tag: 'Vibrant',
-      description: 'Rose & Cyan • Cyber Glow • Standout',
-      borderColor: 'border-pink-500',
-      activeBg: 'bg-pink-50/70',
+      description: 'System Sans • Emerald Glow • Karaoke Pop',
+      accentColor: 'border-emerald-500 text-emerald-400 bg-emerald-950/40',
     },
   ];
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-5 text-[#F8FAFC]">
+      
       {/* 1. Original Clipper Creator Presets */}
-      <div className="p-5 rounded-2xl bg-white border border-slate-200 shadow-2xs space-y-3">
-        <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
+      <div className="p-4 rounded-xl bg-[#111827] border border-[#283344] space-y-3">
+        <div className="flex items-center justify-between border-b border-[#1F2937] pb-2.5">
           <div className="flex items-center gap-2">
-            <Palette className="w-4 h-4 text-red-600" />
-            <h3 className="text-xs font-extrabold text-slate-900 uppercase tracking-wider">
-              Original Creator Caption Presets
+            <Palette className="w-4 h-4 text-cyan-400" />
+            <h3 className="text-xs font-bold text-white uppercase tracking-wider">
+              Signature Typography Presets
             </h3>
           </div>
-          <span className="text-[10px] text-red-600 font-extrabold bg-red-50 px-2 py-0.5 rounded-full border border-red-200">
+          <span className="text-[10px] text-cyan-400 font-bold bg-cyan-950 px-2 py-0.5 rounded-full border border-cyan-800/60">
             Live Preview
           </span>
         </div>
@@ -122,83 +123,36 @@ export const TypographyTab: React.FC<TypographyTabProps> = ({ currentStyle, onCh
                 onClick={() => handlePresetSelect(p.id)}
                 className={`p-3 rounded-xl border text-left transition-all cursor-pointer ${
                   isSelected
-                    ? `${p.borderColor} ${p.activeBg} shadow-sm ring-1 ${p.borderColor}`
-                    : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50'
+                    ? `${p.accentColor} shadow-cyan-sm ring-1 ring-cyan-400`
+                    : 'border-[#283344] bg-[#0E1524] hover:border-slate-600 hover:bg-[#161F30]'
                 }`}
               >
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-slate-900">{p.title}</span>
-                  <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-white text-slate-700 font-extrabold border border-slate-200">
+                  <span className="text-xs font-bold text-white">{p.title}</span>
+                  <span className="text-[9px] px-1.5 py-0.5 rounded-md bg-slate-800 text-slate-300 font-medium border border-slate-700">
                     {p.tag}
                   </span>
                 </div>
-                <p className="text-[10px] text-slate-500 mt-1">{p.description}</p>
+                <p className="text-[10px] text-slate-400 mt-1">{p.description}</p>
               </button>
             );
           })}
         </div>
       </div>
 
-      {/* Feature 10 & 11: Multi-Language & Dual-Language Subtitles */}
-      <div className="p-5 rounded-2xl bg-white border border-slate-200 shadow-2xs space-y-3">
-        <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
-          <div className="flex items-center gap-2">
-            <Globe className="w-4 h-4 text-red-600" />
-            <h3 className="text-xs font-extrabold text-slate-900 uppercase tracking-wider">
-              Caption Language
-            </h3>
-          </div>
-          <span className="text-[10px] px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-700 font-bold border border-slate-200">
-            Global Reach
-          </span>
-        </div>
-
-        {/* Language Selection */}
-        <div className="grid grid-cols-5 gap-1.5">
-          {(['en', 'hi', 'es', 'fr', 'de'] as SubtitleLanguage[]).map((lang) => (
-            <button
-              key={lang}
-              type="button"
-              onClick={() => handleUpdate({ language: lang })}
-              className={`py-2 text-xs font-bold rounded-xl uppercase border transition-colors cursor-pointer ${
-                currentStyle.language === lang
-                  ? 'border-red-500 bg-red-50 text-red-700 shadow-2xs'
-                  : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
-              }`}
-            >
-              {lang}
-            </button>
-          ))}
-        </div>
-
-        {/* Dual Language Toggle */}
-        <div className="pt-2 flex items-center justify-between border-t border-slate-100">
-          <div>
-            <p className="text-xs font-bold text-slate-800">Dual-Language Subtitles</p>
-            <p className="text-[10px] text-slate-500">Show primary + translated captions simultaneously</p>
-          </div>
-          <input
-            type="checkbox"
-            checked={currentStyle.showDualLanguage}
-            onChange={(e) => handleUpdate({ showDualLanguage: e.target.checked })}
-            className="w-4 h-4 accent-red-600 cursor-pointer"
-          />
-        </div>
-      </div>
-
       {/* 2. Color & Highlights */}
-      <div className="p-5 rounded-2xl bg-white border border-slate-200 shadow-2xs space-y-3">
-        <div className="flex items-center gap-2 border-b border-slate-100 pb-2.5">
-          <Type className="w-4 h-4 text-red-600" />
-          <h3 className="text-xs font-extrabold text-slate-900 uppercase tracking-wider">
+      <div className="p-4 rounded-xl bg-[#111827] border border-[#283344] space-y-3">
+        <div className="flex items-center gap-2 border-b border-[#1F2937] pb-2.5">
+          <Type className="w-4 h-4 text-cyan-400" />
+          <h3 className="text-xs font-bold text-white uppercase tracking-wider">
             Color &amp; Word Highlights
           </h3>
         </div>
 
         <div className="space-y-3">
           <div>
-            <label className="text-[11px] font-bold text-slate-600 block mb-1.5">
-              Highlight Word Accent Color
+            <label className="text-[11px] font-bold text-slate-400 block mb-1.5">
+              Active Highlight Pop Color
             </label>
             <div className="flex items-center gap-2">
               {colorSwatches.map((color) => (
@@ -206,145 +160,138 @@ export const TypographyTab: React.FC<TypographyTabProps> = ({ currentStyle, onCh
                   key={color.hex}
                   type="button"
                   onClick={() => handleUpdate({ highlightColor: color.hex })}
+                  style={{ backgroundColor: color.hex }}
                   className={`w-7 h-7 rounded-full border-2 transition-transform cursor-pointer ${
                     currentStyle.highlightColor.toLowerCase() === color.hex.toLowerCase()
-                      ? 'border-slate-900 scale-110 shadow-sm'
-                      : 'border-slate-300 hover:scale-105'
+                      ? 'border-white scale-110 shadow-md ring-2 ring-cyan-400'
+                      : 'border-transparent hover:scale-105'
                   }`}
-                  style={{ backgroundColor: color.hex }}
                   title={color.name}
                 />
               ))}
-              <input
-                type="color"
-                value={currentStyle.highlightColor}
-                onChange={(e) => handleUpdate({ highlightColor: e.target.value })}
-                className="w-7 h-7 rounded-full overflow-hidden border border-slate-300 p-0 cursor-pointer"
-              />
             </div>
           </div>
 
-          <div>
-            <label className="text-[11px] font-bold text-slate-600 block mb-1.5">
-              Primary Caption Text Color
+          {/* Font Size & Position Slider */}
+          <div className="grid grid-cols-2 gap-3 pt-2">
+            <div>
+              <label className="text-[11px] font-bold text-slate-400 block mb-1">
+                Font Size: <span className="font-mono text-cyan-400">{currentStyle.fontSize}px</span>
+              </label>
+              <input
+                type="range"
+                min="28"
+                max="68"
+                value={currentStyle.fontSize}
+                onChange={(e) => handleUpdate({ fontSize: Number(e.target.value) })}
+                className="w-full accent-cyan-400 cursor-pointer"
+              />
+            </div>
+
+            <div>
+              <label className="text-[11px] font-bold text-slate-400 block mb-1">
+                Vertical Placement
+              </label>
+              <div className="flex rounded-lg bg-[#0E1524] border border-[#283344] p-0.5">
+                {(['bottom', 'middle', 'top'] as const).map((pos) => (
+                  <button
+                    key={pos}
+                    type="button"
+                    onClick={() => handleUpdate({ position: pos })}
+                    className={`flex-1 py-1 text-[10px] font-bold rounded capitalize transition-colors ${
+                      currentStyle.position === pos
+                        ? 'bg-cyan-500 text-slate-950 font-bold'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    {pos}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* Toggles */}
+          <div className="pt-2 border-t border-[#1F2937] space-y-2">
+            <label className="flex items-center justify-between text-xs text-slate-300 cursor-pointer">
+              <span>All Caps (High-Retention Format)</span>
+              <input
+                type="checkbox"
+                checked={currentStyle.uppercase}
+                onChange={(e) => handleUpdate({ uppercase: e.target.checked })}
+                className="w-4 h-4 accent-cyan-400"
+              />
             </label>
-            <div className="flex items-center gap-2">
+
+            <label className="flex items-center justify-between text-xs text-slate-300 cursor-pointer">
+              <span>Auto-Insert Emphasized Emojis 🚀🔥</span>
               <input
-                type="color"
-                value={currentStyle.primaryColor}
-                onChange={(e) => handleUpdate({ primaryColor: e.target.value })}
-                className="w-7 h-7 rounded-full overflow-hidden border border-slate-300 p-0 cursor-pointer"
+                type="checkbox"
+                checked={currentStyle.showEmojis}
+                onChange={(e) => handleUpdate({ showEmojis: e.target.checked })}
+                className="w-4 h-4 accent-cyan-400"
               />
-              <span className="text-xs font-mono text-slate-700 font-bold">{currentStyle.primaryColor}</span>
-            </div>
+            </label>
+
+            <label className="flex items-center justify-between text-xs text-slate-300 cursor-pointer">
+              <span>Pop Transition Audio Cues (SFX)</span>
+              <input
+                type="checkbox"
+                checked={currentStyle.enableSFX}
+                onChange={(e) => handleUpdate({ enableSFX: e.target.checked })}
+                className="w-4 h-4 accent-cyan-400"
+              />
+            </label>
           </div>
+
         </div>
       </div>
 
-      {/* 3. Typography Adjustments */}
-      <div className="p-5 rounded-2xl bg-white border border-slate-200 shadow-2xs space-y-4">
-        <div className="flex items-center gap-2 border-b border-slate-100 pb-2.5">
-          <AlignVerticalJustifyCenter className="w-4 h-4 text-red-600" />
-          <h3 className="text-xs font-extrabold text-slate-900 uppercase tracking-wider">
-            Layout &amp; Placement
-          </h3>
+      {/* 3. Global Reach & Languages */}
+      <div className="p-4 rounded-xl bg-[#111827] border border-[#283344] space-y-3">
+        <div className="flex items-center justify-between border-b border-[#1F2937] pb-2.5">
+          <div className="flex items-center gap-2">
+            <Globe className="w-4 h-4 text-cyan-400" />
+            <h3 className="text-xs font-bold text-white uppercase tracking-wider">
+              Caption Language
+            </h3>
+          </div>
+          <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 font-medium border border-slate-700">
+            Multi-Language
+          </span>
         </div>
 
-        {/* Font Size Slider */}
-        <div className="space-y-1">
-          <div className="flex justify-between text-xs">
-            <span className="text-slate-600 font-medium">Font Size</span>
-            <span className="text-slate-900 font-bold font-mono">{currentStyle.fontSize}px</span>
+        <div className="grid grid-cols-5 gap-1.5">
+          {(['en', 'hi', 'es', 'fr', 'de'] as SubtitleLanguage[]).map((lang) => (
+            <button
+              key={lang}
+              type="button"
+              onClick={() => handleUpdate({ language: lang })}
+              className={`py-1.5 text-xs font-bold rounded-lg uppercase border transition-colors cursor-pointer ${
+                currentStyle.language === lang
+                  ? 'border-cyan-500 bg-cyan-950 text-cyan-300 shadow-cyan-sm'
+                  : 'border-[#283344] bg-[#0E1524] text-slate-400 hover:text-white hover:border-slate-600'
+              }`}
+            >
+              {lang}
+            </button>
+          ))}
+        </div>
+
+        <div className="pt-2 flex items-center justify-between border-t border-[#1F2937]">
+          <div>
+            <p className="text-xs font-bold text-slate-200">Dual-Language Subtitles</p>
+            <p className="text-[10px] text-slate-400">Show primary speech + translated captions simultaneously</p>
           </div>
           <input
-            type="range"
-            min={28}
-            max={72}
-            value={currentStyle.fontSize}
-            onChange={(e) => handleUpdate({ fontSize: Number(e.target.value) })}
-            className="w-full accent-red-600 cursor-pointer"
+            type="checkbox"
+            checked={currentStyle.showDualLanguage}
+            onChange={(e) => handleUpdate({ showDualLanguage: e.target.checked })}
+            className="w-4 h-4 accent-cyan-400 cursor-pointer"
           />
-        </div>
-
-        {/* Stroke / Border Width */}
-        <div className="space-y-1">
-          <div className="flex justify-between text-xs">
-            <span className="text-slate-600 font-medium">Outline Stroke</span>
-            <span className="text-slate-900 font-bold font-mono">{currentStyle.strokeWidth}px</span>
-          </div>
-          <input
-            type="range"
-            min={0}
-            max={10}
-            value={currentStyle.strokeWidth}
-            onChange={(e) => handleUpdate({ strokeWidth: Number(e.target.value) })}
-            className="w-full accent-red-600 cursor-pointer"
-          />
-        </div>
-
-        {/* Position on Screen */}
-        <div className="space-y-1.5">
-          <span className="text-[11px] font-bold text-slate-600 block">Vertical Position</span>
-          <div className="grid grid-cols-3 gap-2">
-            {(['top', 'middle', 'bottom'] as const).map((pos) => (
-              <button
-                key={pos}
-                type="button"
-                onClick={() => handleUpdate({ position: pos })}
-                className={`py-2 text-xs font-bold rounded-xl capitalize border transition-colors cursor-pointer ${
-                  currentStyle.position === pos
-                    ? 'border-red-500 bg-red-50 text-red-700'
-                    : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
-                }`}
-              >
-                {pos}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* Animation & Visual Toggles */}
-        <div className="space-y-2.5 pt-2 border-t border-slate-100">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-1.5">
-              <Sparkles className="w-3.5 h-3.5 text-amber-500" />
-              <span className="text-xs font-bold text-slate-800">ALL CAPS</span>
-            </div>
-            <input
-              type="checkbox"
-              checked={currentStyle.uppercase}
-              onChange={(e) => handleUpdate({ uppercase: e.target.checked })}
-              className="w-4 h-4 accent-red-600 cursor-pointer"
-            />
-          </div>
-
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-1.5">
-              <Smile className="w-3.5 h-3.5 text-amber-500" />
-              <span className="text-xs font-bold text-slate-800">Automatic Emoji Accents</span>
-            </div>
-            <input
-              type="checkbox"
-              checked={currentStyle.showEmojis}
-              onChange={(e) => handleUpdate({ showEmojis: e.target.checked })}
-              className="w-4 h-4 accent-red-600 cursor-pointer"
-            />
-          </div>
-
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-1.5">
-              <Volume2 className="w-3.5 h-3.5 text-blue-500" />
-              <span className="text-xs font-bold text-slate-800">Subtle Sound Effects (SFX)</span>
-            </div>
-            <input
-              type="checkbox"
-              checked={currentStyle.enableSFX}
-              onChange={(e) => handleUpdate({ enableSFX: e.target.checked })}
-              className="w-4 h-4 accent-red-600 cursor-pointer"
-            />
-          </div>
         </div>
       </div>
+
     </div>
   );
 };

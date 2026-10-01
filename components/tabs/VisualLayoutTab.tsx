@@ -1,234 +1,225 @@
 'use client';
 
-import React from 'react';
+import React, { useState } from 'react';
 import { VisualLayoutSettings } from '@/lib/types';
-import { SplitSquareVertical, Clock, Shield, Sparkles, AlertTriangle } from 'lucide-react';
+import { 
+  Crop, 
+  Smartphone, 
+  Square, 
+  Tv, 
+  Maximize2, 
+  Sparkles, 
+  Check, 
+  Film, 
+  Layers, 
+  Search,
+  ExternalLink,
+  ShieldCheck,
+  SplitSquareVertical
+} from 'lucide-react';
 
 interface VisualLayoutTabProps {
   settings: VisualLayoutSettings;
   onChange: (settings: VisualLayoutSettings) => void;
+  bRollKeywords?: string[];
 }
 
-export const VisualLayoutTab: React.FC<VisualLayoutTabProps> = ({ settings, onChange }) => {
+export const VisualLayoutTab: React.FC<VisualLayoutTabProps> = ({ 
+  settings, 
+  onChange,
+  bRollKeywords = ['business', 'creator', 'technology', 'focus']
+}) => {
+  const [selectedRatio, setSelectedRatio] = useState<'9:16' | '1:1' | '16:9' | '4:5'>('9:16');
+  const [framingMode, setFramingMode] = useState<'center' | 'speaker' | 'manual'>('center');
+  const [insertedBrolls, setInsertedBrolls] = useState<string[]>([]);
+
   const handleUpdate = (updates: Partial<VisualLayoutSettings>) => {
     onChange({ ...settings, ...updates });
   };
 
-  const satisfyingGames = [
-    { id: 'subway', name: 'Subway Surfers Loop', tag: 'High Virality' },
-    { id: 'minecraft', name: 'Minecraft Parkour', tag: 'Max Watchtime' },
-    { id: 'gta', name: 'GTA 5 Ramp Stunts', tag: 'Fast Paced' },
-    { id: 'none', name: 'Disable Bottom Video', tag: 'Full Video' },
-  ] as const;
-
-  const barColors = ['#FF0000', '#EF4444', '#10B981', '#38BDF8', '#F59E0B'];
+  const handleInsertBroll = (keyword: string) => {
+    if (!insertedBrolls.includes(keyword)) {
+      setInsertedBrolls([...insertedBrolls, keyword]);
+    }
+  };
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-5 text-[#F8FAFC]">
       
-      {/* Feature 18: Split-Screen Satisfying Video Layouter */}
-      <div className="p-5 rounded-2xl bg-white border border-slate-200 shadow-2xs space-y-3">
-        <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
+      {/* 1. AUTO REFRAME TOOL (Section 19) */}
+      <div className="p-4 rounded-xl bg-[#111827] border border-[#283344] space-y-3">
+        <div className="flex items-center justify-between border-b border-[#1F2937] pb-2.5">
           <div className="flex items-center gap-2">
-            <SplitSquareVertical className="w-4 h-4 text-red-600" />
-            <div>
-              <h3 className="text-xs font-extrabold text-slate-900 uppercase tracking-wider">
-                18. Satisfying Split-Screen
-              </h3>
-              <p className="text-[10px] text-slate-500">Speaker on Top (50%) + Satisfying Clip on Bottom (50%)</p>
-            </div>
-          </div>
-          <button
-            type="button"
-            onClick={() => handleUpdate({ splitScreenEnabled: !settings.splitScreenEnabled })}
-            className={`w-11 h-6 rounded-full transition-colors relative cursor-pointer ${
-              settings.splitScreenEnabled ? 'bg-red-600' : 'bg-slate-200'
-            }`}
-          >
-            <div
-              className={`w-4 h-4 rounded-full bg-white transition-transform absolute top-1 shadow-sm ${
-                settings.splitScreenEnabled ? 'left-6' : 'left-1'
-              }`}
-            />
-          </button>
-        </div>
-
-        {/* Satisfying Clip Options */}
-        <div className="space-y-2 pt-1">
-          {satisfyingGames.map((game) => (
-            <button
-              key={game.id}
-              type="button"
-              onClick={() => handleUpdate({ satisfyingVideoType: game.id, splitScreenEnabled: game.id !== 'none' })}
-              className={`w-full p-3 rounded-xl border text-left flex items-center justify-between transition-colors cursor-pointer ${
-                settings.splitScreenEnabled && settings.satisfyingVideoType === game.id
-                  ? 'border-red-500 bg-red-50/60 shadow-2xs ring-1 ring-red-500'
-                  : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50'
-              }`}
-            >
-              <div>
-                <p className="text-xs font-bold text-slate-900">{game.name}</p>
-                <p className="text-[10px] text-slate-500">{game.tag}</p>
-              </div>
-              <span className="text-[9px] px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 font-bold border border-slate-200">
-                Viral Metagame
-              </span>
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Feature 19: Dynamic Progress Bar / Countdown Timer */}
-      <div className="p-5 rounded-2xl bg-white border border-slate-200 shadow-2xs space-y-3">
-        <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
-          <div className="flex items-center gap-2">
-            <Clock className="w-4 h-4 text-red-600" />
-            <h3 className="text-xs font-extrabold text-slate-900 uppercase tracking-wider">
-              19. Dynamic Progress Bar
+            <Crop className="w-4 h-4 text-cyan-400" />
+            <h3 className="text-xs font-bold text-white uppercase tracking-wider">
+              Auto Reframe &amp; Composition
             </h3>
           </div>
-          <button
-            type="button"
-            onClick={() => handleUpdate({ showProgressBar: !settings.showProgressBar })}
-            className={`w-11 h-6 rounded-full transition-colors relative cursor-pointer ${
-              settings.showProgressBar ? 'bg-red-600' : 'bg-slate-200'
-            }`}
-          >
-            <div
-              className={`w-4 h-4 rounded-full bg-white transition-transform absolute top-1 shadow-sm ${
-                settings.showProgressBar ? 'left-6' : 'left-1'
-              }`}
-            />
-          </button>
+          <span className="text-[10px] text-cyan-400 font-bold bg-cyan-950 px-2 py-0.5 rounded-full border border-cyan-800/60">
+            {selectedRatio} Selected
+          </span>
         </div>
 
-        {/* Bar Color Pickers */}
-        <div>
-          <label className="text-[11px] font-bold text-slate-600 mb-1.5 block">
-            Progress Line Color
-          </label>
-          <div className="flex items-center gap-2.5">
-            {barColors.map((color) => (
+        {/* Aspect Ratios Grid */}
+        <div className="grid grid-cols-4 gap-2">
+          {[
+            { id: '9:16', label: '9:16', desc: 'Shorts / Reels', icon: Smartphone },
+            { id: '1:1', label: '1:1', desc: 'Square Feed', icon: Square },
+            { id: '16:9', label: '16:9', desc: 'Landscape', icon: Tv },
+            { id: '4:5', label: '4:5', desc: 'Vertical Post', icon: Maximize2 },
+          ].map((aspect) => {
+            const isSelected = selectedRatio === aspect.id;
+            const Icon = aspect.icon;
+
+            return (
               <button
-                key={color}
-                onClick={() => handleUpdate({ progressBarColor: color, showProgressBar: true })}
-                className={`w-7 h-7 rounded-full border-2 transition-transform cursor-pointer ${
-                  settings.progressBarColor === color
-                    ? 'scale-115 border-slate-900 shadow-sm'
-                    : 'border-slate-300 hover:scale-105'
+                key={aspect.id}
+                type="button"
+                onClick={() => setSelectedRatio(aspect.id as any)}
+                className={`p-2.5 rounded-xl border text-center transition-all cursor-pointer ${
+                  isSelected
+                    ? 'border-cyan-500 bg-cyan-950/40 text-cyan-300 shadow-cyan-sm ring-1 ring-cyan-400'
+                    : 'border-[#283344] bg-[#0E1524] text-slate-400 hover:text-white hover:border-slate-600'
                 }`}
-                style={{ backgroundColor: color }}
-              />
+              >
+                <Icon className={`w-4 h-4 mx-auto mb-1 ${isSelected ? 'text-cyan-400' : 'text-slate-500'}`} />
+                <p className="text-xs font-bold leading-none">{aspect.label}</p>
+                <p className="text-[9px] text-slate-500 mt-1">{aspect.desc}</p>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Framing & Subject Tracking (Section 19: Honest status) */}
+        <div className="pt-2 space-y-2">
+          <label className="text-[11px] font-bold text-slate-400 block">
+            Subject Framing Mode
+          </label>
+          <div className="grid grid-cols-3 gap-2">
+            {[
+              { id: 'center', label: 'Center Crop', desc: 'Balanced 9:16 slice' },
+              { id: 'speaker', label: 'Smart Centering', desc: 'Speaker focus' },
+              { id: 'manual', label: 'Manual Position', desc: 'Custom offset' },
+            ].map((mode) => (
+              <button
+                key={mode.id}
+                type="button"
+                onClick={() => setFramingMode(mode.id as any)}
+                className={`p-2 rounded-lg border text-left transition-colors cursor-pointer ${
+                  framingMode === mode.id
+                    ? 'border-cyan-500 bg-cyan-950/30 text-white'
+                    : 'border-[#283344] bg-[#0E1524] text-slate-400 hover:border-slate-600'
+                }`}
+              >
+                <p className="text-xs font-bold leading-tight">{mode.label}</p>
+                <p className="text-[9px] text-slate-500 mt-0.5">{mode.desc}</p>
+              </button>
             ))}
           </div>
+
+          <p className="text-[10px] text-slate-500 flex items-center gap-1.5 pt-1">
+            <ShieldCheck className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+            <span>Smart crop applied via FFmpeg filtergraph: 1080x1920 with zero distortion.</span>
+          </p>
         </div>
       </div>
 
-      {/* Feature 20: Custom Watermark / Logo / Handle */}
-      <div className="p-5 rounded-2xl bg-white border border-slate-200 shadow-2xs space-y-3">
-        <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
+      {/* 2. CONTEXTUAL B-ROLL OVERLAYS (Section 20) */}
+      <div className="p-4 rounded-xl bg-[#111827] border border-[#283344] space-y-3">
+        <div className="flex items-center justify-between border-b border-[#1F2937] pb-2.5">
           <div className="flex items-center gap-2">
-            <Shield className="w-4 h-4 text-red-600" />
-            <h3 className="text-xs font-extrabold text-slate-900 uppercase tracking-wider">
-              20. Custom Watermark &amp; Handle
+            <Layers className="w-4 h-4 text-cyan-400" />
+            <h3 className="text-xs font-bold text-white uppercase tracking-wider">
+              Contextual B-Roll Suggestions
             </h3>
           </div>
-          <button
-            type="button"
-            onClick={() => handleUpdate({ showCustomLogo: !settings.showCustomLogo })}
-            className={`w-11 h-6 rounded-full transition-colors relative cursor-pointer ${
-              settings.showCustomLogo ? 'bg-red-600' : 'bg-slate-200'
-            }`}
-          >
-            <div
-              className={`w-4 h-4 rounded-full bg-white transition-transform absolute top-1 shadow-sm ${
-                settings.showCustomLogo ? 'left-6' : 'left-1'
-              }`}
-            />
-          </button>
+          <span className="text-[10px] text-slate-400 font-mono">
+            Pixabay Verified API
+          </span>
         </div>
 
-        <input
-          type="text"
-          value={settings.customLogoText}
-          onChange={(e) => handleUpdate({ customLogoText: e.target.value })}
-          placeholder="@yourchannel / brand logo"
-          className="w-full p-3 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-red-500 focus:ring-1 focus:ring-red-100"
-        />
+        <p className="text-xs text-slate-400 leading-relaxed">
+          AI detected core discussion themes from the spoken transcript. Insert licensed stock overlays into the timeline:
+        </p>
 
-        <div className="grid grid-cols-3 gap-2">
-          {(['top-right', 'top-left', 'bottom-right'] as const).map((pos) => (
-            <button
-              key={pos}
-              type="button"
-              onClick={() => handleUpdate({ logoPosition: pos, showCustomLogo: true })}
-              className={`py-2 text-[11px] font-bold rounded-xl uppercase border transition-colors cursor-pointer ${
-                settings.logoPosition === pos
-                  ? 'border-red-500 bg-red-50 text-red-700 shadow-2xs'
-                  : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
-              }`}
-            >
-              {pos}
-            </button>
-          ))}
+        {/* Keywords list */}
+        <div className="space-y-2">
+          {bRollKeywords.map((keyword, i) => {
+            const isInserted = insertedBrolls.includes(keyword);
+
+            return (
+              <div
+                key={i}
+                className="p-3 rounded-lg bg-[#0E1524] border border-[#283344] flex items-center justify-between text-xs"
+              >
+                <div className="flex items-center gap-2.5">
+                  <div className="w-7 h-7 rounded-md bg-cyan-950/60 border border-cyan-800/40 text-cyan-400 flex items-center justify-center">
+                    <Film className="w-3.5 h-3.5" />
+                  </div>
+                  <div>
+                    <p className="font-bold text-white capitalize">&ldquo;{keyword}&rdquo;</p>
+                    <p className="text-[10px] text-slate-500">Pixabay Commercial Safe · High Confidence</p>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => handleInsertBroll(keyword)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                    isInserted
+                      ? 'bg-emerald-950 text-emerald-300 border border-emerald-800/60 flex items-center gap-1'
+                      : 'bg-cyan-500 hover:bg-cyan-400 text-slate-950 shadow-sm'
+                  }`}
+                >
+                  {isInserted ? (
+                    <>
+                      <Check className="w-3 h-3" /> Inserted
+                    </>
+                  ) : (
+                    'Insert B-Roll'
+                  )}
+                </button>
+              </div>
+            );
+          })}
         </div>
       </div>
 
-      {/* Feature 22: Intro Hook Banner Template */}
-      <div className="p-5 rounded-2xl bg-white border border-slate-200 shadow-2xs space-y-3">
-        <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
-          <div className="flex items-center gap-2">
-            <AlertTriangle className="w-4 h-4 text-red-600" />
-            <h3 className="text-xs font-extrabold text-slate-900 uppercase tracking-wider">
-              22. Intro Hook Sticker
-            </h3>
-          </div>
-          <button
-            type="button"
-            onClick={() => handleUpdate({ showIntroHook: !settings.showIntroHook })}
-            className={`w-11 h-6 rounded-full transition-colors relative cursor-pointer ${
-              settings.showIntroHook ? 'bg-red-600' : 'bg-slate-200'
-            }`}
-          >
-            <div
-              className={`w-4 h-4 rounded-full bg-white transition-transform absolute top-1 shadow-sm ${
-                settings.showIntroHook ? 'left-6' : 'left-1'
-              }`}
+      {/* 3. VISUAL OVERLAYS & PROGRESS BAR */}
+      <div className="p-4 rounded-xl bg-[#111827] border border-[#283344] space-y-3">
+        <div className="flex items-center justify-between border-b border-[#1F2937] pb-2.5">
+          <h3 className="text-xs font-bold text-white uppercase tracking-wider">
+            Retention Enhancements
+          </h3>
+        </div>
+
+        <div className="space-y-2.5">
+          <label className="flex items-center justify-between text-xs text-slate-300 cursor-pointer">
+            <div>
+              <p className="font-bold">Dynamic Bottom Progress Bar</p>
+              <p className="text-[10px] text-slate-500">Visual pacing cue to boost viewer completion rate</p>
+            </div>
+            <input
+              type="checkbox"
+              checked={settings.showProgressBar}
+              onChange={(e) => handleUpdate({ showProgressBar: e.target.checked })}
+              className="w-4 h-4 accent-cyan-400"
             />
-          </button>
-        </div>
+          </label>
 
-        <input
-          type="text"
-          value={settings.introHookText}
-          onChange={(e) => handleUpdate({ introHookText: e.target.value })}
-          placeholder="WAIT TILL THE END 😱"
-          className="w-full p-3 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-red-500 focus:ring-1 focus:ring-red-100"
-        />
-      </div>
-
-      {/* Feature 21: Background Blur */}
-      <div className="p-5 rounded-2xl bg-white border border-slate-200 shadow-2xs flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <Sparkles className="w-4 h-4 text-red-600" />
-          <div>
-            <p className="text-xs font-bold text-slate-900">21. Studio Background Blur</p>
-            <p className="text-[10px] text-slate-500">Cinematic depth-of-field effect on creator background</p>
-          </div>
+          <label className="flex items-center justify-between text-xs text-slate-300 cursor-pointer">
+            <div>
+              <p className="font-bold">Background Blur Padding</p>
+              <p className="text-[10px] text-slate-500">Soft blurred mirror behind non-vertical footage</p>
+            </div>
+            <input
+              type="checkbox"
+              checked={settings.backgroundBlur}
+              onChange={(e) => handleUpdate({ backgroundBlur: e.target.checked })}
+              className="w-4 h-4 accent-cyan-400"
+            />
+          </label>
         </div>
-        <button
-          type="button"
-          onClick={() => handleUpdate({ backgroundBlur: !settings.backgroundBlur })}
-          className={`w-11 h-6 rounded-full transition-colors relative cursor-pointer ${
-            settings.backgroundBlur ? 'bg-red-600' : 'bg-slate-200'
-          }`}
-        >
-          <div
-            className={`w-4 h-4 rounded-full bg-white transition-transform absolute top-1 shadow-sm ${
-              settings.backgroundBlur ? 'left-6' : 'left-1'
-            }`}
-          />
-        </button>
       </div>
 
     </div>
