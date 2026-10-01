@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import Link from 'next/link';
 import { Sidebar } from '@/components/Sidebar';
 import { ApiKeyModal } from '@/components/ApiKeyModal';
@@ -47,6 +47,53 @@ export default function StudioPage() {
   
   // Active Navigation Tab for Left & Right Panels
   const [activeTab, setActiveTab] = useState<'intelligence' | 'typography' | 'audio' | 'layout' | 'social' | 'agency'>('intelligence');
+
+  // Load project from localStorage if coming from Dashboard YouTube Slicer
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const saved = localStorage.getItem('clipper_active_project');
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          if (parsed.videoTitle) {
+            setFileName(`${parsed.videoTitle.slice(0, 36)}.mp4`);
+          }
+          if (parsed.activeClip) {
+            if (parsed.activeClip.words && parsed.activeClip.words.length > 0) {
+              setWords(parsed.activeClip.words);
+            }
+            if (parsed.activeClip.title) {
+              setSocialSettings(prev => ({
+                ...prev,
+                viralTitle: parsed.activeClip.title,
+                viralDescription: parsed.activeClip.hookSummary || prev.viralDescription,
+              }));
+            }
+          }
+          if (parsed.clips && parsed.clips.length > 0) {
+            const mappedClips: ViralClip[] = parsed.clips.map((c: any, i: number) => ({
+              id: c.id || `clip-${i + 1}`,
+              title: c.title,
+              hookSummary: c.hookSummary || '',
+              start: c.start || 0,
+              end: c.end || 45,
+              viralScore: c.viralScore || 90,
+              tags: c.bRollKeywords || ['viral', 'business'],
+              hookStrength: Math.round((c.viralScore || 90) * 0.95),
+              retentionEstimate: c.viralScore || 92,
+              energyLevel: 'High' as const,
+            }));
+            setClips(mappedClips);
+            if (parsed.activeClip?.id) {
+              setActiveClipId(parsed.activeClip.id);
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('Error reading saved project:', err);
+      }
+    }
+  }, []);
 
   // Category 2: Typography & Subtitle settings
   const [subtitleStyle, setSubtitleStyle] = useState<SubtitleStyle>(PRESET_STYLES.hormozi);
