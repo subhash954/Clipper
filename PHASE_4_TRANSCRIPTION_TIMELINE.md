@@ -166,6 +166,44 @@ All test suites across every phase pass with 0 failures:
 - **Phase 1 Hardening (`tests/phase1_hardening.test.ts`):** 46 / 46 PASSED
 - **Phase 2 Media Storage (`tests/phase2_media_storage.test.ts`):** 45 / 45 PASSED
 - **Phase 3 Project & Database (`tests/phase3_project_database.test.ts`):** 78 / 78 PASSED
-- **Phase 4 Transcription & Timeline (`tests/phase4_transcription_timeline.test.ts`):** 37 / 37 PASSED
+- **Phase 4 Transcription & Timeline (`tests/phase4_transcription_timeline.test.ts`):** 60 / 60 PASSED
 - **Enterprise Architecture (`tests/enterprise.test.ts`):** 17 / 17 PASSED
-- **Next.js Production Build (`npm run build`):** Compiled successfully in 1649ms across all 58 routes with 0 errors.
+- **Next.js Production Build (`npm run build`):** Compiled successfully across all 58 routes with 0 errors.
+
+---
+
+### 8. Phase 4 Forensic Production Hardening
+
+A forensic security and truthfulness hardening pass was conducted and verified:
+
+1. **Production Authentication Hardening (Fail-Closed):**
+   In `lib/transcription/transcriptionService.ts`, missing `userId` identity in production fails closed with `401 AUTH_REQUIRED`. Default user fallback is strictly confined behind `ALLOW_DEV_LOCAL_STORAGE=true`.
+
+2. **Storage Authority Hardening:**
+   Local filesystem and public folder traversal are guarded behind dev-only checks. In production, media is fetched directly from Bunny `StorageService` via `getObject(storageKey)`.
+
+3. **Direct Audio Input Security & SSRF Defense:**
+   In `app/api/transcribe/route.ts`, remote `audioUrl` is validated against SSRF attacks (`validateSafeRemoteUrl`) blocking loopback (127.0.0.1), link-local/cloud metadata (169.254.169.254), and private RFC 1918 subnets. In production, `projectId` is mandatory.
+
+4. **Word & Segment Sequence Validation:**
+   `validateWordTimestamps` and `validateTranscriptSegments` enforce finite bounds, non-negative values, confidence ranges [0, 1], and chronological sequence progression (`word[i].start >= word[i-1].start`). Malformed provider timestamps are rejected with `502 TRANSCRIPTION_FAILED`.
+
+5. **Transcript ↔ Media Integrity:**
+   Cross-project media linkages (`mediaAsset.projectId !== projectId`) and deleted media (`deletedAt`) are rejected with `403 FORBIDDEN` and `410 MEDIA_UNAVAILABLE`.
+
+6. **Relational Consistency & Composite Constraints:**
+   - Composite unique constraint `uq_transcript_segments_id_transcript` on `transcript_segments(id, transcript_id)`.
+   - Composite foreign key constraint `fk_transcript_words_segment_transcript` on `transcript_words(segment_id, transcript_id) REFERENCES transcript_segments(id, transcript_id) ON DELETE CASCADE`.
+   - Application-level relational validation rejects words referencing foreign segments with `400 VALIDATION_ERROR`.
+
+7. **Row-Level Security (RLS) Hardening:**
+   Added `WITH CHECK` clauses to UPDATE policies for `transcripts`, `transcript_segments`, and `transcript_words` (`supabase/migrations/20261002_phase_4_rls_hardening.sql`).
+
+8. **Idempotency & Duplicate Prevention:**
+   Idempotency cache differentiates `targetMediaId`. Previous child records are cleaned up before upserting new segments/words to prevent accumulation of duplicate rows.
+
+9. **Cost Telemetry Truthfulness:**
+   Derived Deepgram dollar costs based on audio duration are recorded with `isEstimated: true`.
+
+10. **Phase 5 Status:**
+    Phase 5 was **NOT** started.

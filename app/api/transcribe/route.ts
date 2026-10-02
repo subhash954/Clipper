@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getTranscriptionService } from '@/lib/transcription/transcriptionService';
 import { transcribeWithDeepgram, DeepgramProviderError } from '@/lib/providers/deepgramProvider';
 import { getAuthenticatedUser } from '@/lib/auth/serverAuth';
+import { validateSafeRemoteUrl } from '@/lib/security/ssrfValidator';
 import { ClipperError } from '@/lib/errors';
 
 export async function POST(req: NextRequest) {
@@ -38,6 +39,33 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // SSRF Validation on remote audioUrl
+    if (audioUrl) {
+      const ssrfCheck = await validateSafeRemoteUrl(audioUrl);
+      if (!ssrfCheck.isValid) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: `Invalid or unsafe audio URL: ${ssrfCheck.error || 'Blocked by security policy.'}`,
+          },
+          { status: 400 }
+        );
+      }
+    }
+
+    // Production constraint: projectId is required for authoritative state tracking
+    const isDevLocalAllowed =
+      process.env.NODE_ENV !== 'production' || process.env.ALLOW_DEV_LOCAL_STORAGE === 'true';
+    if (!projectId && !isDevLocalAllowed) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'A valid projectId is required for transcription in production.',
+        },
+        { status: 400 }
+      );
+    }
+
     // 1. Canonical Project-Backed Transcription Flow
     if (projectId) {
       const transcriptionService = getTranscriptionService();
@@ -67,7 +95,7 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // 2. Direct Audio Input Flow (Audio URL or File Upload without project)
+    // 2. Direct Audio Input Flow (Audio URL or File Upload without project in dev)
     if (!audioUrl && !audioBuffer) {
       return NextResponse.json(
         { error: 'A projectId, audioUrl, or audio file upload is required for transcription.' },

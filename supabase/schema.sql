@@ -100,7 +100,8 @@ CREATE TABLE IF NOT EXISTS public.transcript_segments (
   speaker INTEGER,
   metadata JSONB DEFAULT '{}'::jsonb,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-  CONSTRAINT uq_transcript_segments_transcript_idx UNIQUE (transcript_id, segment_index)
+  CONSTRAINT uq_transcript_segments_transcript_idx UNIQUE (transcript_id, segment_index),
+  CONSTRAINT uq_transcript_segments_id_transcript UNIQUE (id, transcript_id)
 );
 
 -- 5b. Normalized Transcript Words
@@ -115,7 +116,8 @@ CREATE TABLE IF NOT EXISTS public.transcript_words (
   confidence NUMERIC(4, 2),
   speaker INTEGER,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-  CONSTRAINT uq_transcript_words_transcript_idx UNIQUE (transcript_id, word_index)
+  CONSTRAINT uq_transcript_words_transcript_idx UNIQUE (transcript_id, word_index),
+  CONSTRAINT fk_transcript_words_segment_transcript FOREIGN KEY (segment_id, transcript_id) REFERENCES public.transcript_segments(id, transcript_id) ON DELETE CASCADE
 );
 
 CREATE INDEX IF NOT EXISTS idx_transcripts_project_id ON public.transcripts(project_id);
@@ -342,6 +344,14 @@ CREATE POLICY "Users can update transcripts for their projects"
       AND (projects.user_id = auth.uid() OR public.is_admin())
       AND projects.deleted_at IS NULL
     )
+  )
+  WITH CHECK (
+    EXISTS (
+      SELECT 1 FROM public.projects
+      WHERE projects.id = transcripts.project_id
+      AND (projects.user_id = auth.uid() OR public.is_admin())
+      AND projects.deleted_at IS NULL
+    )
   );
 
 CREATE POLICY "Users can delete transcripts for their projects"
@@ -383,6 +393,15 @@ CREATE POLICY "Users can insert transcript segments for their projects"
 CREATE POLICY "Users can update transcript segments for their projects"
   ON public.transcript_segments FOR UPDATE
   USING (
+    EXISTS (
+      SELECT 1 FROM public.transcripts
+      JOIN public.projects ON projects.id = transcripts.project_id
+      WHERE transcripts.id = transcript_segments.transcript_id
+      AND (projects.user_id = auth.uid() OR public.is_admin())
+      AND projects.deleted_at IS NULL
+    )
+  )
+  WITH CHECK (
     EXISTS (
       SELECT 1 FROM public.transcripts
       JOIN public.projects ON projects.id = transcripts.project_id
@@ -432,6 +451,15 @@ CREATE POLICY "Users can insert transcript words for their projects"
 CREATE POLICY "Users can update transcript words for their projects"
   ON public.transcript_words FOR UPDATE
   USING (
+    EXISTS (
+      SELECT 1 FROM public.transcripts
+      JOIN public.projects ON projects.id = transcripts.project_id
+      WHERE transcripts.id = transcript_words.transcript_id
+      AND (projects.user_id = auth.uid() OR public.is_admin())
+      AND projects.deleted_at IS NULL
+    )
+  )
+  WITH CHECK (
     EXISTS (
       SELECT 1 FROM public.transcripts
       JOIN public.projects ON projects.id = transcripts.project_id

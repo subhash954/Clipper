@@ -32,10 +32,12 @@ import {
 import {
   getTranscriptionService,
   validateWordTimestamps,
+  validateTranscriptSegments,
   findActiveWordAtTime,
   findActiveSegmentAtTime,
   calculateDeepgramCost,
 } from '../lib/transcription/transcriptionService';
+import { validateSafeRemoteUrl } from '../lib/security/ssrfValidator';
 import { transcribeWithDeepgram, DeepgramProviderError } from '../lib/providers/deepgramProvider';
 import { extractAudioFromVideo } from '../lib/media/audioExtraction';
 import { getFfmpegPath } from '../lib/renderEngine';
@@ -456,6 +458,350 @@ async function runPhase4Tests() {
   // Test 27: Transcript word search capability
   const matchingWords = reloadedLarge?.words.filter((w) => w.word.includes('term_500')) || [];
   assert(matchingWords.length === 1 && matchingWords[0].word === 'term_500', 'Searches and locates specific word in 1,000-word transcript');
+
+  // --- TEST GROUP 9: Phase 4 Forensic Hardening Verification ---
+  console.log('\n--- TEST GROUP 9: Phase 4 Forensic Hardening Verification ---');
+
+  // Hardening Test 1: Missing authenticated user in production fails closed with 401
+  const savedNodeEnv = process.env.NODE_ENV;
+  const savedAllowDev = process.env.ALLOW_DEV_LOCAL_STORAGE;
+  try {
+    (process.env as any).NODE_ENV = 'production';
+    delete process.env.ALLOW_DEV_LOCAL_STORAGE;
+
+    let prodAuthErrorCaught = false;
+    try {
+      await transcriptionService.transcribeProjectMedia({
+        projectId: aliceProject.id,
+      });
+    } catch (err: any) {
+      prodAuthErrorCaught = err instanceof ClipperError && err.statusCode === 401 && err.code === 'AUTH_REQUIRED';
+    }
+    assert(prodAuthErrorCaught, 'Missing authenticated identity in production fails closed with 401 AUTH_REQUIRED');
+  } finally {
+    (process.env as any).NODE_ENV = savedNodeEnv;
+    process.env.ALLOW_DEV_LOCAL_STORAGE = savedAllowDev;
+  }
+
+  // Hardening Test 2: SSRF validation prevents loopback and cloud metadata attacks
+  const ssrfMetadata = await validateSafeRemoteUrl('http://169.254.169.254/latest/meta-data');
+  assert(!ssrfMetadata.isValid, 'SSRF: Cloud metadata IP (169.254.169.254) is blocked');
+
+  const ssrfLocalhost = await validateSafeRemoteUrl('http://127.0.0.1:8080/metrics');
+  assert(!ssrfLocalhost.isValid, 'SSRF: Loopback IP (127.0.0.1) is blocked');
+
+  const ssrfHostname = await validateSafeRemoteUrl('http://localhost:3000/api');
+  assert(!ssrfHostname.isValid, 'SSRF: Localhost hostname is blocked');
+
+  // Hardening Test 3: Word sequence validation rejects inverted/non-chronological timestamps
+  const invertedWords: WordTimestamp[] = [
+    { word: 'First', start: 1.0, end: 1.5, confidence: 0.99 },
+    { word: 'Second', start: 0.5, end: 0.9, confidence: 0.98 },
+  ];
+  const invertedValidation = validateWordTimestamps(invertedWords);
+  assert(!invertedValidation.valid, 'Word sequence validation detects and rejects non-chronological word sequence');
+
+  // Hardening Test 4: Word sequence validation rejects NaN and Infinity
+  const nanWords: WordTimestamp[] = [
+    { word: 'Bad', start: NaN, end: 1.0, confidence: 0.95 },
+  ];
+  const infWords: WordTimestamp[] = [
+    { word: 'BadInf', start: 0.0, end: Infinity, confidence: 0.95 },
+  ];
+  assert(!validateWordTimestamps(nanWords).valid, 'Word validation rejects NaN timestamps');
+  assert(!validateWordTimestamps(infWords).valid, 'Word validation rejects Infinity timestamps');
+
+  // Hardening Test 5: Segment sequence validation rejects inverted segments
+  const invertedSegments: TranscriptSegment[] = [
+    { id: ensureValidUuid(), transcriptId: ensureValidUuid(), segmentIndex: 0, start: 5.0, end: 8.0, text: 'First segment' },
+    { id: ensureValidUuid(), transcriptId: ensureValidUuid(), segmentIndex: 1, start: 3.0, end: 4.5, text: 'Second inverted segment' },
+  ];
+  const segValidation = validateTranscriptSegments(invertedSegments);
+  assert(!segValidation.valid, 'Segment sequence validation rejects non-chronological segments');
+
+  // Hardening Test 6: Cross-project media linkage rejection
+  const projectB: Project = {
+    id: ensureValidUuid(),
+    userId: aliceId,
+    title: 'Project B Independent',
+    sourceType: 'upload',
+    workflowType: 'youtube_to_shorts',
+    durationSeconds: 10,
+    status: 'ready',
+    clips: [],
+    createdAt: new Date().toISOString(),
+  };
+  await storage.saveProject(projectB);
+
+  const mediaBId = ensureValidUuid();
+  saveLocalMediaAsset({
+    id: mediaBId,
+    userId: aliceId,
+    projectId: projectB.id,
+    fileName: 'media_b.mp4',
+    fileUrl: '/uploads/media_b.mp4',
+    storagePath: '/tmp/media_b.mp4',
+    mimeType: 'video/mp4',
+    sizeBytes: 2048,
+    status: 'ready',
+    createdAt: new Date().toISOString(),
+  });
+
+  let crossProjectMediaCaught = false;
+  try {
+    await transcriptionService.transcribeProjectMedia({
+      projectId: aliceProject.id,
+      mediaId: mediaBId,
+      userId: aliceId,
+    });
+  } catch (err: any) {
+    crossProjectMediaCaught = err instanceof ClipperError && err.statusCode === 403;
+  }
+  assert(crossProjectMediaCaught, 'Cross-project media assignment throws 403 FORBIDDEN');
+
+  // Hardening Test 7: Deleted media rejection
+  const deletedMediaId = ensureValidUuid();
+  saveLocalMediaAsset({
+    id: deletedMediaId,
+    userId: aliceId,
+    projectId: aliceProject.id,
+    fileName: 'deleted_media.mp4',
+    fileUrl: '/uploads/deleted.mp4',
+    storagePath: '/tmp/deleted.mp4',
+    mimeType: 'video/mp4',
+    sizeBytes: 2048,
+    status: 'ready',
+    deletedAt: new Date().toISOString(),
+    createdAt: new Date().toISOString(),
+  });
+
+  let deletedMediaCaught = false;
+  try {
+    await transcriptionService.transcribeProjectMedia({
+      projectId: aliceProject.id,
+      mediaId: deletedMediaId,
+      userId: aliceId,
+    });
+  } catch (err: any) {
+    deletedMediaCaught = err instanceof ClipperError && err.statusCode === 410;
+  }
+  assert(deletedMediaCaught, 'Deleted media asset transcription throws 410 MEDIA_UNAVAILABLE');
+
+  // Hardening Test 8: Relational consistency enforcement in storage (Word -> foreign segment)
+  const relTranscriptId = ensureValidUuid();
+  const legitimateSegId = ensureValidUuid();
+  const foreignSegId = ensureValidUuid();
+
+  let relationalViolationCaught = false;
+  try {
+    await storage.saveTranscript({
+      id: relTranscriptId,
+      projectId: aliceProject.id,
+      text: 'Relational test word.',
+      source: 'deepgram',
+      words: [
+        {
+          id: ensureValidUuid(),
+          word: 'Relational',
+          start: 0.0,
+          end: 0.5,
+          segmentId: foreignSegId,
+        } as any,
+      ],
+      segments: [
+        {
+          id: legitimateSegId,
+          transcriptId: relTranscriptId,
+          segmentIndex: 0,
+          start: 0.0,
+          end: 1.0,
+          text: 'Legitimate segment',
+        },
+      ],
+      status: 'completed',
+    }, aliceProject.id);
+  } catch (err: any) {
+    relationalViolationCaught = err instanceof ClipperError && err.code === 'VALIDATION_ERROR';
+  }
+  assert(relationalViolationCaught, 'Storage rejects word referencing foreign segment (400 VALIDATION_ERROR)');
+
+  // Hardening Test 9: Idempotency distinguishes targetMediaId (Media A vs Media B)
+  const idempotencyProj: Project = {
+    id: ensureValidUuid(),
+    userId: aliceId,
+    title: 'Idempotency Media Test',
+    sourceType: 'upload',
+    workflowType: 'youtube_to_shorts',
+    durationSeconds: 15,
+    status: 'ready',
+    clips: [],
+    createdAt: new Date().toISOString(),
+  };
+  await storage.saveProject(idempotencyProj);
+
+  const media1Id = ensureValidUuid();
+  const media2Id = ensureValidUuid();
+
+  saveLocalMediaAsset({
+    id: media1Id,
+    userId: aliceId,
+    projectId: idempotencyProj.id,
+    fileName: 'media1.mp4',
+    fileUrl: '/uploads/media1.mp4',
+    storagePath: '/tmp/media1.mp4',
+    mimeType: 'video/mp4',
+    sizeBytes: 1024,
+    status: 'ready',
+    createdAt: new Date().toISOString(),
+  });
+
+  saveLocalMediaAsset({
+    id: media2Id,
+    userId: aliceId,
+    projectId: idempotencyProj.id,
+    fileName: 'media2.mp4',
+    fileUrl: '/uploads/media2.mp4',
+    storagePath: '/tmp/media2.mp4',
+    mimeType: 'video/mp4',
+    sizeBytes: 1024,
+    status: 'ready',
+    createdAt: new Date().toISOString(),
+  });
+
+  await storage.saveTranscript({
+    id: ensureValidUuid(),
+    projectId: idempotencyProj.id,
+    mediaAssetId: media1Id,
+    text: 'Media 1 words',
+    source: 'deepgram',
+    words: [{ word: 'Media', start: 0, end: 1 }, { word: 'One', start: 1, end: 2 }],
+    status: 'completed',
+    provider: 'deepgram',
+    model: 'nova-2',
+    timingPrecision: 'exact_word',
+  }, idempotencyProj.id);
+
+  const cachedForMedia1 = await transcriptionService.transcribeProjectMedia({
+    projectId: idempotencyProj.id,
+    mediaId: media1Id,
+    userId: aliceId,
+  });
+  assert(cachedForMedia1.isCached, 'Idempotency returns cached transcript for exact matching mediaAssetId');
+
+  let media2CacheBypass = false;
+  try {
+    const resMedia2 = await transcriptionService.transcribeProjectMedia({
+      projectId: idempotencyProj.id,
+      mediaId: media2Id,
+      userId: aliceId,
+    });
+    media2CacheBypass = !resMedia2.isCached;
+  } catch (err: any) {
+    media2CacheBypass = true;
+  }
+  assert(media2CacheBypass, 'Idempotency differentiates mediaAssetId (does not reuse Media 1 transcript for Media 2)');
+
+  // Hardening Test 10: Real End-to-End Transcription Path (Deepgram Boundary Mock)
+  const e2eProject: Project = {
+    id: ensureValidUuid(),
+    userId: aliceId,
+    title: 'End to End Pipeline Project',
+    sourceType: 'upload',
+    workflowType: 'youtube_to_shorts',
+    durationSeconds: 3.6,
+    status: 'ready',
+    clips: [],
+    createdAt: new Date().toISOString(),
+  };
+  await storage.saveProject(e2eProject);
+
+  const originalFetch = global.fetch;
+  const originalDgKey = process.env.DEEPGRAM_API_KEY;
+  try {
+    process.env.DEEPGRAM_API_KEY = 'mock_hardened_deepgram_key';
+
+    global.fetch = (async (input: any, init?: any) => {
+      const urlStr = typeof input === 'string' ? input : input?.url || '';
+      if (urlStr.includes('api.deepgram.com')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            results: {
+              channels: [
+                {
+                  alternatives: [
+                    {
+                      transcript: 'Clipper authentic transcription pipeline test.',
+                      confidence: 0.99,
+                      words: [
+                        { word: 'Clipper', start: 0.1, end: 0.6, confidence: 0.99, speaker: 0 },
+                        { word: 'authentic', start: 0.7, end: 1.2, confidence: 0.98, speaker: 0 },
+                        { word: 'transcription', start: 1.3, end: 2.1, confidence: 0.99, speaker: 0 },
+                        { word: 'pipeline', start: 2.2, end: 2.7, confidence: 0.97, speaker: 0 },
+                        { word: 'test.', start: 2.8, end: 3.3, confidence: 0.99, speaker: 0 },
+                      ],
+                    },
+                  ],
+                },
+              ],
+              utterances: [
+                {
+                  start: 0.1,
+                  end: 3.3,
+                  confidence: 0.99,
+                  transcript: 'Clipper authentic transcription pipeline test.',
+                  speaker: 0,
+                  words: [
+                    { word: 'Clipper', start: 0.1, end: 0.6, confidence: 0.99, speaker: 0 },
+                    { word: 'authentic', start: 0.7, end: 1.2, confidence: 0.98, speaker: 0 },
+                    { word: 'transcription', start: 1.3, end: 2.1, confidence: 0.99, speaker: 0 },
+                    { word: 'pipeline', start: 2.2, end: 2.7, confidence: 0.97, speaker: 0 },
+                    { word: 'test.', start: 2.8, end: 3.3, confidence: 0.99, speaker: 0 },
+                  ],
+                },
+              ],
+            },
+            metadata: {
+              duration: 3.3,
+              channels: 1,
+              models: ['nova-2'],
+            },
+          }),
+        } as any;
+      }
+      return originalFetch(input, init);
+    }) as any;
+
+    const e2eResult = await transcriptionService.transcribeProjectMedia({
+      projectId: e2eProject.id,
+      userId: aliceId,
+      audioBuffer: Buffer.from('mock_audio_bytes_for_transcription_pipeline'),
+    });
+
+    assert(e2eResult.success, 'End-to-end transcription pipeline returned success: true');
+    assert(!e2eResult.isCached, 'End-to-end transcription pipeline is not cached on first run');
+    assert(e2eResult.wordsCount === 5, `End-to-end parsed 5 word timestamps (got ${e2eResult.wordsCount})`);
+
+    const persistedProj = await storage.getProject(e2eProject.id);
+    assert(persistedProj?.status === 'transcript_ready', `Project state updated to transcript_ready (got ${persistedProj?.status})`);
+    assert(persistedProj?.transcript?.status === 'completed', 'Project transcript status is completed');
+    assert(persistedProj?.transcript?.words.length === 5, 'Project transcript has 5 words persisted');
+
+    // Verify segments and child words persisted in database
+    const persistedSegments = storage.listTranscriptSegments ? await storage.listTranscriptSegments(e2eResult.transcriptId) : [];
+    assert(persistedSegments.length === 1, `Persisted 1 segment (got ${persistedSegments.length})`);
+    assert(persistedSegments[0].speaker === 0, 'Persisted segment preserved speaker 0');
+
+    // Hardening Test 11: Cost telemetry recorded with isEstimated: true
+    const telemetryRecords = await storage.getCostTelemetry();
+    const dgRecord = telemetryRecords.find((r) => r.serviceName === 'deepgram_stt' && r.projectId === e2eProject.id);
+    assert(dgRecord !== undefined, 'Cost telemetry record exists for deepgram_stt');
+    assert(dgRecord?.isEstimated === true, 'Cost telemetry truthfulness: isEstimated is explicitly true');
+  } finally {
+    global.fetch = originalFetch;
+    process.env.DEEPGRAM_API_KEY = originalDgKey;
+  }
 
   console.log('\n====================================================');
   console.log(`PHASE 4 TEST SUMMARY: ${passed} PASSED, ${failed} FAILED`);

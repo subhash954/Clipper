@@ -41,7 +41,8 @@ export interface TranscribeProjectResult {
 }
 
 /**
- * Validates array of word timestamps to guarantee chronology and non-negative boundaries.
+ * Validates array of word timestamps to guarantee chronology, non-negative boundaries,
+ * finite numbers, and chronological sequence progression without inverted timestamps.
  */
 export function validateWordTimestamps(words: WordTimestamp[]): { valid: boolean; errors: string[] } {
   const errors: string[] = [];
@@ -54,14 +55,71 @@ export function validateWordTimestamps(words: WordTimestamp[]): { valid: boolean
     if (typeof w.word !== 'string' || w.word.trim() === '') {
       errors.push(`Word at index ${i} has empty or non-string word property`);
     }
-    if (typeof w.start !== 'number' || isNaN(w.start) || w.start < 0) {
+    if (typeof w.start !== 'number' || isNaN(w.start) || !isFinite(w.start) || w.start < 0) {
       errors.push(`Word "${w.word}" at index ${i} has invalid start time (${w.start})`);
     }
-    if (typeof w.end !== 'number' || isNaN(w.end) || w.end < w.start) {
+    if (typeof w.end !== 'number' || isNaN(w.end) || !isFinite(w.end) || w.end < w.start) {
       errors.push(`Word "${w.word}" at index ${i} has invalid end time (${w.end} < start ${w.start})`);
     }
-    if (w.confidence !== undefined && (w.confidence < 0 || w.confidence > 1)) {
+    if (w.confidence !== undefined && (typeof w.confidence !== 'number' || isNaN(w.confidence) || !isFinite(w.confidence) || w.confidence < 0 || w.confidence > 1)) {
       errors.push(`Word "${w.word}" at index ${i} has out-of-range confidence (${w.confidence})`);
+    }
+
+    // Sequence-level chronological validation with previous word
+    if (i > 0) {
+      const prev = words[i - 1];
+      if (typeof prev.start === 'number' && typeof w.start === 'number') {
+        if (w.start < prev.start) {
+          errors.push(
+            `Non-chronological word sequence: word "${w.word}" at index ${i} starts at ${w.start}s, before previous word "${prev.word}" at ${prev.start}s`
+          );
+        }
+        if (w.end < prev.start) {
+          errors.push(
+            `Impossible timing overlap: word "${w.word}" at index ${i} ends at ${w.end}s before previous word "${prev.word}" starts at ${prev.start}s`
+          );
+        }
+      }
+    }
+  }
+
+  return { valid: errors.length === 0, errors };
+}
+
+/**
+ * Validates array of transcript segments for non-negative bounds, finite values, and chronological order.
+ */
+export function validateTranscriptSegments(segments: TranscriptSegment[]): { valid: boolean; errors: string[] } {
+  const errors: string[] = [];
+  if (!Array.isArray(segments)) {
+    return { valid: false, errors: ['Segments must be an array'] };
+  }
+
+  for (let i = 0; i < segments.length; i++) {
+    const s = segments[i];
+    if (typeof s.text !== 'string' || s.text.trim() === '') {
+      errors.push(`Segment at index ${i} has empty or non-string text property`);
+    }
+    if (typeof s.start !== 'number' || isNaN(s.start) || !isFinite(s.start) || s.start < 0) {
+      errors.push(`Segment at index ${i} has invalid start time (${s.start})`);
+    }
+    if (typeof s.end !== 'number' || isNaN(s.end) || !isFinite(s.end) || s.end < s.start) {
+      errors.push(`Segment at index ${i} has invalid end time (${s.end} < start ${s.start})`);
+    }
+    if (s.confidence !== undefined && (typeof s.confidence !== 'number' || isNaN(s.confidence) || !isFinite(s.confidence) || s.confidence < 0 || s.confidence > 1)) {
+      errors.push(`Segment at index ${i} has out-of-range confidence (${s.confidence})`);
+    }
+
+    // Chronological progression
+    if (i > 0) {
+      const prev = segments[i - 1];
+      if (typeof prev.start === 'number' && typeof s.start === 'number') {
+        if (s.start < prev.start) {
+          errors.push(
+            `Non-chronological segment sequence: segment at index ${i} starts at ${s.start}s, before previous segment at ${prev.start}s`
+          );
+        }
+      }
     }
   }
 
@@ -95,8 +153,9 @@ export function findActiveSegmentAtTime(
 }
 
 /**
- * Calculates Deepgram Nova-2 dollar cost based on media duration.
+ * Calculates estimated Deepgram Nova-2 dollar cost based on media duration.
  * Nova-2 standard tier: $0.0043 per audio minute ($0.00007167 per second).
+ * NOTE: This is an estimated processing cost, not actual provider billing.
  */
 export function calculateDeepgramCost(durationSeconds: number): number {
   if (durationSeconds <= 0) return 0;
@@ -112,18 +171,34 @@ export class TranscriptionService {
     const { projectId, mediaId, userId, forceRerun = false } = params;
     const storage = getStorage();
 
-    // 1. Verify Project Existence and Ownership
+    const isDevLocalAllowed =
+      process.env.NODE_ENV !== 'production' || process.env.ALLOW_DEV_LOCAL_STORAGE === 'true';
+
+    // 1. Verify Authentication (Fail-closed in production)
+    let currentUserId: string;
+    if (userId) {
+      currentUserId = userId;
+    } else if (isDevLocalAllowed) {
+      currentUserId = DEV_DEFAULT_USER_ID;
+    } else {
+      throw new ClipperError(
+        'AUTH_REQUIRED',
+        'Authenticated user identity is required for transcription in production.',
+        401
+      );
+    }
+
+    // 2. Verify Project Existence and Ownership
     const project = await storage.getProject(projectId);
     if (!project || project.deletedAt) {
       throw new ClipperError('NOT_FOUND', `Project ${projectId} not found.`, 404);
     }
 
-    const currentUserId = userId || DEV_DEFAULT_USER_ID;
     if (project.userId && project.userId !== currentUserId) {
       throw new ClipperError('FORBIDDEN', `Access denied: you do not own project ${projectId}.`, 403);
     }
 
-    // 2. Resolve Active Media Asset
+    // 3. Resolve Active Media Asset & Verify Tenant & Project Integrity
     const targetMediaId = mediaId || project.activeMediaId;
     let mediaAsset: MediaAsset | null = null;
 
@@ -139,17 +214,46 @@ export class TranscriptionService {
           403
         );
       }
+      if (mediaAsset.projectId && mediaAsset.projectId !== projectId) {
+        throw new ClipperError(
+          'FORBIDDEN',
+          `Media asset ${targetMediaId} belongs to project ${mediaAsset.projectId}, not project ${projectId}.`,
+          403
+        );
+      }
+      if ((mediaAsset as any).deletedAt) {
+        throw new ClipperError(
+          'MEDIA_UNAVAILABLE',
+          `Media asset ${targetMediaId} has been deleted.`,
+          410
+        );
+      }
+      if (mediaAsset.status === 'failed') {
+        throw new ClipperError(
+          'MEDIA_UNAVAILABLE',
+          `Media asset ${targetMediaId} processing failed and cannot be transcribed.`,
+          422
+        );
+      }
     }
 
-    // 3. Idempotency Check: Return existing completed transcript if valid and rerun not forced
+    // 4. Idempotency Check: Cache key distinguishes project, targetMediaId, provider, and model
     if (!forceRerun) {
       const existingTranscript = await storage.getTranscript(projectId);
+      const isMediaMatch = targetMediaId
+        ? existingTranscript?.mediaAssetId === targetMediaId
+        : true;
+      const isProviderMatch =
+        (existingTranscript?.provider || 'deepgram') === 'deepgram' &&
+        (existingTranscript?.model || 'nova-2') === 'nova-2';
+
       if (
         existingTranscript &&
         existingTranscript.status === 'completed' &&
         existingTranscript.words &&
         existingTranscript.words.length > 0 &&
-        (!targetMediaId || !existingTranscript.mediaAssetId || existingTranscript.mediaAssetId === targetMediaId)
+        isMediaMatch &&
+        isProviderMatch
       ) {
         const dur = existingTranscript.duration || (existingTranscript.words[existingTranscript.words.length - 1]?.end ?? 0);
         return {
@@ -163,16 +267,15 @@ export class TranscriptionService {
       }
     }
 
-    // 4. Update Project Status to Transcribing
+    // 5. Update Project Status to Transcribing
     try {
       project.status = 'transcribing';
       await storage.saveProject(project);
     } catch (e) {
-      // Non-fatal if project update encounters optimistic concurrency
       console.warn('Status update to transcribing warning:', e);
     }
 
-    // 5. Resolve Audio for Transcription
+    // 6. Resolve Audio for Transcription (Storage Authority: Bunny in Production)
     let resolvedAudioBuffer = params.audioBuffer;
     let resolvedAudioUrl = params.audioUrl;
     let tempFilesToCleanup: string[] = [];
@@ -187,20 +290,21 @@ export class TranscriptionService {
           );
         }
 
-        // Try downloading/reading media asset
         let sourceVideoPath: string | null = null;
 
-        // Check local filesystem first
-        if (mediaAsset.storagePath && fs.existsSync(mediaAsset.storagePath)) {
-          sourceVideoPath = mediaAsset.storagePath;
-        } else if (mediaAsset.fileUrl && !mediaAsset.fileUrl.startsWith('http')) {
-          const localCandidate = path.join(process.cwd(), 'public', mediaAsset.fileUrl.replace(/^\//, ''));
-          if (fs.existsSync(localCandidate)) {
-            sourceVideoPath = localCandidate;
+        // In development/test mode only, inspect local file paths if explicitly permitted
+        if (isDevLocalAllowed) {
+          if (mediaAsset.storagePath && fs.existsSync(mediaAsset.storagePath)) {
+            sourceVideoPath = mediaAsset.storagePath;
+          } else if (mediaAsset.fileUrl && !mediaAsset.fileUrl.startsWith('http')) {
+            const localCandidate = path.join(process.cwd(), 'public', mediaAsset.fileUrl.replace(/^\//, ''));
+            if (fs.existsSync(localCandidate)) {
+              sourceVideoPath = localCandidate;
+            }
           }
         }
 
-        // If not found locally, fetch from StorageService (Bunny Storage)
+        // Authoritative storage resolution: Bunny StorageService
         if (!sourceVideoPath) {
           try {
             const storageService = getStorageService();
@@ -211,7 +315,6 @@ export class TranscriptionService {
             sourceVideoPath = tempSourcePath;
             tempFilesToCleanup.push(tempSourcePath);
           } catch (storageErr: any) {
-            // If storage key download failed, try downloadUrl
             if (mediaAsset.fileUrl && mediaAsset.fileUrl.startsWith('http')) {
               resolvedAudioUrl = mediaAsset.fileUrl;
             } else {
@@ -224,7 +327,7 @@ export class TranscriptionService {
           }
         }
 
-        // If we have a local video file, extract audio using FFmpeg
+        // Extract audio container using FFmpeg
         if (sourceVideoPath) {
           const tempAudioPath = path.join(os.tmpdir(), `clipper_audio_${Date.now()}.mp3`);
           tempFilesToCleanup.push(tempAudioPath);
@@ -242,82 +345,145 @@ export class TranscriptionService {
         }
       }
 
-      // 6. Invoke Deepgram Nova-2 STT
+      // 7. Invoke Deepgram Nova-2 STT
       const rawTranscript = await transcribeWithDeepgram({
         audioBuffer: resolvedAudioBuffer,
         audioUrl: resolvedAudioUrl,
         mimetype: params.mimetype || 'audio/mp3',
       });
 
-      // 7. Validate Word Timestamps
+      // 8. Validate Word Timestamps with sequence checks (Fail closed on malformed data)
       const validation = validateWordTimestamps(rawTranscript.words);
       if (!validation.valid) {
-        console.warn('Word timestamp validation warnings:', validation.errors);
+        throw new ClipperError(
+          'TRANSCRIPTION_FAILED',
+          `Provider returned malformed word timestamps: ${validation.errors.join('; ')}`,
+          502
+        );
       }
 
-      // 8. Generate Normalized Segments & Child Relations
+      // 9. Generate Normalized Segments & Relational Words
       const transcriptId = ensureValidUuid();
-      const rawWords = rawTranscript.words || [];
       const rawUtterances = rawTranscript.utterances || [];
-
-      // Build structured segments
       const segments: TranscriptSegment[] = [];
+      let finalWords: NormalizedTranscriptWord[] = [];
 
       if (rawUtterances.length > 0) {
         rawUtterances.forEach((u, idx) => {
+          const segmentId = ensureValidUuid();
+          const segmentWords: WordTimestamp[] = (u.words || []).map((w: any, wIdx: number) => {
+            const wordObj: NormalizedTranscriptWord = {
+              id: ensureValidUuid((w as any).id),
+              transcriptId,
+              segmentId,
+              wordIndex: finalWords.length + wIdx,
+              word: w.word,
+              start: w.start,
+              end: w.end,
+              confidence: w.confidence,
+              speaker: w.speaker ?? u.speaker,
+            };
+            return wordObj;
+          });
+
           segments.push({
-            id: ensureValidUuid(),
+            id: segmentId,
             transcriptId,
             segmentIndex: idx,
             start: u.start,
             end: u.end,
             text: u.text,
             speaker: u.speaker,
-            words: u.words,
+            words: segmentWords,
           });
+
+          finalWords = finalWords.concat(segmentWords as NormalizedTranscriptWord[]);
         });
-      } else if (rawWords.length > 0) {
-        // Fallback: chunk words into segments by natural pauses (> 0.5s) or 10 words
+      } else if (rawTranscript.words && rawTranscript.words.length > 0) {
         let currentChunk: WordTimestamp[] = [];
         let segIdx = 0;
 
-        for (let i = 0; i < rawWords.length; i++) {
-          const w = rawWords[i];
+        for (let i = 0; i < rawTranscript.words.length; i++) {
+          const w = rawTranscript.words[i];
           currentChunk.push(w);
 
-          const nextWord = rawWords[i + 1];
+          const nextWord = rawTranscript.words[i + 1];
           const hasPause = nextWord && nextWord.start - w.end > 0.5;
           const isAtLimit = currentChunk.length >= 12;
 
-          if (hasPause || isAtLimit || i === rawWords.length - 1) {
+          if (hasPause || isAtLimit || i === rawTranscript.words.length - 1) {
+            const segId = ensureValidUuid();
             const start = currentChunk[0].start;
             const end = currentChunk[currentChunk.length - 1].end;
             const text = currentChunk.map((cw) => cw.word).join(' ');
 
+            const segmentWords: WordTimestamp[] = currentChunk.map((cw, cwIdx) => {
+              const wordObj: NormalizedTranscriptWord = {
+                id: ensureValidUuid((cw as any).id),
+                transcriptId,
+                segmentId: segId,
+                wordIndex: finalWords.length + cwIdx,
+                word: cw.word,
+                start: cw.start,
+                end: cw.end,
+                confidence: cw.confidence,
+                speaker: cw.speaker,
+              };
+              return wordObj;
+            });
+
             segments.push({
-              id: ensureValidUuid(),
+              id: segId,
               transcriptId,
               segmentIndex: segIdx++,
               start,
               end,
               text,
-              words: [...currentChunk],
+              words: segmentWords,
             });
+
+            finalWords = finalWords.concat(segmentWords as NormalizedTranscriptWord[]);
             currentChunk = [];
           }
         }
       }
 
-      const lastWord = rawWords.length > 0 ? rawWords[rawWords.length - 1] : undefined;
+      // If words were not partitioned into segments, use rawTranscript.words directly
+      if (finalWords.length === 0 && rawTranscript.words) {
+        finalWords = rawTranscript.words.map((w, idx) => ({
+          id: ensureValidUuid((w as any).id),
+          transcriptId,
+          wordIndex: idx,
+          word: w.word,
+          start: w.start,
+          end: w.end,
+          confidence: w.confidence,
+          speaker: w.speaker,
+        }));
+      }
+
+      // Validate segment sequence
+      if (segments.length > 0) {
+        const segValidation = validateTranscriptSegments(segments);
+        if (!segValidation.valid) {
+          throw new ClipperError(
+            'TRANSCRIPTION_FAILED',
+            `Provider returned malformed segment sequence: ${segValidation.errors.join('; ')}`,
+            502
+          );
+        }
+      }
+
+      const lastWord = finalWords.length > 0 ? finalWords[finalWords.length - 1] : undefined;
       const durationSeconds = rawTranscript.duration || (lastWord ? lastWord.end : 0);
 
-      // 9. Assemble Canonical Transcript Record
+      // 10. Assemble Canonical Transcript Record
       const finalTranscript: Transcript = {
         id: transcriptId,
         projectId,
         mediaAssetId: targetMediaId || undefined,
         text: rawTranscript.text,
-        words: rawWords,
+        words: finalWords,
         utterances: rawUtterances,
         segments,
         language: rawTranscript.language || 'en',
@@ -332,7 +498,7 @@ export class TranscriptionService {
         updatedAt: new Date().toISOString(),
       };
 
-      // 10. Persist Transcript Relational Child Tables and Project State
+      // 11. Persist Transcript Relational Child Tables and Project State
       await storage.saveTranscript(finalTranscript, projectId);
 
       project.transcript = finalTranscript;
@@ -342,7 +508,7 @@ export class TranscriptionService {
       }
       await storage.saveProject(project);
 
-      // 11. Record Cost Telemetry
+      // 12. Record Cost Telemetry (Estimated Processing Cost)
       const costUSD = calculateDeepgramCost(durationSeconds);
       await storage.recordCostTelemetry({
         projectId,
@@ -352,7 +518,7 @@ export class TranscriptionService {
         unitsUsed: parseFloat((durationSeconds / 60).toFixed(2)),
         unitType: 'minutes',
         costInUSD: costUSD,
-        isEstimated: false,
+        isEstimated: true,
       });
 
       return {
@@ -360,7 +526,7 @@ export class TranscriptionService {
         transcriptId,
         transcript: finalTranscript,
         isCached: false,
-        wordsCount: rawWords.length,
+        wordsCount: finalWords.length,
         durationSeconds,
       };
     } catch (err: any) {

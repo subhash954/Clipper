@@ -515,6 +515,32 @@ export class SupabaseStorageAdapter implements IStorageAdapter {
     const lastWord = words.length > 0 ? words[words.length - 1] : undefined;
     const computedDuration = transcript.duration ?? (lastWord ? lastWord.end : 0);
 
+    // Relational consistency check between words and segments
+    if (words.length > 0 && transcript.segments && transcript.segments.length > 0) {
+      const validSegmentIds = new Set(transcript.segments.map((s) => s.id));
+      for (const w of words) {
+        const segId = (w as any).segmentId;
+        if (segId && !validSegmentIds.has(segId)) {
+          throw new ClipperError(
+            'VALIDATION_ERROR',
+            `Relational consistency error: word "${w.word}" references segment "${segId}" which does not belong to transcript "${validTranscriptId}".`,
+            400
+          );
+        }
+      }
+    }
+
+    if (transcript.mediaAssetId) {
+      const media = await getMediaAssetById(transcript.mediaAssetId);
+      if (media && media.projectId && media.projectId !== projectId) {
+        throw new ClipperError(
+          'FORBIDDEN',
+          `Cannot associate transcript with media asset ${transcript.mediaAssetId} belonging to another project.`,
+          403
+        );
+      }
+    }
+
     const { error: transError } = await supabase.from('transcripts').upsert({
       id: validTranscriptId,
       project_id: projectId,
@@ -535,8 +561,12 @@ export class SupabaseStorageAdapter implements IStorageAdapter {
     });
 
     if (transError) {
-      console.warn('Supabase transcript upsert warning:', transError.message);
+      throw new ClipperError('DATABASE_ERROR', `Failed to persist transcript: ${transError.message}`, 500);
     }
+
+    // Clean up existing child records for this transcript to prevent orphaned or duplicate rows
+    await supabase.from('transcript_words').delete().eq('transcript_id', validTranscriptId);
+    await supabase.from('transcript_segments').delete().eq('transcript_id', validTranscriptId);
 
     if (transcript.segments && transcript.segments.length > 0) {
       const segmentRows = transcript.segments.map((seg, idx) => ({
@@ -555,7 +585,9 @@ export class SupabaseStorageAdapter implements IStorageAdapter {
         .from('transcript_segments')
         .upsert(segmentRows);
       if (segError) {
-        console.warn('Supabase transcript_segments upsert warning:', segError.message);
+        // Rollback transcript insert to prevent orphaned record
+        await supabase.from('transcripts').delete().eq('id', validTranscriptId);
+        throw new ClipperError('DATABASE_ERROR', `Failed to persist transcript segments: ${segError.message}`, 500);
       }
     }
 
@@ -576,7 +608,11 @@ export class SupabaseStorageAdapter implements IStorageAdapter {
         .from('transcript_words')
         .upsert(wordRows);
       if (wordsError) {
-        console.warn('Supabase transcript_words upsert warning:', wordsError.message);
+        // Rollback segments and transcript
+        await supabase.from('transcript_words').delete().eq('transcript_id', validTranscriptId);
+        await supabase.from('transcript_segments').delete().eq('transcript_id', validTranscriptId);
+        await supabase.from('transcripts').delete().eq('id', validTranscriptId);
+        throw new ClipperError('DATABASE_ERROR', `Failed to persist transcript words: ${wordsError.message}`, 500);
       }
     }
 
@@ -903,6 +939,32 @@ export class LocalStorageAdapter implements IStorageAdapter {
     const utterances = transcript.utterances || [];
     const lastWord = words.length > 0 ? words[words.length - 1] : undefined;
     const duration = transcript.duration ?? (lastWord ? lastWord.end : 0);
+
+    // Relational consistency check between words and segments
+    if (words.length > 0 && transcript.segments && transcript.segments.length > 0) {
+      const validSegmentIds = new Set(transcript.segments.map((s) => s.id));
+      for (const w of words) {
+        const segId = (w as any).segmentId;
+        if (segId && !validSegmentIds.has(segId)) {
+          throw new ClipperError(
+            'VALIDATION_ERROR',
+            `Relational consistency error: word "${w.word}" references segment "${segId}" which does not belong to transcript "${validId}".`,
+            400
+          );
+        }
+      }
+    }
+
+    if (transcript.mediaAssetId) {
+      const media = await getMediaAssetById(transcript.mediaAssetId);
+      if (media && media.projectId && media.projectId !== projectId) {
+        throw new ClipperError(
+          'FORBIDDEN',
+          `Cannot associate transcript with media asset ${transcript.mediaAssetId} belonging to another project.`,
+          403
+        );
+      }
+    }
 
     const record: Transcript = {
       ...transcript,
