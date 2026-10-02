@@ -92,6 +92,7 @@ export default function StudioPage() {
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [projectName, setProjectName] = useState<string>("My Podcast Short");
   const [words, setWords] = useState<WordTimestamp[]>([]);
+  const [timingPrecision, setTimingPrecision] = useState<'exact_word' | 'approximate_cue'>('exact_word');
   const [clips, setClips] = useState<ViralClip[]>([]);
   const [activeClipId, setActiveClipId] = useState<string | null>(null);
   const [isDemoMode, setIsDemoMode] = useState<boolean>(false);
@@ -195,6 +196,9 @@ export default function StudioPage() {
               if (p.transcript?.words && p.transcript.words.length > 0 && (!p.clips || p.clips.length === 0)) {
                 setWords(p.transcript.words);
               }
+              if (p.transcript?.timingPrecision) {
+                setTimingPrecision(p.transcript.timingPrecision);
+              }
               if (typeof p.isMediaAvailable === 'boolean') {
                 setIsMediaAvailable(p.isMediaAvailable);
               }
@@ -225,6 +229,9 @@ export default function StudioPage() {
               }
               if (p.transcript?.words && p.transcript.words.length > 0 && (!p.clips || p.clips.length === 0)) {
                 setWords(p.transcript.words);
+              }
+              if (p.transcript?.timingPrecision) {
+                setTimingPrecision(p.transcript.timingPrecision);
               }
               if (typeof p.isMediaAvailable === 'boolean') {
                 setIsMediaAvailable(p.isMediaAvailable);
@@ -959,6 +966,8 @@ export default function StudioPage() {
                 onSeek={handleJumpToTime}
                 cuts={activeCuts}
                 words={words}
+                timingPrecision={timingPrecision}
+                onWordClick={(w) => handleJumpToTime(w.start)}
                 reframeTrack={reframeTrack || visualSettings.reframeTrack}
                 onSplit={handleSplit}
                 onDeleteClip={handleDeleteSelectedClip}

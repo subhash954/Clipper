@@ -27,6 +27,8 @@ interface CreatorTimelineProps {
   onSeek: (time: number) => void;
   cuts?: EditOperation[];
   words?: WordTimestamp[];
+  timingPrecision?: 'exact_word' | 'approximate_cue';
+  onWordClick?: (word: WordTimestamp) => void;
   reframeTrack?: ReframeTrack;
   onSplit?: (splitTime: number) => void;
   onDeleteClip?: (clipId: string) => void;
@@ -44,6 +46,8 @@ export const CreatorTimeline: React.FC<CreatorTimelineProps> = ({
   onSeek,
   cuts = [],
   words = [],
+  timingPrecision = 'exact_word',
+  onWordClick,
   reframeTrack,
   onSplit,
   onDeleteClip,
@@ -202,6 +206,21 @@ export const CreatorTimeline: React.FC<CreatorTimelineProps> = ({
           <span className="text-[10px] px-2 py-0.5 rounded-full bg-red-50 text-red-700 font-mono font-bold border border-red-200/80">
             {duration.toFixed(1)}s
           </span>
+          {timingPrecision === 'approximate_cue' ? (
+            <span
+              className="text-[10px] px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 font-mono font-bold border border-amber-200"
+              title="Timestamps derived from video subtitle cues. Deepgram Nova-2 provides exact word timing."
+            >
+              Approximate Timing
+            </span>
+          ) : (
+            <span
+              className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 font-mono font-bold border border-emerald-200"
+              title="Authentic Deepgram Nova-2 speech-to-text word alignment"
+            >
+              Exact Word Alignment
+            </span>
+          )}
           {reframeTrack && (
             <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 font-mono border border-slate-200">
               Reframe: {reframeTrack.trackingMode} ({reframeTrack.aspectRatio})
@@ -428,20 +447,39 @@ export const CreatorTimeline: React.FC<CreatorTimelineProps> = ({
             <span>CAPTIONS</span>
           </div>
           <div className="relative w-full h-4">
-            {words.slice(0, 40).map((w, i) => {
-              const relStart = Math.max(0, w.start - clipStart);
-              const relEnd = Math.max(0, w.end - clipStart);
-              const leftPct = Math.min(100, Math.max(0, (relStart / duration) * 100));
-              const widthPct = Math.min(100 - leftPct, Math.max(1.5, ((relEnd - relStart) / duration) * 100));
-              return (
-                <div
-                  key={i}
-                  className="absolute top-0 bottom-0 bg-amber-400/25 border border-amber-400/50 rounded-xs"
-                  style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
-                  title={w.word}
-                />
-              );
-            })}
+            {words
+              .filter((w) => w.end >= clipStart && w.start <= clipStart + duration)
+              .map((w, i) => {
+                const relStart = Math.max(0, w.start - clipStart);
+                const relEnd = Math.min(duration, Math.max(relStart + 0.1, w.end - clipStart));
+                const leftPct = Math.min(100, Math.max(0, (relStart / duration) * 100));
+                const widthPct = Math.min(100 - leftPct, Math.max(1.2, ((relEnd - relStart) / duration) * 100));
+                const isActive = currentTime >= w.start && currentTime <= w.end;
+
+                return (
+                  <button
+                    key={i}
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (onWordClick) {
+                        onWordClick(w);
+                      } else {
+                        onSeek(w.start);
+                      }
+                    }}
+                    className={`absolute top-0 bottom-0 rounded-xs flex items-center justify-center text-[7px] font-bold truncate transition-colors cursor-pointer ${
+                      isActive
+                        ? 'bg-amber-500 text-white shadow-xs ring-1 ring-amber-300 z-20'
+                        : 'bg-amber-400/30 hover:bg-amber-400/60 border border-amber-400/50 text-slate-800'
+                    }`}
+                    style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
+                    title={`"${w.word}" (${w.start.toFixed(2)}s - ${w.end.toFixed(2)}s${w.confidence !== undefined ? `, ${(w.confidence * 100).toFixed(0)}%` : ''})`}
+                  >
+                    {widthPct > 4 ? w.word : ''}
+                  </button>
+                );
+              })}
           </div>
         </div>
 

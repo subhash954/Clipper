@@ -71,14 +71,59 @@ CREATE TABLE IF NOT EXISTS public.media_assets (
 CREATE TABLE IF NOT EXISTS public.transcripts (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   project_id UUID REFERENCES public.projects(id) ON DELETE CASCADE UNIQUE NOT NULL,
+  media_asset_id UUID REFERENCES public.media_assets(id) ON DELETE SET NULL,
   transcript_text TEXT NOT NULL,
   words JSONB NOT NULL DEFAULT '[]'::jsonb,
   utterances JSONB DEFAULT '[]'::jsonb,
   language TEXT DEFAULT 'en',
   timing_precision TEXT DEFAULT 'exact_word' CHECK (timing_precision IN ('exact_word', 'approximate_cue')),
   source TEXT DEFAULT 'deepgram' CHECK (source IN ('deepgram', 'youtube_captions', 'user_upload')),
-  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+  provider TEXT DEFAULT 'deepgram',
+  model TEXT DEFAULT 'nova-2',
+  duration NUMERIC(10, 2),
+  status TEXT DEFAULT 'completed' CHECK (status IN ('pending', 'processing', 'completed', 'failed')),
+  error_message TEXT,
+  metadata JSONB DEFAULT '{}'::jsonb,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
+
+-- 5a. Normalized Transcript Segments
+CREATE TABLE IF NOT EXISTS public.transcript_segments (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  transcript_id UUID NOT NULL REFERENCES public.transcripts(id) ON DELETE CASCADE,
+  segment_index INTEGER NOT NULL,
+  start_time NUMERIC(10, 2) NOT NULL CHECK (start_time >= 0),
+  end_time NUMERIC(10, 2) NOT NULL CHECK (end_time >= start_time),
+  text TEXT NOT NULL,
+  confidence NUMERIC(4, 2),
+  speaker INTEGER,
+  metadata JSONB DEFAULT '{}'::jsonb,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  CONSTRAINT uq_transcript_segments_transcript_idx UNIQUE (transcript_id, segment_index)
+);
+
+-- 5b. Normalized Transcript Words
+CREATE TABLE IF NOT EXISTS public.transcript_words (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  transcript_id UUID NOT NULL REFERENCES public.transcripts(id) ON DELETE CASCADE,
+  segment_id UUID REFERENCES public.transcript_segments(id) ON DELETE CASCADE,
+  word_index INTEGER NOT NULL,
+  word TEXT NOT NULL,
+  start_time NUMERIC(10, 2) NOT NULL CHECK (start_time >= 0),
+  end_time NUMERIC(10, 2) NOT NULL CHECK (end_time >= start_time),
+  confidence NUMERIC(4, 2),
+  speaker INTEGER,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  CONSTRAINT uq_transcript_words_transcript_idx UNIQUE (transcript_id, word_index)
+);
+
+CREATE INDEX IF NOT EXISTS idx_transcripts_project_id ON public.transcripts(project_id);
+CREATE INDEX IF NOT EXISTS idx_transcripts_media_asset_id ON public.transcripts(media_asset_id);
+CREATE INDEX IF NOT EXISTS idx_transcript_segments_transcript_id ON public.transcript_segments(transcript_id, segment_index);
+CREATE INDEX IF NOT EXISTS idx_transcript_words_transcript_id ON public.transcript_words(transcript_id, word_index);
+CREATE INDEX IF NOT EXISTS idx_transcript_words_timing ON public.transcript_words(transcript_id, start_time, end_time);
+CREATE INDEX IF NOT EXISTS idx_transcript_words_segment_id ON public.transcript_words(segment_id);
 
 -- 6. Generated Viral Clips / Outputs
 CREATE TABLE IF NOT EXISTS public.clips (
@@ -190,6 +235,8 @@ ALTER TABLE public.workspaces ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.projects ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.media_assets ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.transcripts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.transcript_segments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.transcript_words ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.clips ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.timeline_versions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.render_jobs ENABLE ROW LEVEL SECURITY;
@@ -303,6 +350,104 @@ CREATE POLICY "Users can delete transcripts for their projects"
     EXISTS (
       SELECT 1 FROM public.projects
       WHERE projects.id = transcripts.project_id
+      AND (projects.user_id = auth.uid() OR public.is_admin())
+      AND projects.deleted_at IS NULL
+    )
+  );
+
+-- Transcript Segments (Inherited project ownership)
+CREATE POLICY "Users can view transcript segments of their projects"
+  ON public.transcript_segments FOR SELECT
+  USING (
+    EXISTS (
+      SELECT 1 FROM public.transcripts
+      JOIN public.projects ON projects.id = transcripts.project_id
+      WHERE transcripts.id = transcript_segments.transcript_id
+      AND (projects.user_id = auth.uid() OR public.is_admin())
+      AND projects.deleted_at IS NULL
+    )
+  );
+
+CREATE POLICY "Users can insert transcript segments for their projects"
+  ON public.transcript_segments FOR INSERT
+  WITH CHECK (
+    EXISTS (
+      SELECT 1 FROM public.transcripts
+      JOIN public.projects ON projects.id = transcripts.project_id
+      WHERE transcripts.id = transcript_segments.transcript_id
+      AND (projects.user_id = auth.uid() OR public.is_admin())
+      AND projects.deleted_at IS NULL
+    )
+  );
+
+CREATE POLICY "Users can update transcript segments for their projects"
+  ON public.transcript_segments FOR UPDATE
+  USING (
+    EXISTS (
+      SELECT 1 FROM public.transcripts
+      JOIN public.projects ON projects.id = transcripts.project_id
+      WHERE transcripts.id = transcript_segments.transcript_id
+      AND (projects.user_id = auth.uid() OR public.is_admin())
+      AND projects.deleted_at IS NULL
+    )
+  );
+
+CREATE POLICY "Users can delete transcript segments for their projects"
+  ON public.transcript_segments FOR DELETE
+  USING (
+    EXISTS (
+      SELECT 1 FROM public.transcripts
+      JOIN public.projects ON projects.id = transcripts.project_id
+      WHERE transcripts.id = transcript_segments.transcript_id
+      AND (projects.user_id = auth.uid() OR public.is_admin())
+      AND projects.deleted_at IS NULL
+    )
+  );
+
+-- Transcript Words (Inherited project ownership)
+CREATE POLICY "Users can view transcript words of their projects"
+  ON public.transcript_words FOR SELECT
+  USING (
+    EXISTS (
+      SELECT 1 FROM public.transcripts
+      JOIN public.projects ON projects.id = transcripts.project_id
+      WHERE transcripts.id = transcript_words.transcript_id
+      AND (projects.user_id = auth.uid() OR public.is_admin())
+      AND projects.deleted_at IS NULL
+    )
+  );
+
+CREATE POLICY "Users can insert transcript words for their projects"
+  ON public.transcript_words FOR INSERT
+  WITH CHECK (
+    EXISTS (
+      SELECT 1 FROM public.transcripts
+      JOIN public.projects ON projects.id = transcripts.project_id
+      WHERE transcripts.id = transcript_words.transcript_id
+      AND (projects.user_id = auth.uid() OR public.is_admin())
+      AND projects.deleted_at IS NULL
+    )
+  );
+
+CREATE POLICY "Users can update transcript words for their projects"
+  ON public.transcript_words FOR UPDATE
+  USING (
+    EXISTS (
+      SELECT 1 FROM public.transcripts
+      JOIN public.projects ON projects.id = transcripts.project_id
+      WHERE transcripts.id = transcript_words.transcript_id
+      AND (projects.user_id = auth.uid() OR public.is_admin())
+      AND projects.deleted_at IS NULL
+    )
+  );
+
+CREATE POLICY "Users can delete transcript words for their projects"
+  ON public.transcript_words FOR DELETE
+  USING (
+    EXISTS (
+      SELECT 1 FROM public.transcripts
+      JOIN public.projects ON projects.id = transcripts.project_id
+      WHERE transcripts.id = transcript_words.transcript_id
       AND (projects.user_id = auth.uid() OR public.is_admin())
       AND projects.deleted_at IS NULL
     )

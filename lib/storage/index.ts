@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { Project, RenderJob, CostTelemetryRecord } from '../types';
+import { Project, RenderJob, CostTelemetryRecord, Transcript, TranscriptSegment, NormalizedTranscriptWord, WordTimestamp, MediaAsset } from '../types';
 import { supabase, isSupabaseConfigured } from '../supabase';
 import { ClipperError } from '../errors';
 
@@ -18,6 +18,10 @@ export interface IStorageAdapter {
   listRenderJobs(userId?: string): Promise<RenderJob[]>;
   recordCostTelemetry(telemetry: CostTelemetryRecord): Promise<void>;
   getCostTelemetry(): Promise<CostTelemetryRecord[]>;
+  saveTranscript(transcript: Transcript, projectId: string): Promise<Transcript>;
+  getTranscript(projectId: string): Promise<Transcript | null>;
+  listTranscriptWords?(transcriptId: string): Promise<NormalizedTranscriptWord[]>;
+  listTranscriptSegments?(transcriptId: string): Promise<TranscriptSegment[]>;
 }
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -118,18 +122,7 @@ export class SupabaseStorageAdapter implements IStorageAdapter {
 
     // Upsert transcript if present
     if (project.transcript) {
-      const { error: transError } = await supabase.from('transcripts').upsert({
-        project_id: project.id,
-        media_asset_id: project.activeMediaId || null,
-        transcript_text: project.transcript.text,
-        words: project.transcript.words,
-        utterances: project.transcript.utterances || [],
-        language: project.transcript.language || 'en',
-        source: project.transcript.source || 'deepgram',
-      });
-      if (transError) {
-        console.warn('Supabase transcript upsert warning:', transError.message);
-      }
+      await this.saveTranscript(project.transcript, validId);
     }
 
     // Upsert clips
@@ -209,11 +202,23 @@ export class SupabaseStorageAdapter implements IStorageAdapter {
       })),
       transcript: data.transcripts?.[0]
         ? {
+            id: data.transcripts[0].id,
+            projectId: data.transcripts[0].project_id,
+            mediaAssetId: data.transcripts[0].media_asset_id,
             text: data.transcripts[0].transcript_text,
-            words: data.transcripts[0].words,
-            utterances: data.transcripts[0].utterances,
+            words: data.transcripts[0].words || [],
+            utterances: data.transcripts[0].utterances || [],
             language: data.transcripts[0].language,
             source: data.transcripts[0].source,
+            provider: data.transcripts[0].provider,
+            model: data.transcripts[0].model,
+            duration: data.transcripts[0].duration ? Number(data.transcripts[0].duration) : undefined,
+            status: data.transcripts[0].status,
+            errorMessage: data.transcripts[0].error_message,
+            timingPrecision: data.transcripts[0].timing_precision,
+            metadata: data.transcripts[0].metadata,
+            createdAt: data.transcripts[0].created_at,
+            updatedAt: data.transcripts[0].updated_at,
           }
         : undefined,
       createdAt: data.created_at,
@@ -502,6 +507,190 @@ export class SupabaseStorageAdapter implements IStorageAdapter {
       createdAt: d.created_at,
     }));
   }
+
+  async saveTranscript(transcript: Transcript, projectId: string): Promise<Transcript> {
+    const validTranscriptId = ensureValidUuid(transcript.id);
+    const words = transcript.words || [];
+    const utterances = transcript.utterances || [];
+    const lastWord = words.length > 0 ? words[words.length - 1] : undefined;
+    const computedDuration = transcript.duration ?? (lastWord ? lastWord.end : 0);
+
+    const { error: transError } = await supabase.from('transcripts').upsert({
+      id: validTranscriptId,
+      project_id: projectId,
+      media_asset_id: transcript.mediaAssetId || null,
+      transcript_text: transcript.text,
+      words: words,
+      utterances: utterances,
+      language: transcript.language || 'en',
+      source: transcript.source || 'deepgram',
+      timing_precision: transcript.timingPrecision || 'exact_word',
+      provider: transcript.provider || 'deepgram',
+      model: transcript.model || 'nova-2',
+      duration: computedDuration,
+      status: transcript.status || 'completed',
+      error_message: transcript.errorMessage || null,
+      metadata: transcript.metadata || {},
+      updated_at: new Date().toISOString(),
+    });
+
+    if (transError) {
+      console.warn('Supabase transcript upsert warning:', transError.message);
+    }
+
+    if (transcript.segments && transcript.segments.length > 0) {
+      const segmentRows = transcript.segments.map((seg, idx) => ({
+        id: ensureValidUuid(seg.id),
+        transcript_id: validTranscriptId,
+        segment_index: seg.segmentIndex ?? idx,
+        start_time: seg.start,
+        end_time: seg.end,
+        text: seg.text,
+        confidence: seg.confidence !== undefined ? seg.confidence : null,
+        speaker: seg.speaker !== undefined ? seg.speaker : null,
+        metadata: seg.metadata || {},
+      }));
+
+      const { error: segError } = await supabase
+        .from('transcript_segments')
+        .upsert(segmentRows);
+      if (segError) {
+        console.warn('Supabase transcript_segments upsert warning:', segError.message);
+      }
+    }
+
+    if (words.length > 0) {
+      const wordRows = words.map((w, idx) => ({
+        id: ensureValidUuid((w as any).id),
+        transcript_id: validTranscriptId,
+        segment_id: (w as any).segmentId || null,
+        word_index: idx,
+        word: w.word,
+        start_time: w.start,
+        end_time: w.end,
+        confidence: w.confidence !== undefined ? w.confidence : null,
+        speaker: w.speaker !== undefined ? w.speaker : null,
+      }));
+
+      const { error: wordsError } = await supabase
+        .from('transcript_words')
+        .upsert(wordRows);
+      if (wordsError) {
+        console.warn('Supabase transcript_words upsert warning:', wordsError.message);
+      }
+    }
+
+    return {
+      ...transcript,
+      id: validTranscriptId,
+      projectId,
+      duration: computedDuration,
+    };
+  }
+
+  async getTranscript(projectId: string): Promise<Transcript | null> {
+    const { data, error } = await supabase
+      .from('transcripts')
+      .select('*, transcript_segments(*), transcript_words(*)')
+      .eq('project_id', projectId)
+      .maybeSingle();
+
+    if (error || !data) return null;
+
+    const segments: TranscriptSegment[] = (data.transcript_segments || [])
+      .sort((a: any, b: any) => a.segment_index - b.segment_index)
+      .map((s: any) => ({
+        id: s.id,
+        transcriptId: s.transcript_id,
+        segmentIndex: s.segment_index,
+        start: Number(s.start_time),
+        end: Number(s.end_time),
+        text: s.text,
+        confidence: s.confidence !== null ? Number(s.confidence) : undefined,
+        speaker: s.speaker !== null ? Number(s.speaker) : undefined,
+        metadata: s.metadata,
+        createdAt: s.created_at,
+      }));
+
+    const words: WordTimestamp[] = (data.transcript_words && data.transcript_words.length > 0)
+      ? data.transcript_words
+          .sort((a: any, b: any) => a.word_index - b.word_index)
+          .map((w: any) => ({
+            id: w.id,
+            word: w.word,
+            start: Number(w.start_time),
+            end: Number(w.end_time),
+            confidence: w.confidence !== null ? Number(w.confidence) : undefined,
+            speaker: w.speaker !== null ? Number(w.speaker) : undefined,
+          }))
+      : (data.words || []);
+
+    return {
+      id: data.id,
+      projectId: data.project_id,
+      mediaAssetId: data.media_asset_id,
+      text: data.transcript_text,
+      words,
+      utterances: data.utterances || [],
+      segments,
+      language: data.language,
+      timingPrecision: data.timing_precision,
+      timingLabel: data.timing_label,
+      source: data.source,
+      provider: data.provider,
+      model: data.model,
+      duration: data.duration ? Number(data.duration) : undefined,
+      status: data.status,
+      errorMessage: data.error_message,
+      metadata: data.metadata,
+      createdAt: data.created_at,
+      updatedAt: data.updated_at,
+    };
+  }
+
+  async listTranscriptWords(transcriptId: string): Promise<NormalizedTranscriptWord[]> {
+    const { data, error } = await supabase
+      .from('transcript_words')
+      .select('*')
+      .eq('transcript_id', transcriptId)
+      .order('word_index', { ascending: true });
+
+    if (error || !data) return [];
+    return data.map((w: any) => ({
+      id: w.id,
+      transcriptId: w.transcript_id,
+      segmentId: w.segment_id,
+      wordIndex: w.word_index,
+      word: w.word,
+      start: Number(w.start_time),
+      end: Number(w.end_time),
+      confidence: w.confidence !== null ? Number(w.confidence) : undefined,
+      speaker: w.speaker !== null ? Number(w.speaker) : undefined,
+      createdAt: w.created_at,
+    }));
+  }
+
+  async listTranscriptSegments(transcriptId: string): Promise<TranscriptSegment[]> {
+    const { data, error } = await supabase
+      .from('transcript_segments')
+      .select('*')
+      .eq('transcript_id', transcriptId)
+      .order('segment_index', { ascending: true });
+
+    if (error || !data) return [];
+    return data.map((s: any) => ({
+      id: s.id,
+      transcriptId: s.transcript_id,
+      segmentIndex: s.segment_index,
+      start: Number(s.start_time),
+      end: Number(s.end_time),
+      text: s.text,
+      confidence: s.confidence !== null ? Number(s.confidence) : undefined,
+      speaker: s.speaker !== null ? Number(s.speaker) : undefined,
+      metadata: s.metadata,
+      createdAt: s.created_at,
+    }));
+  }
 }
 
 /**
@@ -513,6 +702,9 @@ export class LocalStorageAdapter implements IStorageAdapter {
   private mediaFile = path.join(process.cwd(), 'data', 'media_assets.json');
   private jobsFile = path.join(process.cwd(), 'data', 'render_jobs.json');
   private telemetryFile = path.join(process.cwd(), 'data', 'telemetry.json');
+  private transcriptsFile = path.join(process.cwd(), 'data', 'transcripts.json');
+  private segmentsFile = path.join(process.cwd(), 'data', 'transcript_segments.json');
+  private wordsFile = path.join(process.cwd(), 'data', 'transcript_words.json');
 
   constructor() {
     if (!fs.existsSync(this.dataDir)) {
@@ -594,12 +786,23 @@ export class LocalStorageAdapter implements IStorageAdapter {
 
     const updated = [project, ...all.filter((p) => p.id !== project.id)];
     this.writeJson(this.projectsFile, updated);
+
+    if (project.transcript) {
+      await this.saveTranscript(project.transcript, project.id);
+    }
+
     return project;
   }
 
   async getProject(id: string): Promise<Project | null> {
     const list = this.readJson<Project[]>(this.projectsFile, []);
-    return list.find((p) => p.id === id) || null;
+    const proj = list.find((p) => p.id === id);
+    if (!proj) return null;
+    const transcript = await this.getTranscript(id);
+    if (transcript) {
+      proj.transcript = transcript;
+    }
+    return proj;
   }
 
   async listProjects(userId?: string): Promise<Project[]> {
@@ -692,6 +895,110 @@ export class LocalStorageAdapter implements IStorageAdapter {
 
   async getCostTelemetry(): Promise<CostTelemetryRecord[]> {
     return this.readJson<CostTelemetryRecord[]>(this.telemetryFile, []);
+  }
+
+  async saveTranscript(transcript: Transcript, projectId: string): Promise<Transcript> {
+    const validId = ensureValidUuid(transcript.id);
+    const words = transcript.words || [];
+    const utterances = transcript.utterances || [];
+    const lastWord = words.length > 0 ? words[words.length - 1] : undefined;
+    const duration = transcript.duration ?? (lastWord ? lastWord.end : 0);
+
+    const record: Transcript = {
+      ...transcript,
+      id: validId,
+      projectId,
+      duration,
+      status: transcript.status || 'completed',
+      timingPrecision: transcript.timingPrecision || 'exact_word',
+      provider: transcript.provider || 'deepgram',
+      model: transcript.model || 'nova-2',
+      updatedAt: new Date().toISOString(),
+      createdAt: transcript.createdAt || new Date().toISOString(),
+    };
+
+    const transcripts = this.readJson<any[]>(this.transcriptsFile, []);
+    const updatedTranscripts = [record, ...transcripts.filter((t) => t.id !== validId && t.projectId !== projectId)];
+    this.writeJson(this.transcriptsFile, updatedTranscripts);
+
+    if (transcript.segments && transcript.segments.length > 0) {
+      const existingSegments = this.readJson<any[]>(this.segmentsFile, []).filter((s) => s.transcriptId !== validId);
+      const newSegments = transcript.segments.map((seg, idx) => ({
+        id: ensureValidUuid(seg.id),
+        transcriptId: validId,
+        segmentIndex: seg.segmentIndex ?? idx,
+        start: seg.start,
+        end: seg.end,
+        text: seg.text,
+        confidence: seg.confidence,
+        speaker: seg.speaker,
+        metadata: seg.metadata || {},
+        createdAt: new Date().toISOString(),
+      }));
+      this.writeJson(this.segmentsFile, [...existingSegments, ...newSegments]);
+    }
+
+    if (words.length > 0) {
+      const existingWords = this.readJson<any[]>(this.wordsFile, []).filter((w) => w.transcriptId !== validId);
+      const newWords = words.map((w, idx) => ({
+        id: ensureValidUuid((w as any).id),
+        transcriptId: validId,
+        segmentId: (w as any).segmentId || null,
+        wordIndex: idx,
+        word: w.word,
+        start: w.start,
+        end: w.end,
+        confidence: w.confidence,
+        speaker: w.speaker,
+        createdAt: new Date().toISOString(),
+      }));
+      this.writeJson(this.wordsFile, [...existingWords, ...newWords]);
+    }
+
+    // Also sync to projects.json if project exists
+    const projects = this.readJson<Project[]>(this.projectsFile, []);
+    const projIdx = projects.findIndex((p) => p.id === projectId);
+    if (projIdx !== -1) {
+      projects[projIdx].transcript = record;
+      projects[projIdx].updatedAt = new Date().toISOString();
+      this.writeJson(this.projectsFile, projects);
+    }
+
+    return record;
+  }
+
+  async getTranscript(projectId: string): Promise<Transcript | null> {
+    const transcripts = this.readJson<any[]>(this.transcriptsFile, []);
+    let found = transcripts.find((t) => t.projectId === projectId || t.id === projectId);
+
+    if (!found) {
+      const projects = this.readJson<Project[]>(this.projectsFile, []);
+      const proj = projects.find((p) => p.id === projectId);
+      if (proj?.transcript) {
+        found = { ...proj.transcript, projectId };
+      }
+    }
+
+    if (!found) return null;
+
+    const segments = this.readJson<any[]>(this.segmentsFile, []).filter((s) => s.transcriptId === found.id);
+    const words = this.readJson<any[]>(this.wordsFile, []).filter((w) => w.transcriptId === found.id);
+
+    return {
+      ...found,
+      segments: segments.length > 0 ? segments : found.segments,
+      words: words.length > 0 ? words : found.words,
+    };
+  }
+
+  async listTranscriptWords(transcriptId: string): Promise<NormalizedTranscriptWord[]> {
+    const words = this.readJson<any[]>(this.wordsFile, []);
+    return words.filter((w) => w.transcriptId === transcriptId);
+  }
+
+  async listTranscriptSegments(transcriptId: string): Promise<TranscriptSegment[]> {
+    const segments = this.readJson<any[]>(this.segmentsFile, []);
+    return segments.filter((s) => s.transcriptId === transcriptId);
   }
 }
 
@@ -906,6 +1213,35 @@ export function getLocalMediaAsset(id: string): any | null {
     }
   } catch {}
   return null;
+}
+
+export async function getMediaAssetById(id: string): Promise<MediaAsset | null> {
+  if (isSupabaseConfigured()) {
+    const { data } = await supabase.from('media_assets').select('*').eq('id', id).maybeSingle();
+    if (data) {
+      return {
+        id: data.id,
+        projectId: data.project_id,
+        userId: data.user_id,
+        fileName: data.file_name,
+        fileUrl: data.file_url,
+        storagePath: data.storage_path,
+        mimeType: data.mime_type,
+        sizeBytes: Number(data.size_bytes || 0),
+        storageProvider: data.storage_provider,
+        storageBucketOrZone: data.storage_bucket_or_zone,
+        storageKey: data.storage_key,
+        duration: data.duration ? Number(data.duration) : undefined,
+        durationSeconds: data.duration ? Number(data.duration) : undefined,
+        width: data.width ? Number(data.width) : undefined,
+        height: data.height ? Number(data.height) : undefined,
+        status: data.status,
+        createdAt: data.created_at,
+        updatedAt: data.updated_at,
+      };
+    }
+  }
+  return getLocalMediaAsset(id);
 }
 
 

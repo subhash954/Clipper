@@ -15,15 +15,60 @@ export interface TranscriptUtterance {
 }
 
 export type TranscriptTimingPrecision = 'exact_word' | 'approximate_cue';
+export type TranscriptStatus = 'pending' | 'processing' | 'completed' | 'failed';
+
+export interface NormalizedTranscriptWord {
+  id?: string;
+  transcriptId?: string;
+  segmentId?: string;
+  wordIndex: number;
+  word: string;
+  start: number;
+  end: number;
+  confidence?: number;
+  speaker?: number;
+  createdAt?: string;
+}
+
+export interface TranscriptSegment {
+  id?: string;
+  transcriptId?: string;
+  segmentIndex: number;
+  start: number;
+  end: number;
+  text: string;
+  confidence?: number;
+  speaker?: number;
+  metadata?: Record<string, any>;
+  words?: WordTimestamp[] | NormalizedTranscriptWord[];
+  createdAt?: string;
+}
 
 export interface Transcript {
+  id?: string;
+  projectId?: string;
+  mediaAssetId?: string;
   text: string;
   words: WordTimestamp[];
   utterances?: TranscriptUtterance[];
+  segments?: TranscriptSegment[];
   language?: string;
   source: 'deepgram' | 'youtube_captions' | 'user_upload';
   timingPrecision?: TranscriptTimingPrecision;
   timingLabel?: string;
+  provider?: string;
+  model?: string;
+  duration?: number;
+  status?: TranscriptStatus;
+  errorMessage?: string;
+  metadata?: Record<string, any>;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface TranscriptRecord extends Transcript {
+  id: string;
+  projectId: string;
 }
 
 export interface ViralScoreBreakdown {
