@@ -53,6 +53,7 @@ export const DEMO_WORDS: WordTimestamp[] = [
 
 // Backwards compatibility alias for components
 export const SAMPLE_WORDS = DEMO_WORDS;
+export const sampleTranscriptWords = DEMO_WORDS;
 export const SAMPLE_VIDEO_URL = DEMO_VIDEO_URL;
 
 // Feature 10 & 11: Multi-language Translations for Dual Subtitles

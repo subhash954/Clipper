@@ -17,7 +17,9 @@ import {
   ChevronRight,
   Zap,
   HardDrive,
-  Key
+  Key,
+  Sparkles,
+  Calendar
 } from 'lucide-react';
 import { ApiKeyModal } from './ApiKeyModal';
 
@@ -26,6 +28,7 @@ interface AppShellProps {
   onOpenCreateProject?: () => void;
   activeProjectName?: string;
   isSaving?: boolean;
+  activeWorkflowTab?: string;
 }
 
 export const AppShell: React.FC<AppShellProps> = ({ 
@@ -40,8 +43,9 @@ export const AppShell: React.FC<AppShellProps> = ({
 
   const navItems = [
     { label: 'Home', href: '/dashboard', icon: Home, matchPrefix: '/dashboard' },
-    { label: 'Projects', href: '/dashboard#projects', icon: FolderKanban, matchPrefix: '/dashboard#projects' },
+    { label: 'Factory', href: '/factory', icon: Sparkles, matchPrefix: '/factory' },
     { label: 'Editor', href: '/studio', icon: Film, matchPrefix: '/studio' },
+    { label: 'Calendar', href: '/calendar', icon: Calendar, matchPrefix: '/calendar' },
     { label: 'Analytics', href: '/admin', icon: BarChart3, matchPrefix: '/admin' },
   ];
 

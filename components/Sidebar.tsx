@@ -34,7 +34,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   const navItems = [
     { label: 'Dashboard', href: '/dashboard', icon: Home, isPage: true },
+    { label: 'Content Factory', href: '/factory', icon: Sparkles, isPage: true },
     { label: 'Creator Studio', href: '/studio', icon: Scissors, isPage: true },
+    { label: 'Content Calendar', href: '/calendar', icon: Calendar, isPage: true },
     { label: 'Admin Telemetry', href: '/admin', icon: ShieldCheck, isPage: true },
   ];
 
