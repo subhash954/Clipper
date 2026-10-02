@@ -45,6 +45,7 @@ export const AppShell: React.FC<AppShellProps> = ({
     { label: 'Home', href: '/dashboard', icon: Home, matchPrefix: '/dashboard' },
     { label: 'Factory', href: '/factory', icon: Sparkles, matchPrefix: '/factory' },
     { label: 'Editor', href: '/studio', icon: Film, matchPrefix: '/studio' },
+    { label: 'Publishing', href: '/publishing', icon: Zap, matchPrefix: '/publishing' },
     { label: 'Calendar', href: '/calendar', icon: Calendar, matchPrefix: '/calendar' },
     { label: 'Analytics', href: '/admin', icon: BarChart3, matchPrefix: '/admin' },
   ];

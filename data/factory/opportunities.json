@@ -218,5 +218,93 @@
     },
     "createdAt": "2026-10-02T00:03:55.332Z",
     "updatedAt": "2026-10-02T00:03:55.332Z"
+  },
+  {
+    "id": "opp-clip-1-1790899648733",
+    "projectId": "proj-factory-e2e",
+    "sourceStart": 0,
+    "sourceEnd": 14.25,
+    "sourceTranscript": "Stop building a brand and start building a world. Most creators focus on logos, but real loyalty comes from immersive storytelling. How do we apply that today? Ninety percent of success is consistency.",
+    "topic": "The Contrarian Truth About Mastering Video Strategy",
+    "subtopic": "Contrarian",
+    "contentType": "YOUTUBE_SHORT",
+    "hook": "Stop building a brand and start building a world.",
+    "payoff": "Stop building a brand and start building a world.",
+    "audience": "Creators & Knowledge Seekers",
+    "score": 87,
+    "confidence": 0.94,
+    "evidence": {
+      "start": 0,
+      "end": 14.25,
+      "quote": "Stop building a brand and start building a world. Most creators focus on logos, but real loyalty comes from immersive storytelling. How do we apply that today? "
+    },
+    "platformFit": {
+      "youtube_shorts": 89,
+      "instagram_reels": 85,
+      "tiktok": 91,
+      "linkedin": 60,
+      "x": 82,
+      "facebook": 78
+    },
+    "pillars": [
+      "Contrarian",
+      "Case Studies",
+      "Education"
+    ],
+    "status": "DISCOVERED",
+    "lineage": {
+      "sourceProjectId": "proj-factory-e2e",
+      "sourceClipId": "clip-1-1790899648733",
+      "sourceStart": 0,
+      "sourceEnd": 14.25,
+      "wordCount": 33,
+      "extractedAt": "2026-10-02T00:07:28.735Z"
+    },
+    "createdAt": "2026-10-02T00:07:28.735Z",
+    "updatedAt": "2026-10-02T00:07:28.735Z"
+  },
+  {
+    "id": "opp-clip-1-1790900518580",
+    "projectId": "proj-factory-e2e",
+    "sourceStart": 0,
+    "sourceEnd": 14.25,
+    "sourceTranscript": "Stop building a brand and start building a world. Most creators focus on logos, but real loyalty comes from immersive storytelling. How do we apply that today? Ninety percent of success is consistency.",
+    "topic": "The Contrarian Truth About Mastering Video Strategy",
+    "subtopic": "Contrarian",
+    "contentType": "YOUTUBE_SHORT",
+    "hook": "Stop building a brand and start building a world.",
+    "payoff": "Stop building a brand and start building a world.",
+    "audience": "Creators & Knowledge Seekers",
+    "score": 87,
+    "confidence": 0.94,
+    "evidence": {
+      "start": 0,
+      "end": 14.25,
+      "quote": "Stop building a brand and start building a world. Most creators focus on logos, but real loyalty comes from immersive storytelling. How do we apply that today? "
+    },
+    "platformFit": {
+      "youtube_shorts": 89,
+      "instagram_reels": 85,
+      "tiktok": 91,
+      "linkedin": 60,
+      "x": 82,
+      "facebook": 78
+    },
+    "pillars": [
+      "Contrarian",
+      "Case Studies",
+      "Education"
+    ],
+    "status": "DISCOVERED",
+    "lineage": {
+      "sourceProjectId": "proj-factory-e2e",
+      "sourceClipId": "clip-1-1790900518580",
+      "sourceStart": 0,
+      "sourceEnd": 14.25,
+      "wordCount": 33,
+      "extractedAt": "2026-10-02T00:21:58.581Z"
+    },
+    "createdAt": "2026-10-02T00:21:58.581Z",
+    "updatedAt": "2026-10-02T00:21:58.581Z"
   }
 ]

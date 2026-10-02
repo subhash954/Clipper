@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "test": "npx tsx tests/pipeline.test.ts && npx tsx tests/intelligence.test.ts && npx tsx tests/editor.test.ts && npx tsx tests/factory.test.ts"
+    "test": "npx tsx tests/pipeline.test.ts && npx tsx tests/intelligence.test.ts && npx tsx tests/editor.test.ts && npx tsx tests/factory.test.ts && npx tsx tests/publishing.test.ts",
+    "test:publishing": "npx tsx tests/publishing.test.ts"
   },
   "dependencies": {
     "@ffmpeg-installer/ffmpeg": "^1.1.0",
