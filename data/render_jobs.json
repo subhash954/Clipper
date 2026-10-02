@@ -1,5 +1,73 @@
 [
   {
+    "id": "job-test-1790909503662",
+    "projectId": "test-proj-1790909503650",
+    "inputUrl": "https://example.com/test.mp4",
+    "status": "queued",
+    "progress": 50,
+    "currentStage": "Rendering",
+    "createdAt": "2026-10-02T02:51:43.662Z",
+    "userId": "00000000-0000-0000-0000-000000000001"
+  },
+  {
+    "id": "render-1790909499327-h6azf",
+    "projectId": "0438559e-47be-4be0-8581-6c21db877eee",
+    "userId": "11111111-1111-1111-1111-111111111111",
+    "status": "completed",
+    "progress": 100,
+    "currentStage": "Rendering frames...",
+    "inputUrl": "/test/sample.mp4",
+    "retryCount": 0,
+    "maxRetries": 2,
+    "heartbeatAt": "2026-10-02T02:51:39.328Z",
+    "createdAt": "2026-10-02T02:51:39.327Z",
+    "outputUrl": "/exports/sample_out.mp4",
+    "completedAt": "2026-10-02T02:51:39.328Z"
+  },
+  {
+    "id": "job-test-1790909447162",
+    "projectId": "test-proj-1790909447148",
+    "inputUrl": "https://example.com/test.mp4",
+    "status": "queued",
+    "progress": 50,
+    "currentStage": "Rendering",
+    "createdAt": "2026-10-02T02:50:47.162Z",
+    "userId": "00000000-0000-0000-0000-000000000001"
+  },
+  {
+    "id": "render-1790909435342-cvc3k",
+    "projectId": "6ec790dd-1256-47ba-9b6f-ed027bd1d234",
+    "userId": "11111111-1111-1111-1111-111111111111",
+    "status": "completed",
+    "progress": 100,
+    "currentStage": "Rendering frames...",
+    "inputUrl": "/test/sample.mp4",
+    "retryCount": 0,
+    "maxRetries": 2,
+    "heartbeatAt": "2026-10-02T02:50:35.343Z",
+    "createdAt": "2026-10-02T02:50:35.342Z",
+    "outputUrl": "/exports/sample_out.mp4",
+    "completedAt": "2026-10-02T02:50:35.343Z"
+  },
+  {
+    "id": "job-test-1790907879194",
+    "projectId": "test-proj-1790907879176",
+    "inputUrl": "https://example.com/test.mp4",
+    "status": "queued",
+    "progress": 50,
+    "currentStage": "Rendering",
+    "createdAt": "2026-10-02T02:24:39.194Z"
+  },
+  {
+    "id": "job-test-1790907817654",
+    "projectId": "test-proj-1790907817641",
+    "inputUrl": "https://example.com/test.mp4",
+    "status": "queued",
+    "progress": 50,
+    "currentStage": "Rendering",
+    "createdAt": "2026-10-02T02:23:37.654Z"
+  },
+  {
     "id": "job-test-1790904376347",
     "projectId": "test-proj-1790904376328",
     "inputUrl": "https://example.com/test.mp4",

@@ -1,6 +1,8 @@
 import fs from 'fs';
 import path from 'path';
 import { spawn } from 'child_process';
+import { ClipperError } from './errors';
+import { safeFetchRemoteMedia } from './security/ssrfValidator';
 import { WordTimestamp, SubtitleStyle, VisualLayoutSettings, EditOperation, AudioStudioSettings } from './types';
 import {
   AspectRatio,
@@ -241,14 +243,19 @@ async function resolveLocalMediaInput(inputUrl: string, tempDir: string): Promis
     const fileName = `input_${Date.now()}.mp4`;
     const destPath = path.join(tempDir, fileName);
 
-    const response = await fetch(inputUrl);
-    if (!response.ok) {
-      throw new Error(`Failed to download source media from URL: ${response.status} ${response.statusText}`);
+    try {
+      const { buffer } = await safeFetchRemoteMedia(inputUrl);
+      fs.writeFileSync(destPath, buffer);
+      return destPath;
+    } catch (err: any) {
+      throw new ClipperError(
+        'MEDIA_UNAVAILABLE',
+        `Failed to acquire remote source media: ${err.message}`,
+        404,
+        false,
+        { inputMedia: inputUrl }
+      );
     }
-
-    const arrayBuffer = await response.arrayBuffer();
-    fs.writeFileSync(destPath, Buffer.from(arrayBuffer));
-    return destPath;
   }
 
   // If file doesn't exist, try public folder
@@ -263,7 +270,13 @@ async function resolveLocalMediaInput(inputUrl: string, tempDir: string): Promis
     return dataCandidate;
   }
 
-  throw new Error(`Media source could not be resolved: ${inputUrl}`);
+  throw new ClipperError(
+    'MEDIA_UNAVAILABLE',
+    `Source media could not be resolved: ${inputUrl}`,
+    404,
+    false,
+    { inputMedia: inputUrl }
+  );
 }
 
 /**
@@ -308,9 +321,15 @@ export async function renderClipWithFfmpeg(
     try {
       localInputPath = await resolveLocalMediaInput(inputMedia, tempDir);
     } catch (err: any) {
-      // Production Rule: Never generate fake/synthetic color boxes when real media is missing!
-      throw new Error(
-        `Cannot render clip: Source media file could not be acquired or is missing (${err.message}). Synthetic fallback is disabled in production.`
+      if (err instanceof ClipperError) {
+        throw err;
+      }
+      throw new ClipperError(
+        'MEDIA_UNAVAILABLE',
+        `Cannot render clip: Source media file could not be acquired. Source media could not be resolved: ${err.message}`,
+        404,
+        false,
+        { inputMedia, originalError: err.message }
       );
     }
 

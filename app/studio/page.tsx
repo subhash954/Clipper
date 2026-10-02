@@ -203,29 +203,31 @@ export default function StudioPage() {
             setDbSyncStatus('error');
           });
       } else {
-        // Fallback to localStorage active project
-        try {
-          const saved = localStorage.getItem('clipper_active_project');
-          if (saved) {
-            const parsed = JSON.parse(saved);
-            if (parsed.id) setProjectId(parsed.id);
-            if (parsed.videoTitle) setProjectName(parsed.videoTitle.slice(0, 48));
-            if (parsed.videoUrl) setVideoUrl(parsed.videoUrl);
-            if (parsed.activeClip?.words && parsed.activeClip.words.length > 0) {
-              setWords(parsed.activeClip.words);
-            } else if (parsed.transcript?.words && parsed.transcript.words.length > 0) {
-              setWords(parsed.transcript.words);
-            }
-            if (parsed.clips && parsed.clips.length > 0) {
-              setClips(parsed.clips);
-              setActiveClipId(parsed.activeClip?.id || parsed.clips[0].id);
-            }
-            if (typeof parsed.isMediaAvailable === 'boolean') {
-              setIsMediaAvailable(parsed.isMediaAvailable);
-            }
-          }
-        } catch (err) {
-          console.warn('Error reading saved project from localStorage:', err);
+        // If no explicit query ID, check for last active project ID pointer
+        const lastId = localStorage.getItem('clipper_last_project_id');
+        if (lastId) {
+          fetch(`/api/projects?id=${lastId}`)
+            .then((res) => res.json())
+            .then((data) => {
+              if (data.project) {
+                const p = data.project;
+                setProjectId(p.id);
+                if (p.title) setProjectName(p.title);
+                if (p.sourceUrl) setVideoUrl(p.sourceUrl);
+                if (p.clips && p.clips.length > 0) {
+                  setClips(p.clips);
+                  setActiveClipId(p.clips[0].id);
+                  if (p.clips[0].words && p.clips[0].words.length > 0) {
+                    setWords(p.clips[0].words);
+                  }
+                }
+                if (typeof p.isMediaAvailable === 'boolean') {
+                  setIsMediaAvailable(p.isMediaAvailable);
+                }
+                setDbSyncStatus('saved');
+              }
+            })
+            .catch(() => {});
         }
       }
     }
@@ -247,8 +249,9 @@ export default function StudioPage() {
           deepgramSTTCost: 0.19,
           geminiFlashLLMCost: 0.002,
           stockBRollCost: 0.0,
-          totalCostUSD: 0.35,
-          totalCostINR: 30,
+          totalCostUSD: 0.192,
+          totalCostINR: 16,
+          isEstimated: true,
         },
         updatedAt: new Date().toISOString(),
       };
@@ -263,17 +266,7 @@ export default function StudioPage() {
         setDbSyncStatus('saved');
         setLastSavedAt(new Date());
         if (typeof window !== 'undefined') {
-          localStorage.setItem(
-            'clipper_active_project',
-            JSON.stringify({
-              id: projectId,
-              videoTitle: projectName,
-              videoUrl: videoUrl,
-              activeClip: activeClip,
-              clips: clips,
-              isMediaAvailable: isMediaAvailable,
-            })
-          );
+          localStorage.setItem('clipper_last_project_id', projectId);
         }
       } else {
         setDbSyncStatus('error');

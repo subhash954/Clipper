@@ -2,6 +2,9 @@ import fs from 'fs';
 import path from 'path';
 import { Project, RenderJob, CostTelemetryRecord } from '../types';
 import { supabase, isSupabaseConfigured } from '../supabase';
+import { ClipperError } from '../errors';
+
+export const DEV_DEFAULT_USER_ID = '00000000-0000-0000-0000-000000000001';
 
 export interface IStorageAdapter {
   saveProject(project: Project): Promise<Project>;
@@ -30,12 +33,19 @@ export function ensureValidUuid(id?: string): string {
  */
 export class SupabaseStorageAdapter implements IStorageAdapter {
   async saveProject(project: Project): Promise<Project> {
+    if (!project.userId) {
+      if (process.env.NODE_ENV === 'production') {
+        throw new ClipperError('VALIDATION_ERROR', 'Project ownership (userId) is required.', 400);
+      }
+      project.userId = DEV_DEFAULT_USER_ID;
+    }
+
     const validId = ensureValidUuid(project.id);
     project.id = validId;
 
     const { error: projError } = await supabase.from('projects').upsert({
       id: validId,
-      user_id: project.userId || null,
+      user_id: project.userId,
       workspace_id: project.workspaceId || null,
       source_external_id: project.sourceExternalId || null,
       title: project.title,
@@ -202,18 +212,24 @@ export class SupabaseStorageAdapter implements IStorageAdapter {
   async deleteProject(id: string): Promise<boolean> {
     const { error } = await supabase.from('projects').delete().eq('id', id);
     if (error) {
-      console.warn('Supabase deleteProject failed:', error.message);
-      return false;
+      throw new ClipperError('DATABASE_ERROR', `Supabase deleteProject failed: ${error.message}`, 500);
     }
     return true;
   }
 
   async createRenderJob(job: RenderJob): Promise<RenderJob> {
+    if (!job.userId) {
+      if (process.env.NODE_ENV === 'production') {
+        throw new ClipperError('VALIDATION_ERROR', 'Render job ownership (userId) is required.', 400);
+      }
+      job.userId = DEV_DEFAULT_USER_ID;
+    }
+
     const { error } = await supabase.from('render_jobs').insert({
       id: job.id,
       project_id: job.projectId || null,
       clip_id: job.clipId || null,
-      user_id: job.userId || null,
+      user_id: job.userId,
       status: job.status,
       progress: job.progress,
       current_stage: job.currentStage,
@@ -224,7 +240,7 @@ export class SupabaseStorageAdapter implements IStorageAdapter {
     });
 
     if (error) {
-      console.warn('Supabase createRenderJob warning:', error.message);
+      throw new ClipperError('DATABASE_ERROR', `Supabase createRenderJob failed: ${error.message}`, 500);
     }
     return job;
   }
@@ -365,6 +381,12 @@ export class LocalStorageAdapter implements IStorageAdapter {
   }
 
   async saveProject(project: Project): Promise<Project> {
+    if (!project.userId) {
+      if (process.env.NODE_ENV === 'production') {
+        throw new ClipperError('VALIDATION_ERROR', 'Project ownership (userId) is required.', 400);
+      }
+      project.userId = DEV_DEFAULT_USER_ID;
+    }
     const list = await this.listProjects();
     const updated = [project, ...list.filter((p) => p.id !== project.id)];
     this.writeJson(this.projectsFile, updated);
@@ -388,6 +410,12 @@ export class LocalStorageAdapter implements IStorageAdapter {
   }
 
   async createRenderJob(job: RenderJob): Promise<RenderJob> {
+    if (!job.userId) {
+      if (process.env.NODE_ENV === 'production') {
+        throw new ClipperError('VALIDATION_ERROR', 'Render job ownership (userId) is required.', 400);
+      }
+      job.userId = DEV_DEFAULT_USER_ID;
+    }
     const list = await this.listRenderJobs();
     const updated = [job, ...list.filter((j) => j.id !== job.id)];
     this.writeJson(this.jobsFile, updated);
@@ -429,18 +457,50 @@ let storageInstance: IStorageAdapter | null = null;
 
 export function getStorage(): IStorageAdapter {
   if (!storageInstance) {
-    if (isSupabaseConfigured()) {
-      storageInstance = new SupabaseStorageAdapter();
-    } else {
-      if (process.env.NODE_ENV === 'production' && process.env.ALLOW_DEV_LOCAL_STORAGE !== 'true') {
-        throw new Error(
-          'CRITICAL PERSISTENCE ERROR: Database storage (Supabase) is not configured in production mode. Local JSON persistence is forbidden in production. Configure NEXT_PUBLIC_SUPABASE_URL or explicitly set ALLOW_DEV_LOCAL_STORAGE=true.'
+    const storageMode = process.env.STORAGE_MODE?.toLowerCase();
+
+    if (storageMode === 'supabase') {
+      if (!isSupabaseConfigured()) {
+        throw new ClipperError(
+          'STORAGE_UNAVAILABLE',
+          'Supabase storage requested (STORAGE_MODE=supabase) but NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY is missing.',
+          500
         );
       }
+      storageInstance = new SupabaseStorageAdapter();
+      return storageInstance;
+    }
+
+    if (process.env.NODE_ENV === 'production') {
+      if (storageMode === 'local' && process.env.ALLOW_DEV_LOCAL_STORAGE !== 'true') {
+        throw new ClipperError(
+          'STORAGE_UNAVAILABLE',
+          'CRITICAL PERSISTENCE ERROR: Local JSON storage is forbidden in production. Configure STORAGE_MODE=supabase with PostgreSQL.',
+          500
+        );
+      }
+      if (!isSupabaseConfigured() && process.env.ALLOW_DEV_LOCAL_STORAGE !== 'true') {
+        throw new ClipperError(
+          'STORAGE_UNAVAILABLE',
+          'CRITICAL PERSISTENCE ERROR: Database storage (Supabase PostgreSQL) is not configured in production mode. Local JSON persistence is forbidden in production. Configure NEXT_PUBLIC_SUPABASE_URL or explicitly set ALLOW_DEV_LOCAL_STORAGE=true.',
+          500
+        );
+      }
+    }
+
+    if (storageMode === 'local') {
+      storageInstance = new LocalStorageAdapter();
+    } else if (isSupabaseConfigured()) {
+      storageInstance = new SupabaseStorageAdapter();
+    } else {
       storageInstance = new LocalStorageAdapter();
     }
   }
   return storageInstance;
+}
+
+export function resetStorageInstance(): void {
+  storageInstance = null;
 }
 
 /**

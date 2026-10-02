@@ -4,12 +4,16 @@ import { createRenderJob, startRenderWorkerAsync } from '@/lib/renderJobs';
 import { RenderClipOptions } from '@/lib/renderEngine';
 import { getAuthenticatedUser, requireProjectAccess } from '@/lib/auth/serverAuth';
 import { validateSafeRemoteUrl } from '@/lib/security/ssrfValidator';
+import { formatErrorResponse, ClipperError } from '@/lib/errors';
 
 export async function POST(req: NextRequest) {
   try {
     const user = await getAuthenticatedUser(req);
     if (!user) {
-      return NextResponse.json({ error: 'Authentication required. Please log in.' }, { status: 401 });
+      return NextResponse.json(
+        new ClipperError('AUTH_REQUIRED', 'Authentication required. Please log in.', 401).toResponse(),
+        { status: 401 }
+      );
     }
 
     const body = await req.json();
@@ -29,17 +33,23 @@ export async function POST(req: NextRequest) {
       brollOperations,
     } = body;
 
-    if (projectId) {
-      try {
-        await requireProjectAccess(user, projectId, 'editor');
-      } catch (authErr: any) {
-        return NextResponse.json({ error: authErr.message }, { status: authErr.statusCode || 403 });
-      }
+    if (!projectId) {
+      return NextResponse.json(
+        new ClipperError('VALIDATION_ERROR', 'projectId is required to initiate a render job.', 400).toResponse(),
+        { status: 400 }
+      );
+    }
+
+    try {
+      await requireProjectAccess(user, projectId, 'editor');
+    } catch (authErr: any) {
+      const { body: errBody, status } = formatErrorResponse(authErr);
+      return NextResponse.json(errBody, { status });
     }
 
     if (!clip || typeof clip.start !== 'number' || typeof clip.duration !== 'number') {
       return NextResponse.json(
-        { error: 'Valid clip object with start and duration timestamps is required.' },
+        new ClipperError('VALIDATION_ERROR', 'Valid clip object with start and duration timestamps is required.', 400).toResponse(),
         { status: 400 }
       );
     }
@@ -134,10 +144,7 @@ export async function POST(req: NextRequest) {
       currentStage: job.currentStage,
     });
   } catch (error: any) {
-    console.error('Error initiating render job:', error);
-    return NextResponse.json(
-      { error: error?.message || 'Failed to initiate video render job.' },
-      { status: 500 }
-    );
+    const { body, status } = formatErrorResponse(error);
+    return NextResponse.json(body, { status });
   }
 }

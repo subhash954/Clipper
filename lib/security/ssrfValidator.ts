@@ -108,3 +108,74 @@ export async function validateSafeRemoteUrl(urlStr: string): Promise<SafeUrlVali
     return { isValid: false, error: `DNS resolution failed: ${err.message}` };
   }
 }
+
+/**
+ * Safely fetches remote media with redirect validation, timeout, and max size limits.
+ * Protects against open-redirect SSRF bypasses and memory exhaustion.
+ */
+export async function safeFetchRemoteMedia(
+  urlStr: string,
+  options: {
+    maxBytes?: number;
+    timeoutMs?: number;
+    maxRedirects?: number;
+  } = {}
+): Promise<{ buffer: Buffer; contentType: string }> {
+  const maxBytes = options.maxBytes ?? 200 * 1024 * 1024; // 200MB limit
+  const timeoutMs = options.timeoutMs ?? 15000;
+  const maxRedirects = options.maxRedirects ?? 3;
+
+  let currentUrl = urlStr;
+  let redirectsFollowed = 0;
+
+  while (redirectsFollowed <= maxRedirects) {
+    const ssrfCheck = await validateSafeRemoteUrl(currentUrl);
+    if (!ssrfCheck.isValid) {
+      throw new Error(`SSRF violation fetching remote media: ${ssrfCheck.error}`);
+    }
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+      const response = await fetch(currentUrl, {
+        signal: controller.signal,
+        redirect: 'manual',
+      });
+
+      // Handle redirects explicitly
+      if ([301, 302, 303, 307, 308].includes(response.status)) {
+        const location = response.headers.get('location');
+        if (!location) {
+          throw new Error('Redirect missing location header');
+        }
+        currentUrl = new URL(location, currentUrl).toString();
+        redirectsFollowed++;
+        continue;
+      }
+
+      if (!response.ok) {
+        throw new Error(`Remote media fetch failed with HTTP ${response.status}`);
+      }
+
+      const contentLength = response.headers.get('content-length');
+      if (contentLength && parseInt(contentLength, 10) > maxBytes) {
+        throw new Error(`Remote media exceeds maximum allowed size of ${maxBytes} bytes`);
+      }
+
+      const arrayBuffer = await response.arrayBuffer();
+      const buffer = Buffer.from(arrayBuffer);
+
+      if (buffer.length > maxBytes) {
+        throw new Error(`Remote media body exceeded maximum allowed size (${buffer.length} bytes)`);
+      }
+
+      const contentType = response.headers.get('content-type') || 'application/octet-stream';
+      return { buffer, contentType };
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  throw new Error(`Exceeded maximum redirect limit (${maxRedirects}) fetching remote media`);
+}

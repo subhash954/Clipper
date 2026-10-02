@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getRenderJob } from '@/lib/renderJobs';
 import { getAuthenticatedUser } from '@/lib/auth/serverAuth';
+import { formatErrorResponse, ClipperError } from '@/lib/errors';
 
 export async function GET(
   req: NextRequest,
@@ -9,22 +10,34 @@ export async function GET(
   try {
     const user = await getAuthenticatedUser(req);
     if (!user) {
-      return NextResponse.json({ error: 'Authentication required. Please log in.' }, { status: 401 });
+      return NextResponse.json(
+        new ClipperError('AUTH_REQUIRED', 'Authentication required. Please log in.', 401).toResponse(),
+        { status: 401 }
+      );
     }
 
     const { jobId } = await params;
     if (!jobId) {
-      return NextResponse.json({ error: 'Job ID parameter is required' }, { status: 400 });
+      return NextResponse.json(
+        new ClipperError('VALIDATION_ERROR', 'Job ID parameter is required.', 400).toResponse(),
+        { status: 400 }
+      );
     }
 
     const job = await getRenderJob(jobId);
     if (!job) {
-      return NextResponse.json({ error: `Render job ${jobId} not found` }, { status: 404 });
+      return NextResponse.json(
+        new ClipperError('NOT_FOUND', `Render job ${jobId} not found.`, 404).toResponse(),
+        { status: 404 }
+      );
     }
 
-    // Tenant check: user can only see their own render jobs unless admin
-    if (job.userId && job.userId !== user.id && user.role !== 'admin' && !user.isDevUser) {
-      return NextResponse.json({ error: 'Forbidden: You do not have permission to view this render job.' }, { status: 403 });
+    // Strict tenant check: user can only see their own render jobs unless admin
+    if (user.role !== 'admin' && job.userId !== user.id) {
+      return NextResponse.json(
+        new ClipperError('FORBIDDEN', 'Forbidden: You do not have permission to view this render job.', 403).toResponse(),
+        { status: 403 }
+      );
     }
 
     return NextResponse.json({
@@ -32,10 +45,7 @@ export async function GET(
       job,
     });
   } catch (error: any) {
-    console.error('Error fetching render job:', error);
-    return NextResponse.json(
-      { error: error?.message || 'Failed to fetch render job status' },
-      { status: 500 }
-    );
+    const { body, status } = formatErrorResponse(error);
+    return NextResponse.json(body, { status });
   }
 }

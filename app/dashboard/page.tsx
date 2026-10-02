@@ -49,40 +49,45 @@ export default function WorkspaceDashboard() {
   }, []);
 
   const handleOpenProjectInStudio = (project: Project) => {
-    if (typeof window !== 'undefined') {
-      const activeClip = project.clips && project.clips.length > 0 ? project.clips[0] : null;
-      localStorage.setItem('clipper_active_project', JSON.stringify({
-        id: project.id,
-        videoTitle: project.title,
-        channelName: project.channelName || 'Clipper Creator',
-        thumbnailUrl: project.thumbnailUrl,
-        activeClip: activeClip,
-        clips: project.clips || [],
-        isMediaAvailable: project.isMediaAvailable ?? false,
-      }));
-    }
     router.push(`/studio?projectId=${project.id}`);
   };
 
   const handleDeleteProject = async (projectId: string) => {
     try {
-      await fetch(`/api/projects?id=${projectId}`, { method: 'DELETE' });
-      setProjects((prev) => prev.filter((p) => p.id !== projectId));
+      const res = await fetch(`/api/projects?id=${projectId}`, { method: 'DELETE' });
+      if (res.ok) {
+        setProjects((prev) => prev.filter((p) => p.id !== projectId));
+      }
     } catch (err) {
       console.warn('Could not delete project from database:', err);
     }
     setActiveMenuProjectId(null);
   };
 
-  const handleDuplicateProject = (project: Project) => {
-    const duplicated: Project = {
-      ...project,
-      id: crypto.randomUUID(),
-      title: `${project.title} (Copy)`,
-      createdAt: new Date().toISOString(),
-    };
-    setProjects((prev) => [duplicated, ...prev]);
-    setActiveMenuProjectId(null);
+  const handleDuplicateProject = async (project: Project) => {
+    try {
+      const newId = crypto.randomUUID();
+      const duplicatedPayload = {
+        ...project,
+        id: newId,
+        title: `${project.title} (Copy)`,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+      const res = await fetch('/api/projects', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(duplicatedPayload),
+      });
+      const data = await res.json();
+      if (res.ok && data.project) {
+        setProjects((prev) => [data.project, ...prev]);
+      }
+    } catch (err) {
+      console.error('Could not persist duplicated project to database:', err);
+    } finally {
+      setActiveMenuProjectId(null);
+    }
   };
 
   const formatDuration = (seconds?: number) => {

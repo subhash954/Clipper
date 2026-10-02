@@ -124,13 +124,9 @@ export async function requireProjectAccess(
     return;
   }
 
-  // In development mode, allow dev user to access existing projects
-  if (user.isDevUser && (!project.userId || project.userId === DEV_USER_ID)) {
-    return;
-  }
-
-  // Strict ownership check
-  if (project.userId && project.userId !== user.id) {
+  // Strict tenant ownership check
+  const effectiveOwner = project.userId || (user.isDevUser ? DEV_USER_ID : null);
+  if (!effectiveOwner || effectiveOwner !== user.id) {
     throw new AuthError('Forbidden: You do not have permission to access this project.', 403);
   }
 }

@@ -436,7 +436,10 @@ async function runTests() {
     });
   } catch (err: any) {
     missingMediaThrew = true;
-    assert(err.message.includes('Source media file could not be acquired'), `Error message correctly reports missing source media: "${err.message}"`);
+    assert(
+      err.code === 'MEDIA_UNAVAILABLE' || err.message.includes('Source media file could not be acquired'),
+      `Error message correctly reports missing source media: "${err.message}"`
+    );
   }
   assert(missingMediaThrew, 'Render pipeline cleanly fails when media is missing (NO fake synthetic fallback)');
 

@@ -1,9 +1,14 @@
 import { RenderJob, RenderJobStatus } from './types';
 import { renderClipWithFfmpeg, RenderClipOptions } from './renderEngine';
 import { getStorage } from './storage';
+import { ClipperError } from './errors';
 
-// In-memory render job registry for live async status tracking
+// In-memory render job cache for fast status retrieval
 const activeJobs = new Map<string, RenderJob>();
+
+export function clearActiveJobsMemoryCache(): void {
+  activeJobs.clear();
+}
 
 /**
  * Creates and registers a new durable render job with idempotency
@@ -16,7 +21,20 @@ export async function createRenderJob(params: {
   inputUrl: string;
   idempotencyKey?: string;
 }): Promise<RenderJob> {
-  const jobId = params.id || params.idempotencyKey || `render-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+  const effectiveUserId =
+    params.userId ||
+    (process.env.NODE_ENV !== 'production'
+      ? '00000000-0000-0000-0000-000000000001'
+      : undefined);
+
+  if (!effectiveUserId) {
+    throw new ClipperError('VALIDATION_ERROR', 'userId is required to create a render job.', 400);
+  }
+
+  const jobId =
+    params.id ||
+    params.idempotencyKey ||
+    `render-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
   const now = new Date().toISOString();
 
   // Idempotency check: if job exists and is still processing/queued, return it
@@ -29,7 +47,7 @@ export async function createRenderJob(params: {
     id: jobId,
     projectId: params.projectId,
     clipId: params.clipId,
-    userId: params.userId,
+    userId: effectiveUserId,
     status: 'queued',
     progress: 0,
     currentStage: 'Queued in render pipeline...',
@@ -40,27 +58,27 @@ export async function createRenderJob(params: {
     createdAt: now,
   };
 
-  activeJobs.set(jobId, job);
-
-  // Sync to database / persistent storage
+  // Authoritative persistent storage: fail immediately if persistence fails
+  const storage = getStorage();
   try {
-    const storage = getStorage();
     await storage.createRenderJob(job);
-  } catch (err) {
-    console.warn('Could not persist render job to database:', err);
+  } catch (err: any) {
+    if (err instanceof ClipperError) throw err;
+    throw new ClipperError(
+      'STORAGE_UNAVAILABLE',
+      `Could not persist render job to durable storage: ${err.message}`,
+      500
+    );
   }
 
+  activeJobs.set(jobId, job);
   return job;
 }
 
 /**
- * Retrieves a render job by ID from memory or persistent storage
+ * Retrieves a render job by ID from authoritative storage with memory cache fallback
  */
 export async function getRenderJob(jobId: string): Promise<RenderJob | null> {
-  if (activeJobs.has(jobId)) {
-    return activeJobs.get(jobId)!;
-  }
-
   try {
     const storage = getStorage();
     const dbJob = await storage.getRenderJob(jobId);
@@ -69,14 +87,14 @@ export async function getRenderJob(jobId: string): Promise<RenderJob | null> {
       return dbJob;
     }
   } catch (err) {
-    console.warn('Could not fetch render job from storage:', err);
+    // If storage query fails, fall back to memory cache
   }
 
-  return null;
+  return activeJobs.get(jobId) || null;
 }
 
 /**
- * Updates a render job's status, progress, and heartbeat
+ * Updates a render job's status, progress, and heartbeat with state transition validation
  */
 export async function updateRenderJob(
   jobId: string,
@@ -85,21 +103,43 @@ export async function updateRenderJob(
   const existing = await getRenderJob(jobId);
   if (!existing) return null;
 
+  // State Machine Validation: Disallow transition away from terminal states
+  const TERMINAL_STATES: RenderJobStatus[] = ['completed', 'failed', 'cancelled'];
+  if (
+    TERMINAL_STATES.includes(existing.status) &&
+    updates.status &&
+    updates.status !== existing.status
+  ) {
+    throw new ClipperError(
+      'VALIDATION_ERROR',
+      `Illegal render job state transition: cannot transition from terminal state '${existing.status}' to '${updates.status}'.`,
+      400
+    );
+  }
+
   const updated: RenderJob = {
     ...existing,
     ...updates,
     heartbeatAt: new Date().toISOString(),
   };
 
-  activeJobs.set(jobId, updated);
-
+  const storage = getStorage();
   try {
-    const storage = getStorage();
-    await storage.updateRenderJob(jobId, updated);
-  } catch (err) {
-    console.warn('Could not sync render job update to storage:', err);
+    const persisted = await storage.updateRenderJob(jobId, updated);
+    if (persisted) {
+      activeJobs.set(jobId, persisted);
+      return persisted;
+    }
+  } catch (err: any) {
+    if (err instanceof ClipperError) throw err;
+    throw new ClipperError(
+      'STORAGE_UNAVAILABLE',
+      `Could not persist render job update: ${err.message}`,
+      500
+    );
   }
 
+  activeJobs.set(jobId, updated);
   return updated;
 }
 
@@ -107,6 +147,11 @@ export async function updateRenderJob(
  * Cancels a pending or processing render job
  */
 export async function cancelRenderJob(jobId: string): Promise<RenderJob | null> {
+  const existing = await getRenderJob(jobId);
+  if (!existing) return null;
+  if (existing.status === 'completed') {
+    throw new ClipperError('VALIDATION_ERROR', `Cannot cancel already completed render job ${jobId}.`, 400);
+  }
   return updateRenderJob(jobId, {
     status: 'cancelled',
     currentStage: 'Render cancelled by user.',

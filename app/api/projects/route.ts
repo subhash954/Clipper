@@ -1,13 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getStorage, ensureValidUuid } from '@/lib/storage';
 import { Project } from '@/lib/types';
-import { getAuthenticatedUser, requireProjectAccess, AuthError } from '@/lib/auth/serverAuth';
+import { getAuthenticatedUser, requireProjectAccess } from '@/lib/auth/serverAuth';
+import { formatErrorResponse, ClipperError } from '@/lib/errors';
 
 export async function GET(req: NextRequest) {
   try {
     const user = await getAuthenticatedUser(req);
     if (!user) {
-      return NextResponse.json({ error: 'Authentication required. Please log in.' }, { status: 401 });
+      return NextResponse.json(
+        new ClipperError('AUTH_REQUIRED', 'Authentication required. Please log in.', 401).toResponse(),
+        { status: 401 }
+      );
     }
 
     const { searchParams } = new URL(req.url);
@@ -18,27 +22,31 @@ export async function GET(req: NextRequest) {
       try {
         await requireProjectAccess(user, id, 'viewer');
       } catch (authErr: any) {
-        return NextResponse.json({ error: authErr.message }, { status: authErr.statusCode || 403 });
+        const { body, status } = formatErrorResponse(authErr);
+        return NextResponse.json(body, { status });
       }
 
       const project = await storage.getProject(id);
       if (!project) {
-        return NextResponse.json({ error: `Project ${id} not found` }, { status: 404 });
+        return NextResponse.json(
+          new ClipperError('NOT_FOUND', `Project ${id} not found.`, 404).toResponse(),
+          { status: 404 }
+        );
       }
       return NextResponse.json({ success: true, project });
     }
 
     const allProjects = await storage.listProjects();
-    // Enforce tenant isolation: users only see their own projects (admins see all)
+    // Enforce strict tenant isolation: users only see their own projects (admins see all)
     const userProjects = allProjects.filter((p) => {
       if (user.role === 'admin') return true;
-      if (user.isDevUser) return true;
       return p.userId === user.id;
     });
 
     return NextResponse.json({ success: true, count: userProjects.length, projects: userProjects });
   } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    const { body, status } = formatErrorResponse(error);
+    return NextResponse.json(body, { status });
   }
 }
 
@@ -46,7 +54,10 @@ export async function POST(req: NextRequest) {
   try {
     const user = await getAuthenticatedUser(req);
     if (!user) {
-      return NextResponse.json({ error: 'Authentication required. Please log in.' }, { status: 401 });
+      return NextResponse.json(
+        new ClipperError('AUTH_REQUIRED', 'Authentication required. Please log in.', 401).toResponse(),
+        { status: 401 }
+      );
     }
 
     const body = await req.json();
@@ -61,7 +72,8 @@ export async function POST(req: NextRequest) {
         try {
           await requireProjectAccess(user, targetId, 'editor');
         } catch (authErr: any) {
-          return NextResponse.json({ error: authErr.message }, { status: authErr.statusCode || 403 });
+          const { body: errBody, status } = formatErrorResponse(authErr);
+          return NextResponse.json(errBody, { status });
         }
       }
     }
@@ -94,7 +106,8 @@ export async function POST(req: NextRequest) {
     const saved = await storage.saveProject(project);
     return NextResponse.json({ success: true, project: saved });
   } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    const { body, status } = formatErrorResponse(error);
+    return NextResponse.json(body, { status });
   }
 }
 
@@ -102,25 +115,33 @@ export async function DELETE(req: NextRequest) {
   try {
     const user = await getAuthenticatedUser(req);
     if (!user) {
-      return NextResponse.json({ error: 'Authentication required. Please log in.' }, { status: 401 });
+      return NextResponse.json(
+        new ClipperError('AUTH_REQUIRED', 'Authentication required. Please log in.', 401).toResponse(),
+        { status: 401 }
+      );
     }
 
     const { searchParams } = new URL(req.url);
     const id = searchParams.get('id');
     if (!id) {
-      return NextResponse.json({ error: 'Project ID is required' }, { status: 400 });
+      return NextResponse.json(
+        new ClipperError('VALIDATION_ERROR', 'Project ID is required', 400).toResponse(),
+        { status: 400 }
+      );
     }
 
     try {
       await requireProjectAccess(user, id, 'owner');
     } catch (authErr: any) {
-      return NextResponse.json({ error: authErr.message }, { status: authErr.statusCode || 403 });
+      const { body, status } = formatErrorResponse(authErr);
+      return NextResponse.json(body, { status });
     }
 
     const storage = getStorage();
     const deleted = await storage.deleteProject(id);
     return NextResponse.json({ success: deleted });
   } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    const { body, status } = formatErrorResponse(error);
+    return NextResponse.json(body, { status });
   }
 }
