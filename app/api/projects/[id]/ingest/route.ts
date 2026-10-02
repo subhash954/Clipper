@@ -8,6 +8,8 @@ import { transcribeWithDeepgram } from '@/lib/providers/deepgramProvider';
 import { analyzeTranscriptWithGemini } from '@/lib/providers/geminiProvider';
 import { alignClipsToTranscript } from '@/lib/alignmentEngine';
 import { ViralClip, Project } from '@/lib/types';
+import { getStorageService } from '@/lib/storage/storageService';
+import { safeFetchRemoteMedia } from '@/lib/security/ssrfValidator';
 
 export async function POST(
   req: NextRequest,
@@ -36,42 +38,61 @@ export async function POST(
       // 1. Resolve source video file
       const sourceUrl = project.sourceUrl || '';
       let videoDiskPath = '';
+      let isEphemeralScratch = false;
+      const tempScratchDir = path.join(process.cwd(), 'data', 'temp_ingest');
 
-      if (sourceUrl.startsWith('/uploads/')) {
-        videoDiskPath = path.join(process.cwd(), 'public', sourceUrl);
-      } else if (fs.existsSync(/*turbopackIgnore: true*/ sourceUrl)) {
+      if (fs.existsSync(/*turbopackIgnore: true*/ sourceUrl)) {
         videoDiskPath = sourceUrl;
+      } else if (sourceUrl.startsWith('/uploads/') && fs.existsSync(/*turbopackIgnore: true*/ path.join(process.cwd(), 'public', sourceUrl))) {
+        videoDiskPath = path.join(process.cwd(), 'public', sourceUrl);
+      } else {
+        // Attempt cloud storage download or remote URL fetch
+        fs.mkdirSync(tempScratchDir, { recursive: true });
+        const scratchTarget = path.join(tempScratchDir, `${projectId}_${Date.now()}.mp4`);
+
+        try {
+          const storageService = getStorageService();
+          if (await storageService.exists(sourceUrl)) {
+            const buf = await storageService.getObject(sourceUrl);
+            fs.writeFileSync(scratchTarget, buf);
+            videoDiskPath = scratchTarget;
+            isEphemeralScratch = true;
+          } else if (sourceUrl.startsWith('http://') || sourceUrl.startsWith('https://')) {
+            const { buffer } = await safeFetchRemoteMedia(sourceUrl);
+            fs.writeFileSync(scratchTarget, buffer);
+            videoDiskPath = scratchTarget;
+            isEphemeralScratch = true;
+          }
+        } catch (resolveErr: any) {
+          console.warn('StorageService video resolution error:', resolveErr.message);
+        }
       }
 
       if (!videoDiskPath || !fs.existsSync(/*turbopackIgnore: true*/ videoDiskPath)) {
         return NextResponse.json(
-          { error: `Source video file not found on disk at: ${sourceUrl}` },
+          { error: `Source video could not be resolved from storage or URL: ${sourceUrl}` },
           { status: 400 }
         );
       }
 
-      // 2. Extract 16kHz mono audio via FFmpeg
-      const extraction = await extractAudioFromVideo(videoDiskPath);
-      if (!extraction.success || !fs.existsSync(extraction.audioPath)) {
-        return NextResponse.json(
-          { error: `Audio extraction failed: ${extraction.error}` },
-          { status: 500 }
-        );
-      }
-
-      // 3. Transcribe with Deepgram Nova-2
-      const audioBuffer = fs.readFileSync(extraction.audioPath);
-      const transcript = await transcribeWithDeepgram({
-        audioBuffer,
-        mimetype: 'audio/mp3',
-      });
-
-      // Cleanup temporary extracted audio
+      let extractionAudioPath: string | null = null;
       try {
-        fs.unlinkSync(extraction.audioPath);
-      } catch (e) {
-        // non-fatal
-      }
+        // 2. Extract 16kHz mono audio via FFmpeg
+        const extraction = await extractAudioFromVideo(videoDiskPath);
+        if (!extraction.success || !fs.existsSync(extraction.audioPath)) {
+          return NextResponse.json(
+            { error: `Audio extraction failed: ${extraction.error}` },
+            { status: 500 }
+          );
+        }
+        extractionAudioPath = extraction.audioPath;
+
+        // 3. Transcribe with Deepgram Nova-2
+        const audioBuffer = fs.readFileSync(extraction.audioPath);
+        const transcript = await transcribeWithDeepgram({
+          audioBuffer,
+          mimetype: 'audio/mp3',
+        });
 
       if (!transcript.words || transcript.words.length === 0) {
         return NextResponse.json(
@@ -135,7 +156,19 @@ export async function POST(
         success: true,
         project,
       });
+    } finally {
+      if (extractionAudioPath && fs.existsSync(/*turbopackIgnore: true*/ extractionAudioPath)) {
+        try {
+          fs.unlinkSync(extractionAudioPath);
+        } catch {}
+      }
+      if (isEphemeralScratch && videoDiskPath && fs.existsSync(/*turbopackIgnore: true*/ videoDiskPath)) {
+        try {
+          fs.unlinkSync(videoDiskPath);
+        } catch {}
+      }
     }
+  }
 
     return NextResponse.json(
       { error: `Ingestion for sourceType "${project.sourceType}" is handled via /api/youtube/ingest.` },

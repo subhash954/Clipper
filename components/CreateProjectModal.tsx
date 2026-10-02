@@ -61,25 +61,89 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
 
     try {
       if (uploadedFile) {
-        // Step 1: Upload media file & probe container
-        setCurrentStageText('Uploading & verifying video signature with FFprobe...');
-        setAnalysisStage(0);
+        let mediaAsset: any;
+        const chunkSize = 5 * 1024 * 1024; // 5MB chunks
 
-        const uploadFormData = new FormData();
-        uploadFormData.append('file', uploadedFile);
+        if (uploadedFile.size > chunkSize) {
+          // Chunked Resumable Upload
+          setCurrentStageText('Initializing cloud upload session...');
+          setAnalysisStage(0);
 
-        const uploadRes = await fetch('/api/media/upload', {
-          method: 'POST',
-          body: uploadFormData,
-        });
+          const initRes = await fetch('/api/media/upload/init', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              fileName: uploadedFile.name,
+              fileSizeBytes: uploadedFile.size,
+              mimeType: uploadedFile.type || 'video/mp4',
+            }),
+          });
 
-        if (!uploadRes.ok) {
-          const errData = await uploadRes.json().catch(() => ({}));
-          throw new Error(errData.error || `Upload failed with status ${uploadRes.status}`);
+          if (!initRes.ok) {
+            const errData = await initRes.json().catch(() => ({}));
+            throw new Error(errData.error || 'Failed to initialize upload session.');
+          }
+
+          const { sessionId } = await initRes.json();
+          const totalChunks = Math.ceil(uploadedFile.size / chunkSize);
+
+          for (let partNumber = 1; partNumber <= totalChunks; partNumber++) {
+            const start = (partNumber - 1) * chunkSize;
+            const end = Math.min(uploadedFile.size, start + chunkSize);
+            const chunkBlob = uploadedFile.slice(start, end);
+
+            const percent = Math.round(((partNumber - 1) / totalChunks) * 100);
+            setCurrentStageText(`Streaming chunks to cloud storage (${percent}%)...`);
+
+            const chunkRes = await fetch(
+              `/api/media/upload/chunk?sessionId=${sessionId}&partNumber=${partNumber}`,
+              {
+                method: 'PUT',
+                body: chunkBlob,
+              }
+            );
+
+            if (!chunkRes.ok) {
+              const errData = await chunkRes.json().catch(() => ({}));
+              throw new Error(errData.error || `Chunk ${partNumber} upload failed.`);
+            }
+          }
+
+          setCurrentStageText('Finalizing upload & probing media container with FFprobe...');
+          const completeRes = await fetch('/api/media/upload/complete', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ sessionId }),
+          });
+
+          if (!completeRes.ok) {
+            const errData = await completeRes.json().catch(() => ({}));
+            throw new Error(errData.error || 'Media completion and probing failed.');
+          }
+
+          const completeData = await completeRes.json();
+          mediaAsset = completeData.mediaAsset;
+        } else {
+          // Direct streaming upload
+          setCurrentStageText('Uploading & verifying video signature with FFprobe...');
+          setAnalysisStage(0);
+
+          const uploadFormData = new FormData();
+          uploadFormData.append('file', uploadedFile);
+
+          const uploadRes = await fetch('/api/media/upload', {
+            method: 'POST',
+            body: uploadFormData,
+          });
+
+          if (!uploadRes.ok) {
+            const errData = await uploadRes.json().catch(() => ({}));
+            throw new Error(errData.error || `Upload failed with status ${uploadRes.status}`);
+          }
+
+          const uploadData = await uploadRes.json();
+          mediaAsset = uploadData.mediaAsset;
         }
-
-        const uploadData = await uploadRes.json();
-        const mediaAsset = uploadData.mediaAsset;
 
         // Step 2: Create project record
         setCurrentStageText('Registering project in database...');
@@ -90,7 +154,7 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             title: uploadedFile.name.replace(/\.[^/.]+$/, ''),
-            sourceUrl: mediaAsset.fileUrl,
+            sourceUrl: mediaAsset.storageKey || mediaAsset.fileUrl,
             sourceType: 'upload',
             durationSeconds: mediaAsset.duration || 60,
             status: 'ingesting',

@@ -9,8 +9,10 @@ export interface EnvValidationReport {
   isValid: boolean;
   environment: string;
   storageMode: string;
+  storageProvider?: string;
   configuredServices: {
     supabase: boolean;
+    bunnyStorage?: boolean;
     gemini: boolean;
     deepgram: boolean;
     ffmpeg: boolean;
@@ -47,11 +49,39 @@ export function validateEnvironment(): EnvValidationReport {
     errors.push('CRITICAL: STORAGE_MODE is set to supabase but NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY is missing.');
   }
 
+  // Rule 3: Validate Media Storage Provider
+  const storageProvider = process.env.STORAGE_PROVIDER || 'local';
+  const hasBunnyConfig = !!(
+    process.env.BUNNY_STORAGE_ZONE &&
+    process.env.BUNNY_STORAGE_API_KEY &&
+    process.env.BUNNY_CDN_HOSTNAME
+  );
+
+  if (storageProvider === 'bunny') {
+    if (!process.env.BUNNY_STORAGE_ZONE) {
+      errors.push('CRITICAL: STORAGE_PROVIDER=bunny requires BUNNY_STORAGE_ZONE.');
+    }
+    if (!process.env.BUNNY_STORAGE_API_KEY) {
+      errors.push('CRITICAL: STORAGE_PROVIDER=bunny requires BUNNY_STORAGE_API_KEY.');
+    }
+    if (!process.env.BUNNY_CDN_HOSTNAME) {
+      errors.push('CRITICAL: STORAGE_PROVIDER=bunny requires BUNNY_CDN_HOSTNAME.');
+    }
+  }
+
+  if (env === 'production' && storageProvider === 'local' && process.env.ALLOW_DEV_LOCAL_STORAGE !== 'true') {
+    errors.push('CRITICAL: Local media storage cannot be used in production without ALLOW_DEV_LOCAL_STORAGE=true. Configure STORAGE_PROVIDER=bunny.');
+  }
+
   const diagnostics: Record<string, string> = {
     NODE_ENV: env,
     STORAGE_MODE: storageMode,
+    STORAGE_PROVIDER: storageProvider,
     NEXT_PUBLIC_SUPABASE_URL: hasSupabaseUrl ? '[CONFIGURED]' : '[MISSING]',
     SUPABASE_SERVICE_ROLE_KEY: hasSupabaseKey ? '[REDACTED: PRESENT]' : '[MISSING]',
+    BUNNY_STORAGE_ZONE: process.env.BUNNY_STORAGE_ZONE ? '[CONFIGURED]' : '[MISSING]',
+    BUNNY_STORAGE_API_KEY: process.env.BUNNY_STORAGE_API_KEY ? '[REDACTED: PRESENT]' : '[MISSING]',
+    BUNNY_CDN_HOSTNAME: process.env.BUNNY_CDN_HOSTNAME ? '[CONFIGURED]' : '[MISSING]',
     GEMINI_API_KEY: hasGemini ? '[REDACTED: PRESENT]' : '[NOT CONFIGURED (FALLBACK MODE)]',
     DEEPGRAM_API_KEY: hasDeepgram ? '[REDACTED: PRESENT]' : '[NOT CONFIGURED (FALLBACK MODE)]',
   };
@@ -62,8 +92,10 @@ export function validateEnvironment(): EnvValidationReport {
     isValid,
     environment: env,
     storageMode,
+    storageProvider,
     configuredServices: {
       supabase: isSupabaseConfigured,
+      bunnyStorage: hasBunnyConfig,
       gemini: hasGemini,
       deepgram: hasDeepgram,
       ffmpeg: hasFfmpeg,

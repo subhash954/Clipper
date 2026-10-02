@@ -3,6 +3,7 @@ import path from 'path';
 import { spawn } from 'child_process';
 import { ClipperError } from './errors';
 import { safeFetchRemoteMedia } from './security/ssrfValidator';
+import { getStorageService } from './storage/storageService';
 import { WordTimestamp, SubtitleStyle, VisualLayoutSettings, EditOperation, AudioStudioSettings } from './types';
 import {
   AspectRatio,
@@ -42,7 +43,7 @@ export function getFfmpegPath(): string {
 const ffmpegPath: string = getFfmpegPath();
 
 export interface RenderClipOptions {
-  inputMedia: string; // File path or HTTP video URL
+  inputMedia: string; // File path, storage key, or HTTP video URL
   startTime: number;  // Seconds
   duration: number;   // Seconds
   words: WordTimestamp[];
@@ -56,6 +57,9 @@ export interface RenderClipOptions {
   trackingMode?: TrackingMode;
   manualSettings?: ManualReframeSettings;
   brollOperations?: EditOperation[];
+  userId?: string;
+  projectId?: string;
+  mediaId?: string;
 }
 
 export interface TimeInterval {
@@ -107,6 +111,7 @@ export interface RenderResult {
   jobId: string;
   outputUrl: string;
   filePath: string;
+  storageKey?: string;
   duration: number;
   fileSizeBytes: number;
 }
@@ -232,11 +237,25 @@ export function generateAssSubtitleFile(params: {
 }
 
 /**
- * Downloads a remote video to a local temp file if input is an HTTP URL
+ * Downloads a remote video or retrieves a storage object to a local temp file
  */
 async function resolveLocalMediaInput(inputUrl: string, tempDir: string): Promise<string> {
   if (fs.existsSync(inputUrl)) {
     return inputUrl;
+  }
+
+  // Check StorageService if input is a storage key
+  try {
+    const storage = getStorageService();
+    if (await storage.exists(inputUrl)) {
+      const fileName = `storage_${Date.now()}_${path.basename(inputUrl)}`;
+      const destPath = path.join(tempDir, fileName);
+      const buf = await storage.getObject(inputUrl);
+      fs.writeFileSync(destPath, buf);
+      return destPath;
+    }
+  } catch {
+    // Proceed to URL / candidate path checks
   }
 
   if (inputUrl.startsWith('http://') || inputUrl.startsWith('https://')) {
@@ -469,8 +488,8 @@ export async function renderClipWithFfmpeg(
       });
     });
 
-    // Stage 7: Finalizing
-    onProgress?.(95, 'Finalizing MP4 file & audio streams...');
+    // Stage 7: Finalizing & Uploading to Media Storage
+    onProgress?.(95, 'Finalizing MP4 file & storing rendered media...');
 
     if (!fs.existsSync(finalMp4Path)) {
       throw new Error('Render output file was not created by FFmpeg.');
@@ -479,6 +498,43 @@ export async function renderClipWithFfmpeg(
     const stat = fs.statSync(finalMp4Path);
     if (stat.size === 0) {
       throw new Error('Render output file has zero bytes.');
+    }
+
+    let storageKey: string | undefined;
+    let outputUrl = `/exports/${jobId}.mp4`;
+
+    try {
+      const storage = getStorageService();
+      storageKey = options.userId && options.projectId
+        ? storage.generateCanonicalKey({
+            userId: options.userId,
+            projectId: options.projectId,
+            mediaId: options.mediaId || jobId,
+            artifactType: 'renders',
+            fileName: `${jobId}.mp4`,
+          })
+        : `renders/${jobId}.mp4`;
+
+      const fileStream = fs.createReadStream(finalMp4Path);
+      await storage.uploadObject(storageKey, fileStream, {
+        contentType: 'video/mp4',
+        contentLength: stat.size,
+      });
+
+      if (storage.getProvider().providerType === 'bunny') {
+        const dlResult = await storage.getDownloadUrl(storageKey, { expiresInSeconds: 86400 });
+        if (dlResult && dlResult.downloadUrl) {
+          outputUrl = dlResult.downloadUrl;
+        }
+
+        if (process.env.NODE_ENV === 'production') {
+          try {
+            fs.unlinkSync(finalMp4Path);
+          } catch {}
+        }
+      }
+    } catch (storageErr) {
+      console.warn('StorageService render upload warning:', storageErr);
     }
 
     onProgress?.(100, 'Rendering completed successfully!');
@@ -492,8 +548,9 @@ export async function renderClipWithFfmpeg(
 
     return {
       jobId,
-      outputUrl: `/exports/${jobId}.mp4`,
+      outputUrl,
       filePath: finalMp4Path,
+      storageKey,
       duration,
       fileSizeBytes: stat.size,
     };

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getStorage, ensureValidUuid } from '@/lib/storage';
+import { getStorageService } from '@/lib/storage/storageService';
 import { Project } from '@/lib/types';
 import { getAuthenticatedUser, requireProjectAccess } from '@/lib/auth/serverAuth';
 import { formatErrorResponse, ClipperError } from '@/lib/errors';
@@ -135,6 +136,14 @@ export async function DELETE(req: NextRequest) {
     } catch (authErr: any) {
       const { body, status } = formatErrorResponse(authErr);
       return NextResponse.json(body, { status });
+    }
+
+    const storageService = getStorageService();
+    try {
+      const projectPrefix = `users/${user.id}/projects/${id}/`;
+      await storageService.deletePrefix(projectPrefix);
+    } catch {
+      // Non-fatal if storage prefix was already empty
     }
 
     const storage = getStorage();

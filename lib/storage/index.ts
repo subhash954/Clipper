@@ -523,6 +523,13 @@ export class LocalMediaStorageAdapter implements MediaStorageAdapter {
   private baseDir: string;
 
   constructor() {
+    if (process.env.NODE_ENV === 'production' && process.env.STORAGE_PROVIDER !== 'local' && process.env.ALLOW_DEV_LOCAL_STORAGE !== 'true') {
+      throw new ClipperError(
+        'CONFIGURATION_ERROR',
+        'LocalMediaStorageAdapter cannot be used as media storage in production. Configure STORAGE_PROVIDER=bunny.',
+        500
+      );
+    }
     this.baseDir = path.join(process.cwd(), 'public', 'exports');
     if (!fs.existsSync(this.baseDir)) {
       fs.mkdirSync(this.baseDir, { recursive: true });
@@ -578,11 +585,60 @@ export class LocalMediaStorageAdapter implements MediaStorageAdapter {
   }
 }
 
+import { Readable } from 'stream';
+import { getStorageService } from './storageService';
+export * from './types';
+export { getStorageService } from './storageService';
+
+/**
+ * Cloud Media Storage Adapter (bridges MediaStorageAdapter interface to StorageService)
+ */
+export class CloudMediaStorageAdapter implements MediaStorageAdapter {
+  async upload(destinationPath: string, buffer: Buffer, mimeType: string = 'video/mp4'): Promise<string> {
+    const storage = getStorageService();
+    await storage.uploadObject(destinationPath, Readable.from(buffer), {
+      contentType: mimeType,
+      contentLength: buffer.length,
+    });
+    const { downloadUrl } = await storage.getDownloadUrl(destinationPath);
+    return downloadUrl;
+  }
+
+  async download(sourcePath: string): Promise<Buffer> {
+    const storage = getStorageService();
+    return storage.getObject(sourcePath);
+  }
+
+  async getSignedUrl(sourcePath: string, expiresInSeconds: number = 3600): Promise<string> {
+    const storage = getStorageService();
+    const { downloadUrl } = await storage.getDownloadUrl(sourcePath, { expiresInSeconds });
+    return downloadUrl;
+  }
+
+  async delete(sourcePath: string): Promise<void> {
+    const storage = getStorageService();
+    await storage.deleteObject(sourcePath);
+  }
+
+  async exists(sourcePath: string): Promise<boolean> {
+    const storage = getStorageService();
+    return storage.exists(sourcePath);
+  }
+
+  async cleanupStaleMedia(): Promise<number> {
+    return 0;
+  }
+}
+
 let mediaStorageInstance: MediaStorageAdapter | null = null;
 
 export function getMediaStorage(): MediaStorageAdapter {
   if (!mediaStorageInstance) {
-    mediaStorageInstance = new LocalMediaStorageAdapter();
+    if (process.env.STORAGE_PROVIDER === 'bunny' || (process.env.NODE_ENV === 'production' && process.env.ALLOW_DEV_LOCAL_STORAGE !== 'true')) {
+      mediaStorageInstance = new CloudMediaStorageAdapter();
+    } else {
+      mediaStorageInstance = new LocalMediaStorageAdapter();
+    }
   }
   return mediaStorageInstance;
 }

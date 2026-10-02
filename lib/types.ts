@@ -174,13 +174,28 @@ export interface MediaAsset {
   storagePath: string;
   mimeType: string;
   sizeBytes: number;
+  storageProvider?: 'bunny' | 's3' | 'r2' | 'b2' | 'local';
+  storageBucketOrZone?: string;
+  storageKey?: string;
+  originalFilename?: string;
+  sanitizedFilename?: string;
+  mediaType?: 'video' | 'audio' | 'image';
+  checksum?: string;
+  etag?: string;
   duration?: number;
+  durationSeconds?: number;
   width?: number;
   height?: number;
   codec?: string;
+  videoCodec?: string;
   audioCodec?: string;
   fps?: number;
+  frameRate?: number;
+  status?: string;
+  uploadSessionId?: string;
+  processingStatus?: string;
   createdAt: string;
+  updatedAt?: string;
 }
 
 export interface TimelineVersion {

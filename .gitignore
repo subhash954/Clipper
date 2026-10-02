@@ -37,6 +37,9 @@ next-env.d.ts
 public/exports/*.mp4
 public/exports/*.ass
 data/temp_renders/
+data/temp_processing/
+data/temp_ingest/
+data/storage_mock/
 data/intelligence_cache/
 data/publishing/
 data/timeline_versions/
