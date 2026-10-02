@@ -81,10 +81,11 @@ export default function StudioPage() {
   const [projectId, setProjectId] = useState<string>(() => {
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams(window.location.search);
-      return params.get('projectId') || params.get('id') || `proj-${Date.now()}`;
+      return params.get('projectId') || params.get('id') || '';
     }
-    return `proj-${Date.now()}`;
+    return '';
   });
+  const [projectVersion, setProjectVersion] = useState<number>(1);
   const [dbSyncStatus, setDbSyncStatus] = useState<'saved' | 'saving' | 'error'>('saved');
   const [lastSavedAt, setLastSavedAt] = useState<Date>(new Date());
 
@@ -166,7 +167,7 @@ export default function StudioPage() {
   const [isPricingOpen, setIsPricingOpen] = useState(false);
   const playerRef = useRef<VideoPreviewPlayerRef>(null);
 
-  // Load project: Query DB first if query id present, fallback to localStorage
+  // Load project: Query DB first if query id present, fallback to most recent DB project
   useEffect(() => {
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams(window.location.search);
@@ -175,11 +176,13 @@ export default function StudioPage() {
       if (queryId) {
         setProjectId(queryId);
         setDbSyncStatus('saving');
-        fetch(`/api/projects?id=${queryId}`)
+        fetch(`/api/projects/${queryId}`)
           .then((res) => res.json())
           .then((data) => {
             if (data.project) {
               const p = data.project;
+              setProjectId(p.id);
+              if (p.version) setProjectVersion(p.version);
               if (p.title) setProjectName(p.title);
               if (p.sourceUrl) setVideoUrl(p.sourceUrl);
               if (p.clips && p.clips.length > 0) {
@@ -203,48 +206,49 @@ export default function StudioPage() {
             setDbSyncStatus('error');
           });
       } else {
-        // If no explicit query ID, check for last active project ID pointer
-        const lastId = localStorage.getItem('clipper_last_project_id');
-        if (lastId) {
-          fetch(`/api/projects?id=${lastId}`)
-            .then((res) => res.json())
-            .then((data) => {
-              if (data.project) {
-                const p = data.project;
-                setProjectId(p.id);
-                if (p.title) setProjectName(p.title);
-                if (p.sourceUrl) setVideoUrl(p.sourceUrl);
-                if (p.clips && p.clips.length > 0) {
-                  setClips(p.clips);
-                  setActiveClipId(p.clips[0].id);
-                  if (p.clips[0].words && p.clips[0].words.length > 0) {
-                    setWords(p.clips[0].words);
-                  }
+        // Query database directly for the user's latest project
+        fetch('/api/projects')
+          .then((res) => res.json())
+          .then((data) => {
+            if (data.projects && data.projects.length > 0) {
+              const p = data.projects[0];
+              setProjectId(p.id);
+              if (p.version) setProjectVersion(p.version);
+              if (p.title) setProjectName(p.title);
+              if (p.sourceUrl) setVideoUrl(p.sourceUrl);
+              if (p.clips && p.clips.length > 0) {
+                setClips(p.clips);
+                setActiveClipId(p.clips[0].id);
+                if (p.clips[0].words && p.clips[0].words.length > 0) {
+                  setWords(p.clips[0].words);
                 }
-                if (typeof p.isMediaAvailable === 'boolean') {
-                  setIsMediaAvailable(p.isMediaAvailable);
-                }
-                setDbSyncStatus('saved');
               }
-            })
-            .catch(() => {});
-        }
+              if (p.transcript?.words && p.transcript.words.length > 0 && (!p.clips || p.clips.length === 0)) {
+                setWords(p.transcript.words);
+              }
+              if (typeof p.isMediaAvailable === 'boolean') {
+                setIsMediaAvailable(p.isMediaAvailable);
+              }
+              setDbSyncStatus('saved');
+            }
+          })
+          .catch(() => {});
       }
     }
   }, []);
 
-  // Save project directly to persistent database (/api/projects)
+  // Save project directly to persistent database (/api/projects/:id)
   const handleSaveToDatabase = async () => {
+    if (!projectId) return;
     setDbSyncStatus('saving');
     try {
       const projectPayload = {
-        id: projectId,
         title: projectName,
         sourceUrl: videoUrl,
         clips: clips.map((c) => (c.id === activeClipId ? { ...c, words } : c)),
-        words: words,
-        status: 'completed',
+        status: 'editing',
         isMediaAvailable: isMediaAvailable,
+        expectedVersion: projectVersion,
         costs: {
           deepgramSTTCost: 0.19,
           geminiFlashLLMCost: 0.002,
@@ -253,21 +257,24 @@ export default function StudioPage() {
           totalCostINR: 16,
           isEstimated: true,
         },
-        updatedAt: new Date().toISOString(),
       };
 
-      const res = await fetch('/api/projects', {
-        method: 'POST',
+      const res = await fetch(`/api/projects/${projectId}`, {
+        method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(projectPayload),
       });
 
       if (res.ok) {
+        const data = await res.json();
+        if (data.project?.version) {
+          setProjectVersion(data.project.version);
+        }
         setDbSyncStatus('saved');
         setLastSavedAt(new Date());
-        if (typeof window !== 'undefined') {
-          localStorage.setItem('clipper_last_project_id', projectId);
-        }
+      } else if (res.status === 409) {
+        console.warn('Project version conflict detected, reloading latest database state');
+        setDbSyncStatus('error');
       } else {
         setDbSyncStatus('error');
       }

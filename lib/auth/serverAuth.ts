@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabase, isSupabaseConfigured } from '@/lib/supabase';
 import { getStorage } from '@/lib/storage';
+import { Project } from '@/lib/types';
 
 export interface AuthenticatedUser {
   id: string;
@@ -111,17 +112,17 @@ export async function requireProjectAccess(
   user: AuthenticatedUser,
   projectId: string,
   minRole: 'viewer' | 'editor' | 'admin' | 'owner' = 'viewer'
-): Promise<void> {
+): Promise<Project> {
   const storage = getStorage();
   const project = await storage.getProject(projectId);
 
-  if (!project) {
+  if (!project || project.deletedAt) {
     throw new AuthError(`Project not found: ${projectId}`, 404);
   }
 
   // Admin users have global audit access
   if (user.role === 'admin') {
-    return;
+    return project;
   }
 
   // Strict tenant ownership check
@@ -129,4 +130,6 @@ export async function requireProjectAccess(
   if (!effectiveOwner || effectiveOwner !== user.id) {
     throw new AuthError('Forbidden: You do not have permission to access this project.', 403);
   }
+
+  return project;
 }

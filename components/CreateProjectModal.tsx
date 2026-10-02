@@ -159,6 +159,7 @@ export const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
             durationSeconds: mediaAsset.duration || 60,
             status: 'ingesting',
             workflowType: 'youtube_to_shorts',
+            activeMediaId: mediaAsset.id,
             isMediaAvailable: true,
           }),
         });

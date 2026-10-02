@@ -37,12 +37,7 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ success: true, project });
     }
 
-    const allProjects = await storage.listProjects();
-    // Enforce strict tenant isolation: users only see their own projects (admins see all)
-    const userProjects = allProjects.filter((p) => {
-      if (user.role === 'admin') return true;
-      return p.userId === user.id;
-    });
+    const userProjects = await storage.listProjects(user.role === 'admin' ? undefined : user.id);
 
     return NextResponse.json({ success: true, count: userProjects.length, projects: userProjects });
   } catch (error: any) {
@@ -85,13 +80,16 @@ export async function POST(req: NextRequest) {
       workspaceId: user.workspaceId,
       sourceExternalId: body.sourceExternalId || undefined,
       title: body.title || body.videoTitle || 'Untitled Video',
+      description: body.description || undefined,
+      activeMediaId: body.activeMediaId || undefined,
+      activeVersionId: body.activeVersionId || undefined,
       channelName: body.channelName || 'Clipper Creator',
       thumbnailUrl: body.thumbnailUrl || '',
       sourceUrl: body.sourceUrl || body.youtubeUrl || body.videoUrl || '',
       sourceType: body.sourceType || 'youtube',
       workflowType: body.workflowType || 'youtube_to_shorts',
       durationSeconds: body.durationSeconds || ((body.durationMinutes || 0) * 60) || 60,
-      status: body.status || 'completed',
+      status: body.status || 'draft',
       clipsCount: body.clips?.length || body.clipsCount || 0,
       clips: (body.clips || []).map((c: any) => ({
         ...c,
@@ -104,7 +102,7 @@ export async function POST(req: NextRequest) {
       updatedAt: new Date().toISOString(),
     };
 
-    const saved = await storage.saveProject(project);
+    const saved = await storage.saveProject(project, body.expectedVersion);
     return NextResponse.json({ success: true, project: saved });
   } catch (error: any) {
     const { body, status } = formatErrorResponse(error);
@@ -147,7 +145,7 @@ export async function DELETE(req: NextRequest) {
     }
 
     const storage = getStorage();
-    const deleted = await storage.deleteProject(id);
+    const deleted = await storage.deleteProject(id, user.id);
     return NextResponse.json({ success: deleted });
   } catch (error: any) {
     const { body, status } = formatErrorResponse(error);

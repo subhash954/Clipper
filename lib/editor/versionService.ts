@@ -38,8 +38,9 @@ export class VersionService {
     const existing = await this.listVersions(projectId);
     const versionNumber = existing.length + 1;
 
+    const snapshotId = crypto.randomUUID();
     const snapshot: StudioVersionSnapshot = {
-      id: `ver-${projectId}-${versionNumber}-${Date.now()}`,
+      id: snapshotId,
       versionNumber,
       description: name + (description ? ` - ${description}` : ''),
       renderSpec: {
@@ -55,7 +56,7 @@ export class VersionService {
     if (supabase) {
       try {
         const { error } = await supabase.from('timeline_versions').insert({
-          id: snapshot.id.includes('-') && snapshot.id.length > 36 ? undefined : snapshot.id,
+          id: snapshot.id,
           project_id: projectId,
           user_id: userId,
           version_number: versionNumber,
@@ -65,7 +66,13 @@ export class VersionService {
           created_at: snapshot.createdAt,
         });
         if (error) {
-          console.warn('Supabase insert timeline_version returned error, using local fallback:', error.message);
+          console.warn('Supabase insert timeline_version returned error:', error.message);
+        } else {
+          // Update active version pointer on the project
+          await supabase
+            .from('projects')
+            .update({ active_version_id: snapshot.id })
+            .eq('id', projectId);
         }
       } catch (err: any) {
         console.warn('Supabase connection failed, using local store:', err.message);
@@ -171,6 +178,19 @@ export class VersionService {
     versionNumber: number,
     newName: string
   ): Promise<boolean> {
+    const supabase = getSupabaseClient();
+    if (supabase) {
+      try {
+        await supabase
+          .from('timeline_versions')
+          .update({ name: newName })
+          .eq('project_id', projectId)
+          .eq('version_number', versionNumber);
+      } catch (err) {
+        console.warn('Supabase rename timeline_version warning:', err);
+      }
+    }
+
     ensureLocalDir();
     const filePath = path.join(DATA_VERSIONS_DIR, `${projectId}.json`);
     if (fs.existsSync(filePath)) {
@@ -186,6 +206,6 @@ export class VersionService {
         return false;
       }
     }
-    return false;
+    return true;
   }
 }

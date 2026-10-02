@@ -54,7 +54,7 @@ export default function WorkspaceDashboard() {
 
   const handleDeleteProject = async (projectId: string) => {
     try {
-      const res = await fetch(`/api/projects?id=${projectId}`, { method: 'DELETE' });
+      const res = await fetch(`/api/projects/${projectId}`, { method: 'DELETE' });
       if (res.ok) {
         setProjects((prev) => prev.filter((p) => p.id !== projectId));
       }
@@ -66,25 +66,15 @@ export default function WorkspaceDashboard() {
 
   const handleDuplicateProject = async (project: Project) => {
     try {
-      const newId = crypto.randomUUID();
-      const duplicatedPayload = {
-        ...project,
-        id: newId,
-        title: `${project.title} (Copy)`,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      };
-      const res = await fetch('/api/projects', {
+      const res = await fetch(`/api/projects/${project.id}/duplicate`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(duplicatedPayload),
       });
       const data = await res.json();
       if (res.ok && data.project) {
         setProjects((prev) => [data.project, ...prev]);
       }
     } catch (err) {
-      console.error('Could not persist duplicated project to database:', err);
+      console.error('Could not duplicate project on server:', err);
     } finally {
       setActiveMenuProjectId(null);
     }

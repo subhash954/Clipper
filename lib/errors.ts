@@ -17,7 +17,12 @@ export type ClipperErrorCode =
   | 'RENDER_FAILED'
   | 'RENDER_CANCELLED'
   | 'RATE_LIMITED'
-  | 'CONFIGURATION_ERROR';
+  | 'CONFIGURATION_ERROR'
+  | 'PROJECT_VERSION_CONFLICT'
+  | 'INVALID_PROJECT_STATE'
+  | 'MEDIA_NOT_OWNED'
+  | 'PROJECT_NOT_OWNED'
+  | 'STORAGE_ERROR';
 
 export interface StructuredErrorResponse {
   code: ClipperErrorCode;

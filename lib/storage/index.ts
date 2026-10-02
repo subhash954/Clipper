@@ -7,14 +7,15 @@ import { ClipperError } from '../errors';
 export const DEV_DEFAULT_USER_ID = '00000000-0000-0000-0000-000000000001';
 
 export interface IStorageAdapter {
-  saveProject(project: Project): Promise<Project>;
+  saveProject(project: Project, expectedVersion?: number): Promise<Project>;
   getProject(id: string): Promise<Project | null>;
-  listProjects(): Promise<Project[]>;
-  deleteProject(id: string): Promise<boolean>;
+  listProjects(userId?: string): Promise<Project[]>;
+  deleteProject(id: string, userId?: string): Promise<boolean>;
+  duplicateProject(projectId: string, userId: string): Promise<Project>;
   createRenderJob(job: RenderJob): Promise<RenderJob>;
   getRenderJob(id: string): Promise<RenderJob | null>;
   updateRenderJob(id: string, updates: Partial<RenderJob>): Promise<RenderJob | null>;
-  listRenderJobs(): Promise<RenderJob[]>;
+  listRenderJobs(userId?: string): Promise<RenderJob[]>;
   recordCostTelemetry(telemetry: CostTelemetryRecord): Promise<void>;
   getCostTelemetry(): Promise<CostTelemetryRecord[]>;
 }
@@ -32,7 +33,7 @@ export function ensureValidUuid(id?: string): string {
  * Production Supabase PostgreSQL Storage Adapter
  */
 export class SupabaseStorageAdapter implements IStorageAdapter {
-  async saveProject(project: Project): Promise<Project> {
+  async saveProject(project: Project, expectedVersion?: number): Promise<Project> {
     if (!project.userId) {
       if (process.env.NODE_ENV === 'production') {
         throw new ClipperError('VALIDATION_ERROR', 'Project ownership (userId) is required.', 400);
@@ -43,12 +44,38 @@ export class SupabaseStorageAdapter implements IStorageAdapter {
     const validId = ensureValidUuid(project.id);
     project.id = validId;
 
+    // Concurrency Check (Optimistic Concurrency Control)
+    const { data: existing } = await supabase
+      .from('projects')
+      .select('version, user_id')
+      .eq('id', validId)
+      .maybeSingle();
+
+    if (existing) {
+      if (expectedVersion !== undefined && existing.version !== expectedVersion) {
+        throw new ClipperError(
+          'PROJECT_VERSION_CONFLICT',
+          `Project version conflict: Expected version ${expectedVersion}, but database is at version ${existing.version}. Please refresh and retry.`,
+          409,
+          true,
+          { expectedVersion, currentVersion: existing.version }
+        );
+      }
+      project.version = (existing.version || 1) + 1;
+    } else {
+      project.version = project.version || 1;
+    }
+
     const { error: projError } = await supabase.from('projects').upsert({
       id: validId,
       user_id: project.userId,
       workspace_id: project.workspaceId || null,
       source_external_id: project.sourceExternalId || null,
       title: project.title,
+      description: project.description || null,
+      version: project.version,
+      active_media_id: project.activeMediaId || null,
+      active_version_id: project.activeVersionId || null,
       channel_name: project.channelName || null,
       thumbnail_url: project.thumbnailUrl || null,
       workflow_type: project.workflowType || 'youtube_to_shorts',
@@ -61,13 +88,14 @@ export class SupabaseStorageAdapter implements IStorageAdapter {
     });
 
     if (projError) {
-      throw new Error(`Supabase saveProject failed: ${projError.message}`);
+      throw new ClipperError('DATABASE_ERROR', `Supabase saveProject failed: ${projError.message}`, 500);
     }
 
     // Upsert transcript if present
     if (project.transcript) {
       const { error: transError } = await supabase.from('transcripts').upsert({
         project_id: project.id,
+        media_asset_id: project.activeMediaId || null,
         transcript_text: project.transcript.text,
         words: project.transcript.words,
         utterances: project.transcript.utterances || [],
@@ -83,8 +111,9 @@ export class SupabaseStorageAdapter implements IStorageAdapter {
     if (project.clips && project.clips.length > 0) {
       for (const clip of project.clips) {
         await supabase.from('clips').upsert({
-          id: clip.id,
+          id: ensureValidUuid(clip.id),
           project_id: project.id,
+          source_media_id: project.activeMediaId || null,
           rank: clip.rank || 1,
           title: clip.title,
           hook_summary: clip.hookSummary,
@@ -112,7 +141,7 @@ export class SupabaseStorageAdapter implements IStorageAdapter {
       .from('projects')
       .select('*, clips(*), transcripts(*)')
       .eq('id', id)
-      .single();
+      .maybeSingle();
 
     if (error || !data) return null;
 
@@ -122,6 +151,10 @@ export class SupabaseStorageAdapter implements IStorageAdapter {
       workspaceId: data.workspace_id,
       sourceExternalId: data.source_external_id,
       title: data.title,
+      description: data.description || undefined,
+      version: data.version || 1,
+      activeMediaId: data.active_media_id || undefined,
+      activeVersionId: data.active_version_id || undefined,
       channelName: data.channel_name,
       thumbnailUrl: data.thumbnail_url,
       sourceUrl: data.source_url,
@@ -160,17 +193,25 @@ export class SupabaseStorageAdapter implements IStorageAdapter {
         : undefined,
       createdAt: data.created_at,
       updatedAt: data.updated_at,
+      deletedAt: data.deleted_at,
     };
   }
 
-  async listProjects(): Promise<Project[]> {
-    const { data, error } = await supabase
+  async listProjects(userId?: string): Promise<Project[]> {
+    let query = supabase
       .from('projects')
       .select('*, clips(*)')
+      .is('deleted_at', null)
       .order('created_at', { ascending: false });
 
+    if (userId) {
+      query = query.eq('user_id', userId);
+    }
+
+    const { data, error } = await query;
+
     if (error) {
-      throw new Error(`Supabase listProjects error: ${error.message}`);
+      throw new ClipperError('DATABASE_ERROR', `Supabase listProjects error: ${error.message}`, 500);
     }
 
     return (data || []).map((p: any) => ({
@@ -179,6 +220,10 @@ export class SupabaseStorageAdapter implements IStorageAdapter {
       workspaceId: p.workspace_id,
       sourceExternalId: p.source_external_id,
       title: p.title,
+      description: p.description || undefined,
+      version: p.version || 1,
+      activeMediaId: p.active_media_id || undefined,
+      activeVersionId: p.active_version_id || undefined,
       channelName: p.channel_name,
       thumbnailUrl: p.thumbnail_url,
       sourceUrl: p.source_url,
@@ -206,15 +251,90 @@ export class SupabaseStorageAdapter implements IStorageAdapter {
         thumbnailUrl: c.thumbnail_url,
       })),
       createdAt: p.created_at,
+      updatedAt: p.updated_at,
+      deletedAt: p.deleted_at,
     }));
   }
 
-  async deleteProject(id: string): Promise<boolean> {
-    const { error } = await supabase.from('projects').delete().eq('id', id);
+  async deleteProject(id: string, userId?: string): Promise<boolean> {
+    let query = supabase
+      .from('projects')
+      .update({ deleted_at: new Date().toISOString() })
+      .eq('id', id);
+
+    if (userId) {
+      query = query.eq('user_id', userId);
+    }
+
+    const { error } = await query;
     if (error) {
       throw new ClipperError('DATABASE_ERROR', `Supabase deleteProject failed: ${error.message}`, 500);
     }
     return true;
+  }
+
+  async duplicateProject(projectId: string, userId: string): Promise<Project> {
+    const source = await this.getProject(projectId);
+    if (!source || source.deletedAt) {
+      throw new ClipperError('NOT_FOUND', `Project ${projectId} not found`, 404);
+    }
+
+    if (source.userId && source.userId !== userId && process.env.NODE_ENV === 'production') {
+      throw new ClipperError('FORBIDDEN', 'Cannot duplicate project: access denied', 403);
+    }
+
+    const newProjectId = crypto.randomUUID();
+    const duplicatedProject: Project = {
+      ...source,
+      id: newProjectId,
+      userId: userId,
+      title: `${source.title} (Copy)`,
+      version: 1,
+      status: source.status === 'failed' ? 'ready' : source.status,
+      clips: (source.clips || []).map((c) => ({
+        ...c,
+        id: crypto.randomUUID(),
+      })),
+      transcript: source.transcript ? { ...source.transcript } : undefined,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      deletedAt: null,
+    };
+
+    const saved = await this.saveProject(duplicatedProject);
+
+    if (source.activeVersionId) {
+      try {
+        const { data: ver } = await supabase
+          .from('timeline_versions')
+          .select('*')
+          .eq('id', source.activeVersionId)
+          .maybeSingle();
+
+        if (ver) {
+          const newVerId = crypto.randomUUID();
+          await supabase.from('timeline_versions').insert({
+            id: newVerId,
+            project_id: newProjectId,
+            user_id: userId,
+            version_number: 1,
+            name: ver.name || 'Duplicated Version',
+            description: `Duplicated from project ${projectId}`,
+            render_spec: ver.render_spec,
+            created_at: new Date().toISOString(),
+          });
+          await supabase
+            .from('projects')
+            .update({ active_version_id: newVerId })
+            .eq('id', newProjectId);
+          saved.activeVersionId = newVerId;
+        }
+      } catch (verErr) {
+        console.warn('Failed to duplicate timeline version:', verErr);
+      }
+    }
+
+    return saved;
   }
 
   async createRenderJob(job: RenderJob): Promise<RenderJob> {
@@ -291,11 +411,17 @@ export class SupabaseStorageAdapter implements IStorageAdapter {
     return updates as RenderJob;
   }
 
-  async listRenderJobs(): Promise<RenderJob[]> {
-    const { data } = await supabase
+  async listRenderJobs(userId?: string): Promise<RenderJob[]> {
+    let query = supabase
       .from('render_jobs')
       .select('*')
       .order('created_at', { ascending: false });
+
+    if (userId) {
+      query = query.eq('user_id', userId);
+    }
+
+    const { data } = await query;
 
     return (data || []).map((d: any) => ({
       id: d.id,
@@ -380,33 +506,86 @@ export class LocalStorageAdapter implements IStorageAdapter {
     }
   }
 
-  async saveProject(project: Project): Promise<Project> {
+  async saveProject(project: Project, expectedVersion?: number): Promise<Project> {
     if (!project.userId) {
       if (process.env.NODE_ENV === 'production') {
         throw new ClipperError('VALIDATION_ERROR', 'Project ownership (userId) is required.', 400);
       }
       project.userId = DEV_DEFAULT_USER_ID;
     }
-    const list = await this.listProjects();
-    const updated = [project, ...list.filter((p) => p.id !== project.id)];
+
+    const all = this.readJson<Project[]>(this.projectsFile, []);
+    const existing = all.find((p) => p.id === project.id);
+
+    if (existing) {
+      if (expectedVersion !== undefined && (existing.version || 1) !== expectedVersion) {
+        throw new ClipperError(
+          'PROJECT_VERSION_CONFLICT',
+          `Project version conflict: Expected version ${expectedVersion}, but database is at version ${existing.version || 1}. Please refresh and retry.`,
+          409,
+          true,
+          { expectedVersion, currentVersion: existing.version || 1 }
+        );
+      }
+      project.version = (existing.version || 1) + 1;
+    } else {
+      project.version = project.version || 1;
+    }
+
+    const updated = [project, ...all.filter((p) => p.id !== project.id)];
     this.writeJson(this.projectsFile, updated);
     return project;
   }
 
   async getProject(id: string): Promise<Project | null> {
-    const list = await this.listProjects();
+    const list = this.readJson<Project[]>(this.projectsFile, []);
     return list.find((p) => p.id === id) || null;
   }
 
-  async listProjects(): Promise<Project[]> {
-    return this.readJson<Project[]>(this.projectsFile, []);
+  async listProjects(userId?: string): Promise<Project[]> {
+    const all = this.readJson<Project[]>(this.projectsFile, []);
+    const nonDeleted = all.filter((p) => !p.deletedAt);
+    if (userId) {
+      return nonDeleted.filter((p) => p.userId === userId);
+    }
+    return nonDeleted;
   }
 
-  async deleteProject(id: string): Promise<boolean> {
-    const list = await this.listProjects();
-    const updated = list.filter((p) => p.id !== id);
-    this.writeJson(this.projectsFile, updated);
+  async deleteProject(id: string, userId?: string): Promise<boolean> {
+    const list = this.readJson<Project[]>(this.projectsFile, []);
+    const idx = list.findIndex((p) => p.id === id);
+    if (idx === -1) return false;
+    if (userId && list[idx].userId && list[idx].userId !== userId) {
+      throw new ClipperError('FORBIDDEN', 'Access denied to delete project', 403);
+    }
+    list[idx].deletedAt = new Date().toISOString();
+    this.writeJson(this.projectsFile, list);
     return true;
+  }
+
+  async duplicateProject(projectId: string, userId: string): Promise<Project> {
+    const source = await this.getProject(projectId);
+    if (!source || source.deletedAt) {
+      throw new ClipperError('NOT_FOUND', `Project ${projectId} not found`, 404);
+    }
+    if (source.userId && source.userId !== userId && process.env.NODE_ENV === 'production') {
+      throw new ClipperError('FORBIDDEN', 'Cannot duplicate project: access denied', 403);
+    }
+    const newProjectId = crypto.randomUUID();
+    const duplicated: Project = {
+      ...source,
+      id: newProjectId,
+      userId,
+      title: `${source.title} (Copy)`,
+      version: 1,
+      status: source.status === 'failed' ? 'ready' : source.status,
+      clips: (source.clips || []).map((c) => ({ ...c, id: crypto.randomUUID() })),
+      transcript: source.transcript ? { ...source.transcript } : undefined,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      deletedAt: null,
+    };
+    return this.saveProject(duplicated);
   }
 
   async createRenderJob(job: RenderJob): Promise<RenderJob> {
@@ -437,8 +616,12 @@ export class LocalStorageAdapter implements IStorageAdapter {
     return list[idx];
   }
 
-  async listRenderJobs(): Promise<RenderJob[]> {
-    return this.readJson<RenderJob[]>(this.jobsFile, []);
+  async listRenderJobs(userId?: string): Promise<RenderJob[]> {
+    const all = this.readJson<RenderJob[]>(this.jobsFile, []);
+    if (userId) {
+      return all.filter((j) => j.userId === userId);
+    }
+    return all;
   }
 
   async recordCostTelemetry(telemetry: CostTelemetryRecord): Promise<void> {

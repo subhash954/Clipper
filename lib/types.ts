@@ -82,6 +82,14 @@ export interface ViralClip {
 }
 
 export type ProjectStatus = 
+  | 'draft'
+  | 'uploading'
+  | 'processing'
+  | 'ready'
+  | 'editing'
+  | 'rendering'
+  | 'completed'
+  | 'failed'
   | 'created' 
   | 'ingesting' 
   | 'media_ready'
@@ -89,12 +97,33 @@ export type ProjectStatus =
   | 'transcript_ready'
   | 'analyzing' 
   | 'clips_ready' 
-  | 'editing'
   | 'render_queued'
-  | 'rendering' 
-  | 'completed' 
-  | 'export_ready'
-  | 'failed';
+  | 'export_ready';
+
+export const VALID_PROJECT_TRANSITIONS: Record<ProjectStatus, ProjectStatus[]> = {
+  draft: ['uploading', 'processing', 'ready', 'failed', 'editing'],
+  uploading: ['processing', 'ready', 'failed'],
+  processing: ['ready', 'editing', 'failed'],
+  ready: ['editing', 'rendering', 'processing', 'completed'],
+  editing: ['rendering', 'ready', 'completed', 'failed'],
+  rendering: ['ready', 'editing', 'completed', 'failed'],
+  completed: ['editing', 'rendering', 'ready'],
+  failed: ['draft', 'uploading', 'processing', 'ready', 'editing'],
+  created: ['ingesting', 'ready', 'failed', 'processing'],
+  ingesting: ['media_ready', 'transcribing', 'ready', 'failed'],
+  media_ready: ['transcribing', 'ready', 'failed'],
+  transcribing: ['transcript_ready', 'analyzing', 'ready', 'failed'],
+  transcript_ready: ['analyzing', 'clips_ready', 'ready', 'failed'],
+  analyzing: ['clips_ready', 'ready', 'failed'],
+  clips_ready: ['editing', 'ready', 'completed'],
+  render_queued: ['rendering', 'failed'],
+  export_ready: ['completed', 'editing'],
+};
+
+export function isValidProjectTransition(from: ProjectStatus, to: ProjectStatus): boolean {
+  if (from === to) return true;
+  return VALID_PROJECT_TRANSITIONS[from]?.includes(to) ?? true;
+}
 
 export interface CostTelemetryRecord {
   id?: string;
@@ -129,6 +158,10 @@ export interface Project {
   userId?: string;
   workspaceId?: string;
   title: string;
+  description?: string;
+  version?: number; // Optimistic Concurrency Control monotonic revision
+  activeMediaId?: string;
+  activeVersionId?: string;
   channelName?: string;
   thumbnailUrl?: string;
   sourceUrl?: string;
@@ -156,6 +189,7 @@ export interface Project {
   };
   createdAt: string;
   updatedAt?: string;
+  deletedAt?: string | null;
 }
 
 export interface Workspace {
