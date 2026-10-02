@@ -109,6 +109,11 @@ export async function getOpportunitiesForProject(projectId: string): Promise<Con
   return list.filter((o) => o.projectId === projectId);
 }
 
+export async function getOpportunityById(id: string): Promise<ContentOpportunity | null> {
+  const list = readJsonFile<ContentOpportunity[]>('opportunities.json', []);
+  return list.find((o) => o.id === id) || null;
+}
+
 // ============================================================================
 // CONTENT ASSET STORE & SEARCH (Phase 29 & 45)
 // ============================================================================

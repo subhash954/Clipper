@@ -306,5 +306,365 @@
     },
     "createdAt": "2026-10-02T00:21:58.581Z",
     "updatedAt": "2026-10-02T00:21:58.581Z"
+  },
+  {
+    "id": "opp-perf-contrarian-1790900901211",
+    "projectId": "proj-perf-1",
+    "sourceInterval": [
+      0,
+      30
+    ],
+    "title": "Stop Building Microservices Too Early",
+    "coreInsight": "Monoliths scale to millions of users with lower latency and maintenance overhead.",
+    "emotionalShift": "Frustration to clarity",
+    "hookText": "Stop building microservices if you have under 100 engineers.",
+    "hooks": [
+      {
+        "id": "hk-1",
+        "hookText": "Stop building microservices if you have under 100 engineers.",
+        "hookType": "CONTRARIAN",
+        "sourceEvidence": "Transcript evidence",
+        "confidence": 90,
+        "estimatedCuriosityGap": 85
+      }
+    ],
+    "aiEditorialScore": 82,
+    "platformFit": {
+      "youtube_shorts": 85,
+      "instagram_reels": 80,
+      "tiktok": 75,
+      "linkedin": 90,
+      "x": 80,
+      "facebook": 70
+    },
+    "pillars": [
+      "Architecture"
+    ],
+    "status": "COMPLETED",
+    "lineage": {
+      "sourceDuration": 30,
+      "generatedAt": "2026-10-02T00:28:21.211Z"
+    },
+    "createdAt": "2026-10-02T00:28:21.211Z",
+    "updatedAt": "2026-10-02T00:28:21.211Z"
+  },
+  {
+    "id": "opp-perf-question-1790900901896",
+    "projectId": "proj-perf-1",
+    "sourceInterval": [
+      30,
+      75
+    ],
+    "title": "What Is Docker Containerization?",
+    "coreInsight": "Containers isolate processes using Linux namespaces and cgroups.",
+    "emotionalShift": "Confusion to understanding",
+    "hookText": "What is Docker and how does it actually work under the hood?",
+    "hooks": [
+      {
+        "id": "hk-2",
+        "hookText": "What is Docker and how does it actually work under the hood?",
+        "hookType": "QUESTION",
+        "sourceEvidence": "Transcript evidence",
+        "confidence": 80,
+        "estimatedCuriosityGap": 60
+      }
+    ],
+    "aiEditorialScore": 78,
+    "platformFit": {
+      "youtube_shorts": 75,
+      "instagram_reels": 70,
+      "tiktok": 70,
+      "linkedin": 75,
+      "x": 75,
+      "facebook": 65
+    },
+    "pillars": [
+      "DevOps"
+    ],
+    "status": "COMPLETED",
+    "lineage": {
+      "sourceDuration": 45,
+      "generatedAt": "2026-10-02T00:28:21.896Z"
+    },
+    "createdAt": "2026-10-02T00:28:21.896Z",
+    "updatedAt": "2026-10-02T00:28:21.896Z"
+  },
+  {
+    "id": "opp-perf-contrarian-1790901055653",
+    "projectId": "proj-perf-1",
+    "sourceStart": 0,
+    "sourceEnd": 30,
+    "sourceTranscript": "Stop building microservices if you have under 100 engineers.",
+    "topic": "Stop Building Microservices Too Early",
+    "subtopic": "Architecture",
+    "contentType": "SHORT_VIDEO",
+    "hook": "Stop building microservices if you have under 100 engineers.",
+    "payoff": "Monoliths scale to millions of users with lower latency and maintenance overhead.",
+    "score": 82,
+    "confidence": 0.9,
+    "evidence": {
+      "start": 0,
+      "end": 30,
+      "quote": "Stop building microservices if you have under 100 engineers."
+    },
+    "platformFit": {
+      "youtube_shorts": 85,
+      "instagram_reels": 80,
+      "tiktok": 75,
+      "linkedin": 90,
+      "x": 80,
+      "facebook": 70
+    },
+    "pillars": [
+      "Architecture"
+    ],
+    "status": "COMPLETED",
+    "lineage": {
+      "sourceProjectId": "proj-perf-1",
+      "generatedAt": "2026-10-02T00:30:55.653Z"
+    },
+    "createdAt": "2026-10-02T00:30:55.654Z",
+    "updatedAt": "2026-10-02T00:30:55.654Z"
+  },
+  {
+    "id": "opp-perf-question-1790901055736",
+    "projectId": "proj-perf-1",
+    "sourceStart": 30,
+    "sourceEnd": 75,
+    "sourceTranscript": "What is Docker and how does it actually work under the hood?",
+    "topic": "What Is Docker Containerization?",
+    "subtopic": "DevOps",
+    "contentType": "SHORT_VIDEO",
+    "hook": "What is Docker and how does it actually work under the hood?",
+    "payoff": "Containers isolate processes using Linux namespaces and cgroups.",
+    "score": 78,
+    "confidence": 0.8,
+    "evidence": {
+      "start": 30,
+      "end": 75,
+      "quote": "What is Docker and how does it actually work under the hood?"
+    },
+    "platformFit": {
+      "youtube_shorts": 75,
+      "instagram_reels": 70,
+      "tiktok": 70,
+      "linkedin": 75,
+      "x": 75,
+      "facebook": 65
+    },
+    "pillars": [
+      "DevOps"
+    ],
+    "status": "COMPLETED",
+    "lineage": {
+      "sourceProjectId": "proj-perf-1",
+      "generatedAt": "2026-10-02T00:30:55.736Z"
+    },
+    "createdAt": "2026-10-02T00:30:55.736Z",
+    "updatedAt": "2026-10-02T00:30:55.736Z"
+  },
+  {
+    "id": "opp-perf-contrarian-1790901268155",
+    "projectId": "proj-perf-1",
+    "sourceStart": 0,
+    "sourceEnd": 30,
+    "sourceTranscript": "Stop building microservices if you have under 100 engineers.",
+    "topic": "Stop Building Microservices Too Early",
+    "subtopic": "Architecture",
+    "contentType": "SHORT_VIDEO",
+    "hook": "Stop building microservices if you have under 100 engineers.",
+    "payoff": "Monoliths scale to millions of users with lower latency and maintenance overhead.",
+    "score": 82,
+    "confidence": 0.9,
+    "evidence": {
+      "start": 0,
+      "end": 30,
+      "quote": "Stop building microservices if you have under 100 engineers."
+    },
+    "platformFit": {
+      "youtube_shorts": 85,
+      "instagram_reels": 80,
+      "tiktok": 75,
+      "linkedin": 90,
+      "x": 80,
+      "facebook": 70
+    },
+    "pillars": [
+      "Architecture"
+    ],
+    "status": "COMPLETED",
+    "lineage": {
+      "sourceProjectId": "proj-perf-1",
+      "sourceStart": 0,
+      "sourceEnd": 30,
+      "wordCount": 50,
+      "extractedAt": "2026-10-02T00:34:28.152Z"
+    },
+    "createdAt": "2026-10-02T00:34:28.155Z",
+    "updatedAt": "2026-10-02T00:34:28.155Z"
+  },
+  {
+    "id": "opp-perf-question-1790901268236",
+    "projectId": "proj-perf-1",
+    "sourceStart": 30,
+    "sourceEnd": 75,
+    "sourceTranscript": "What is Docker and how does it actually work under the hood?",
+    "topic": "What Is Docker Containerization?",
+    "subtopic": "DevOps",
+    "contentType": "SHORT_VIDEO",
+    "hook": "What is Docker and how does it actually work under the hood?",
+    "payoff": "Containers isolate processes using Linux namespaces and cgroups.",
+    "score": 78,
+    "confidence": 0.8,
+    "evidence": {
+      "start": 30,
+      "end": 75,
+      "quote": "What is Docker and how does it actually work under the hood?"
+    },
+    "platformFit": {
+      "youtube_shorts": 75,
+      "instagram_reels": 70,
+      "tiktok": 70,
+      "linkedin": 75,
+      "x": 75,
+      "facebook": 65
+    },
+    "pillars": [
+      "DevOps"
+    ],
+    "status": "COMPLETED",
+    "lineage": {
+      "sourceProjectId": "proj-perf-1",
+      "sourceStart": 0,
+      "sourceEnd": 30,
+      "wordCount": 50,
+      "extractedAt": "2026-10-02T00:34:28.152Z"
+    },
+    "createdAt": "2026-10-02T00:34:28.236Z",
+    "updatedAt": "2026-10-02T00:34:28.236Z"
+  },
+  {
+    "id": "opp-clip-1-1790901304362",
+    "projectId": "proj-factory-e2e",
+    "sourceStart": 0,
+    "sourceEnd": 14.25,
+    "sourceTranscript": "Stop building a brand and start building a world. Most creators focus on logos, but real loyalty comes from immersive storytelling. How do we apply that today? Ninety percent of success is consistency.",
+    "topic": "The Contrarian Truth About Mastering Video Strategy",
+    "subtopic": "Contrarian",
+    "contentType": "YOUTUBE_SHORT",
+    "hook": "Stop building a brand and start building a world.",
+    "payoff": "Stop building a brand and start building a world.",
+    "audience": "Creators & Knowledge Seekers",
+    "score": 87,
+    "confidence": 0.94,
+    "evidence": {
+      "start": 0,
+      "end": 14.25,
+      "quote": "Stop building a brand and start building a world. Most creators focus on logos, but real loyalty comes from immersive storytelling. How do we apply that today? "
+    },
+    "platformFit": {
+      "youtube_shorts": 89,
+      "instagram_reels": 85,
+      "tiktok": 91,
+      "linkedin": 60,
+      "x": 82,
+      "facebook": 78
+    },
+    "pillars": [
+      "Contrarian",
+      "Case Studies",
+      "Education"
+    ],
+    "status": "DISCOVERED",
+    "lineage": {
+      "sourceProjectId": "proj-factory-e2e",
+      "sourceClipId": "clip-1-1790901304362",
+      "sourceStart": 0,
+      "sourceEnd": 14.25,
+      "wordCount": 33,
+      "extractedAt": "2026-10-02T00:35:04.364Z"
+    },
+    "createdAt": "2026-10-02T00:35:04.364Z",
+    "updatedAt": "2026-10-02T00:35:04.364Z"
+  },
+  {
+    "id": "opp-perf-contrarian-1790901305867",
+    "projectId": "proj-perf-1",
+    "sourceStart": 0,
+    "sourceEnd": 30,
+    "sourceTranscript": "Stop building microservices if you have under 100 engineers.",
+    "topic": "Stop Building Microservices Too Early",
+    "subtopic": "Architecture",
+    "contentType": "SHORT_VIDEO",
+    "hook": "Stop building microservices if you have under 100 engineers.",
+    "payoff": "Monoliths scale to millions of users with lower latency and maintenance overhead.",
+    "score": 82,
+    "confidence": 0.9,
+    "evidence": {
+      "start": 0,
+      "end": 30,
+      "quote": "Stop building microservices if you have under 100 engineers."
+    },
+    "platformFit": {
+      "youtube_shorts": 85,
+      "instagram_reels": 80,
+      "tiktok": 75,
+      "linkedin": 90,
+      "x": 80,
+      "facebook": 70
+    },
+    "pillars": [
+      "Architecture"
+    ],
+    "status": "COMPLETED",
+    "lineage": {
+      "sourceProjectId": "proj-perf-1",
+      "sourceStart": 0,
+      "sourceEnd": 30,
+      "wordCount": 50,
+      "extractedAt": "2026-10-02T00:35:05.865Z"
+    },
+    "createdAt": "2026-10-02T00:35:05.867Z",
+    "updatedAt": "2026-10-02T00:35:05.867Z"
+  },
+  {
+    "id": "opp-perf-question-1790901305896",
+    "projectId": "proj-perf-1",
+    "sourceStart": 30,
+    "sourceEnd": 75,
+    "sourceTranscript": "What is Docker and how does it actually work under the hood?",
+    "topic": "What Is Docker Containerization?",
+    "subtopic": "DevOps",
+    "contentType": "SHORT_VIDEO",
+    "hook": "What is Docker and how does it actually work under the hood?",
+    "payoff": "Containers isolate processes using Linux namespaces and cgroups.",
+    "score": 78,
+    "confidence": 0.8,
+    "evidence": {
+      "start": 30,
+      "end": 75,
+      "quote": "What is Docker and how does it actually work under the hood?"
+    },
+    "platformFit": {
+      "youtube_shorts": 75,
+      "instagram_reels": 70,
+      "tiktok": 70,
+      "linkedin": 75,
+      "x": 75,
+      "facebook": 65
+    },
+    "pillars": [
+      "DevOps"
+    ],
+    "status": "COMPLETED",
+    "lineage": {
+      "sourceProjectId": "proj-perf-1",
+      "sourceStart": 0,
+      "sourceEnd": 30,
+      "wordCount": 50,
+      "extractedAt": "2026-10-02T00:35:05.865Z"
+    },
+    "createdAt": "2026-10-02T00:35:05.896Z",
+    "updatedAt": "2026-10-02T00:35:05.896Z"
   }
 ]
