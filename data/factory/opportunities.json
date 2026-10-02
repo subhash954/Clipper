@@ -1366,5 +1366,129 @@
     },
     "createdAt": "2026-10-02T01:06:22.643Z",
     "updatedAt": "2026-10-02T01:06:22.643Z"
+  },
+  {
+    "id": "opp-clip-1-1790904373403",
+    "projectId": "proj-factory-e2e",
+    "sourceStart": 0,
+    "sourceEnd": 14.25,
+    "sourceTranscript": "Stop building a brand and start building a world. Most creators focus on logos, but real loyalty comes from immersive storytelling. How do we apply that today? Ninety percent of success is consistency.",
+    "topic": "The Contrarian Truth About Mastering Video Strategy",
+    "subtopic": "Contrarian",
+    "contentType": "YOUTUBE_SHORT",
+    "hook": "Stop building a brand and start building a world.",
+    "payoff": "Stop building a brand and start building a world.",
+    "audience": "Creators & Knowledge Seekers",
+    "score": 87,
+    "confidence": 0.94,
+    "evidence": {
+      "start": 0,
+      "end": 14.25,
+      "quote": "Stop building a brand and start building a world. Most creators focus on logos, but real loyalty comes from immersive storytelling. How do we apply that today? "
+    },
+    "platformFit": {
+      "youtube_shorts": 89,
+      "instagram_reels": 85,
+      "tiktok": 91,
+      "linkedin": 60,
+      "x": 82,
+      "facebook": 78
+    },
+    "pillars": [
+      "Contrarian",
+      "Case Studies",
+      "Education"
+    ],
+    "status": "DISCOVERED",
+    "lineage": {
+      "sourceProjectId": "proj-factory-e2e",
+      "sourceClipId": "clip-1-1790904373403",
+      "sourceStart": 0,
+      "sourceEnd": 14.25,
+      "wordCount": 33,
+      "extractedAt": "2026-10-02T01:26:13.405Z"
+    },
+    "createdAt": "2026-10-02T01:26:13.405Z",
+    "updatedAt": "2026-10-02T01:26:13.405Z"
+  },
+  {
+    "id": "opp-perf-contrarian-1790904376127",
+    "projectId": "proj-perf-1",
+    "sourceStart": 0,
+    "sourceEnd": 30,
+    "sourceTranscript": "Stop building microservices if you have under 100 engineers.",
+    "topic": "Stop Building Microservices Too Early",
+    "subtopic": "Architecture",
+    "contentType": "SHORT_VIDEO",
+    "hook": "Stop building microservices if you have under 100 engineers.",
+    "payoff": "Monoliths scale to millions of users with lower latency and maintenance overhead.",
+    "score": 82,
+    "confidence": 0.9,
+    "evidence": {
+      "start": 0,
+      "end": 30,
+      "quote": "Stop building microservices if you have under 100 engineers."
+    },
+    "platformFit": {
+      "youtube_shorts": 85,
+      "instagram_reels": 80,
+      "tiktok": 75,
+      "linkedin": 90,
+      "x": 80,
+      "facebook": 70
+    },
+    "pillars": [
+      "Architecture"
+    ],
+    "status": "COMPLETED",
+    "lineage": {
+      "sourceProjectId": "proj-perf-1",
+      "sourceStart": 0,
+      "sourceEnd": 30,
+      "wordCount": 50,
+      "extractedAt": "2026-10-02T01:26:16.124Z"
+    },
+    "createdAt": "2026-10-02T01:26:16.127Z",
+    "updatedAt": "2026-10-02T01:26:16.127Z"
+  },
+  {
+    "id": "opp-perf-question-1790904376158",
+    "projectId": "proj-perf-1",
+    "sourceStart": 30,
+    "sourceEnd": 75,
+    "sourceTranscript": "What is Docker and how does it actually work under the hood?",
+    "topic": "What Is Docker Containerization?",
+    "subtopic": "DevOps",
+    "contentType": "SHORT_VIDEO",
+    "hook": "What is Docker and how does it actually work under the hood?",
+    "payoff": "Containers isolate processes using Linux namespaces and cgroups.",
+    "score": 78,
+    "confidence": 0.8,
+    "evidence": {
+      "start": 30,
+      "end": 75,
+      "quote": "What is Docker and how does it actually work under the hood?"
+    },
+    "platformFit": {
+      "youtube_shorts": 75,
+      "instagram_reels": 70,
+      "tiktok": 70,
+      "linkedin": 75,
+      "x": 75,
+      "facebook": 65
+    },
+    "pillars": [
+      "DevOps"
+    ],
+    "status": "COMPLETED",
+    "lineage": {
+      "sourceProjectId": "proj-perf-1",
+      "sourceStart": 0,
+      "sourceEnd": 30,
+      "wordCount": 50,
+      "extractedAt": "2026-10-02T01:26:16.124Z"
+    },
+    "createdAt": "2026-10-02T01:26:16.158Z",
+    "updatedAt": "2026-10-02T01:26:16.158Z"
   }
 ]
