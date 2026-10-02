@@ -8,7 +8,727 @@
     "sourceType": "youtube",
     "workflowType": "youtube_to_shorts",
     "clips": [],
-    "createdAt": "2026-10-02T00:34:57.657Z"
+    "createdAt": "2026-10-02T01:06:01.352Z"
+  },
+  {
+    "id": "test-proj-1790903148901",
+    "title": "Test Verification Project",
+    "workflowType": "youtube_to_shorts",
+    "sourceType": "youtube",
+    "durationSeconds": 300,
+    "status": "clips_ready",
+    "clipsCount": 1,
+    "clips": [
+      {
+        "id": "clip-1-1790903148901",
+        "title": "Brand World Building Secret",
+        "hookSummary": "Reframes entire branding paradigm.",
+        "importantLine": "You are not just building a brand you are building a world",
+        "whyThisLineIsImportant": "Reframes entire branding paradigm.",
+        "keyMomentType": "Contrarian Truth",
+        "start": 10,
+        "end": 35.3,
+        "duration": 25.3,
+        "viralScore": 84,
+        "scoreBreakdown": {
+          "hook": 88,
+          "curiosity": 94,
+          "value": 72,
+          "emotion": 68,
+          "standalone": 92
+        },
+        "confidence": 1,
+        "alignmentStatus": "verified",
+        "alignmentConfidence": 1,
+        "qualityStatus": "verified",
+        "words": [
+          {
+            "word": "You",
+            "start": 10,
+            "end": 10.3
+          },
+          {
+            "word": "are",
+            "start": 10.3,
+            "end": 10.6
+          },
+          {
+            "word": "not",
+            "start": 10.6,
+            "end": 10.9
+          },
+          {
+            "word": "just",
+            "start": 10.9,
+            "end": 11.2
+          },
+          {
+            "word": "building",
+            "start": 11.2,
+            "end": 11.6
+          },
+          {
+            "word": "a",
+            "start": 11.6,
+            "end": 11.8
+          },
+          {
+            "word": "brand",
+            "start": 11.8,
+            "end": 12.3
+          },
+          {
+            "word": "you",
+            "start": 12.5,
+            "end": 12.8
+          },
+          {
+            "word": "are",
+            "start": 12.8,
+            "end": 13.1
+          },
+          {
+            "word": "building",
+            "start": 13.1,
+            "end": 13.6
+          },
+          {
+            "word": "a",
+            "start": 13.6,
+            "end": 13.8
+          },
+          {
+            "word": "world",
+            "start": 13.8,
+            "end": 14.5
+          },
+          {
+            "word": "insight_1",
+            "start": 15.3,
+            "end": 16.1
+          },
+          {
+            "word": "insight_2",
+            "start": 16.1,
+            "end": 16.9
+          },
+          {
+            "word": "insight_3",
+            "start": 16.9,
+            "end": 17.7
+          },
+          {
+            "word": "insight_4",
+            "start": 17.7,
+            "end": 18.5
+          },
+          {
+            "word": "insight_5",
+            "start": 18.5,
+            "end": 19.3
+          },
+          {
+            "word": "insight_6",
+            "start": 19.3,
+            "end": 20.1
+          },
+          {
+            "word": "insight_7",
+            "start": 20.1,
+            "end": 20.9
+          },
+          {
+            "word": "insight_8",
+            "start": 20.9,
+            "end": 21.7
+          },
+          {
+            "word": "insight_9",
+            "start": 21.7,
+            "end": 22.5
+          },
+          {
+            "word": "insight_10",
+            "start": 22.5,
+            "end": 23.3
+          },
+          {
+            "word": "insight_11",
+            "start": 23.3,
+            "end": 24.1
+          },
+          {
+            "word": "insight_12",
+            "start": 24.1,
+            "end": 24.9
+          },
+          {
+            "word": "insight_13",
+            "start": 24.9,
+            "end": 25.7
+          },
+          {
+            "word": "insight_14",
+            "start": 25.7,
+            "end": 26.5
+          },
+          {
+            "word": "insight_15",
+            "start": 26.5,
+            "end": 27.3
+          },
+          {
+            "word": "insight_16",
+            "start": 27.3,
+            "end": 28.1
+          },
+          {
+            "word": "insight_17",
+            "start": 28.1,
+            "end": 28.9
+          },
+          {
+            "word": "insight_18",
+            "start": 28.9,
+            "end": 29.7
+          },
+          {
+            "word": "insight_19",
+            "start": 29.7,
+            "end": 30.5
+          },
+          {
+            "word": "insight_20",
+            "start": 30.5,
+            "end": 31.3
+          },
+          {
+            "word": "insight_21",
+            "start": 31.3,
+            "end": 32.1
+          },
+          {
+            "word": "insight_22",
+            "start": 32.1,
+            "end": 32.9
+          },
+          {
+            "word": "insight_23",
+            "start": 32.9,
+            "end": 33.7
+          },
+          {
+            "word": "insight_24",
+            "start": 33.7,
+            "end": 34.5
+          },
+          {
+            "word": "insight_25",
+            "start": 34.5,
+            "end": 35.3
+          }
+        ],
+        "tags": [
+          "Contrarian Truth",
+          "84% Editorial Score"
+        ],
+        "hookStrength": 88,
+        "retentionEstimate": 79,
+        "energyLevel": "Medium",
+        "bRollKeywords": [
+          "business",
+          "focus",
+          "creator"
+        ],
+        "soundEffects": [
+          "whoosh.mp3"
+        ],
+        "aiImagePrompt": "Cinematic frame visualizing Brand World Building Secret",
+        "youtubeScheduleTime": "2026-10-03T01:05:48.901Z",
+        "rank": 1
+      }
+    ],
+    "createdAt": "2026-10-02T01:05:48.901Z"
+  },
+  {
+    "id": "test-proj-1790902965146",
+    "title": "Test Verification Project",
+    "workflowType": "youtube_to_shorts",
+    "sourceType": "youtube",
+    "durationSeconds": 300,
+    "status": "clips_ready",
+    "clipsCount": 1,
+    "clips": [
+      {
+        "id": "clip-1-1790902965145",
+        "title": "Brand World Building Secret",
+        "hookSummary": "Reframes entire branding paradigm.",
+        "importantLine": "You are not just building a brand you are building a world",
+        "whyThisLineIsImportant": "Reframes entire branding paradigm.",
+        "keyMomentType": "Contrarian Truth",
+        "start": 10,
+        "end": 35.3,
+        "duration": 25.3,
+        "viralScore": 84,
+        "scoreBreakdown": {
+          "hook": 88,
+          "curiosity": 94,
+          "value": 72,
+          "emotion": 68,
+          "standalone": 92
+        },
+        "confidence": 1,
+        "alignmentStatus": "verified",
+        "alignmentConfidence": 1,
+        "qualityStatus": "verified",
+        "words": [
+          {
+            "word": "You",
+            "start": 10,
+            "end": 10.3
+          },
+          {
+            "word": "are",
+            "start": 10.3,
+            "end": 10.6
+          },
+          {
+            "word": "not",
+            "start": 10.6,
+            "end": 10.9
+          },
+          {
+            "word": "just",
+            "start": 10.9,
+            "end": 11.2
+          },
+          {
+            "word": "building",
+            "start": 11.2,
+            "end": 11.6
+          },
+          {
+            "word": "a",
+            "start": 11.6,
+            "end": 11.8
+          },
+          {
+            "word": "brand",
+            "start": 11.8,
+            "end": 12.3
+          },
+          {
+            "word": "you",
+            "start": 12.5,
+            "end": 12.8
+          },
+          {
+            "word": "are",
+            "start": 12.8,
+            "end": 13.1
+          },
+          {
+            "word": "building",
+            "start": 13.1,
+            "end": 13.6
+          },
+          {
+            "word": "a",
+            "start": 13.6,
+            "end": 13.8
+          },
+          {
+            "word": "world",
+            "start": 13.8,
+            "end": 14.5
+          },
+          {
+            "word": "insight_1",
+            "start": 15.3,
+            "end": 16.1
+          },
+          {
+            "word": "insight_2",
+            "start": 16.1,
+            "end": 16.9
+          },
+          {
+            "word": "insight_3",
+            "start": 16.9,
+            "end": 17.7
+          },
+          {
+            "word": "insight_4",
+            "start": 17.7,
+            "end": 18.5
+          },
+          {
+            "word": "insight_5",
+            "start": 18.5,
+            "end": 19.3
+          },
+          {
+            "word": "insight_6",
+            "start": 19.3,
+            "end": 20.1
+          },
+          {
+            "word": "insight_7",
+            "start": 20.1,
+            "end": 20.9
+          },
+          {
+            "word": "insight_8",
+            "start": 20.9,
+            "end": 21.7
+          },
+          {
+            "word": "insight_9",
+            "start": 21.7,
+            "end": 22.5
+          },
+          {
+            "word": "insight_10",
+            "start": 22.5,
+            "end": 23.3
+          },
+          {
+            "word": "insight_11",
+            "start": 23.3,
+            "end": 24.1
+          },
+          {
+            "word": "insight_12",
+            "start": 24.1,
+            "end": 24.9
+          },
+          {
+            "word": "insight_13",
+            "start": 24.9,
+            "end": 25.7
+          },
+          {
+            "word": "insight_14",
+            "start": 25.7,
+            "end": 26.5
+          },
+          {
+            "word": "insight_15",
+            "start": 26.5,
+            "end": 27.3
+          },
+          {
+            "word": "insight_16",
+            "start": 27.3,
+            "end": 28.1
+          },
+          {
+            "word": "insight_17",
+            "start": 28.1,
+            "end": 28.9
+          },
+          {
+            "word": "insight_18",
+            "start": 28.9,
+            "end": 29.7
+          },
+          {
+            "word": "insight_19",
+            "start": 29.7,
+            "end": 30.5
+          },
+          {
+            "word": "insight_20",
+            "start": 30.5,
+            "end": 31.3
+          },
+          {
+            "word": "insight_21",
+            "start": 31.3,
+            "end": 32.1
+          },
+          {
+            "word": "insight_22",
+            "start": 32.1,
+            "end": 32.9
+          },
+          {
+            "word": "insight_23",
+            "start": 32.9,
+            "end": 33.7
+          },
+          {
+            "word": "insight_24",
+            "start": 33.7,
+            "end": 34.5
+          },
+          {
+            "word": "insight_25",
+            "start": 34.5,
+            "end": 35.3
+          }
+        ],
+        "tags": [
+          "Contrarian Truth",
+          "84% Editorial Score"
+        ],
+        "hookStrength": 88,
+        "retentionEstimate": 79,
+        "energyLevel": "Medium",
+        "bRollKeywords": [
+          "business",
+          "focus",
+          "creator"
+        ],
+        "soundEffects": [
+          "whoosh.mp3"
+        ],
+        "aiImagePrompt": "Cinematic frame visualizing Brand World Building Secret",
+        "youtubeScheduleTime": "2026-10-03T01:02:45.145Z",
+        "rank": 1
+      }
+    ],
+    "createdAt": "2026-10-02T01:02:45.146Z"
+  },
+  {
+    "id": "test-proj-1790902705743",
+    "title": "Test Verification Project",
+    "workflowType": "youtube_to_shorts",
+    "sourceType": "youtube",
+    "durationSeconds": 300,
+    "status": "clips_ready",
+    "clipsCount": 1,
+    "clips": [
+      {
+        "id": "clip-1-1790902705741",
+        "title": "Brand World Building Secret",
+        "hookSummary": "Reframes entire branding paradigm.",
+        "importantLine": "You are not just building a brand you are building a world",
+        "whyThisLineIsImportant": "Reframes entire branding paradigm.",
+        "keyMomentType": "Contrarian Truth",
+        "start": 10,
+        "end": 35.3,
+        "duration": 25.3,
+        "viralScore": 84,
+        "scoreBreakdown": {
+          "hook": 88,
+          "curiosity": 94,
+          "value": 72,
+          "emotion": 68,
+          "standalone": 92
+        },
+        "confidence": 1,
+        "alignmentStatus": "verified",
+        "alignmentConfidence": 1,
+        "qualityStatus": "verified",
+        "words": [
+          {
+            "word": "You",
+            "start": 10,
+            "end": 10.3
+          },
+          {
+            "word": "are",
+            "start": 10.3,
+            "end": 10.6
+          },
+          {
+            "word": "not",
+            "start": 10.6,
+            "end": 10.9
+          },
+          {
+            "word": "just",
+            "start": 10.9,
+            "end": 11.2
+          },
+          {
+            "word": "building",
+            "start": 11.2,
+            "end": 11.6
+          },
+          {
+            "word": "a",
+            "start": 11.6,
+            "end": 11.8
+          },
+          {
+            "word": "brand",
+            "start": 11.8,
+            "end": 12.3
+          },
+          {
+            "word": "you",
+            "start": 12.5,
+            "end": 12.8
+          },
+          {
+            "word": "are",
+            "start": 12.8,
+            "end": 13.1
+          },
+          {
+            "word": "building",
+            "start": 13.1,
+            "end": 13.6
+          },
+          {
+            "word": "a",
+            "start": 13.6,
+            "end": 13.8
+          },
+          {
+            "word": "world",
+            "start": 13.8,
+            "end": 14.5
+          },
+          {
+            "word": "insight_1",
+            "start": 15.3,
+            "end": 16.1
+          },
+          {
+            "word": "insight_2",
+            "start": 16.1,
+            "end": 16.9
+          },
+          {
+            "word": "insight_3",
+            "start": 16.9,
+            "end": 17.7
+          },
+          {
+            "word": "insight_4",
+            "start": 17.7,
+            "end": 18.5
+          },
+          {
+            "word": "insight_5",
+            "start": 18.5,
+            "end": 19.3
+          },
+          {
+            "word": "insight_6",
+            "start": 19.3,
+            "end": 20.1
+          },
+          {
+            "word": "insight_7",
+            "start": 20.1,
+            "end": 20.9
+          },
+          {
+            "word": "insight_8",
+            "start": 20.9,
+            "end": 21.7
+          },
+          {
+            "word": "insight_9",
+            "start": 21.7,
+            "end": 22.5
+          },
+          {
+            "word": "insight_10",
+            "start": 22.5,
+            "end": 23.3
+          },
+          {
+            "word": "insight_11",
+            "start": 23.3,
+            "end": 24.1
+          },
+          {
+            "word": "insight_12",
+            "start": 24.1,
+            "end": 24.9
+          },
+          {
+            "word": "insight_13",
+            "start": 24.9,
+            "end": 25.7
+          },
+          {
+            "word": "insight_14",
+            "start": 25.7,
+            "end": 26.5
+          },
+          {
+            "word": "insight_15",
+            "start": 26.5,
+            "end": 27.3
+          },
+          {
+            "word": "insight_16",
+            "start": 27.3,
+            "end": 28.1
+          },
+          {
+            "word": "insight_17",
+            "start": 28.1,
+            "end": 28.9
+          },
+          {
+            "word": "insight_18",
+            "start": 28.9,
+            "end": 29.7
+          },
+          {
+            "word": "insight_19",
+            "start": 29.7,
+            "end": 30.5
+          },
+          {
+            "word": "insight_20",
+            "start": 30.5,
+            "end": 31.3
+          },
+          {
+            "word": "insight_21",
+            "start": 31.3,
+            "end": 32.1
+          },
+          {
+            "word": "insight_22",
+            "start": 32.1,
+            "end": 32.9
+          },
+          {
+            "word": "insight_23",
+            "start": 32.9,
+            "end": 33.7
+          },
+          {
+            "word": "insight_24",
+            "start": 33.7,
+            "end": 34.5
+          },
+          {
+            "word": "insight_25",
+            "start": 34.5,
+            "end": 35.3
+          }
+        ],
+        "tags": [
+          "Contrarian Truth",
+          "84% Editorial Score"
+        ],
+        "hookStrength": 88,
+        "retentionEstimate": 79,
+        "energyLevel": "Medium",
+        "bRollKeywords": [
+          "business",
+          "focus",
+          "creator"
+        ],
+        "soundEffects": [
+          "whoosh.mp3"
+        ],
+        "aiImagePrompt": "Cinematic frame visualizing Brand World Building Secret",
+        "youtubeScheduleTime": "2026-10-03T00:58:25.741Z",
+        "rank": 1
+      }
+    ],
+    "createdAt": "2026-10-02T00:58:25.743Z"
   },
   {
     "id": "test-proj-1790901285199",

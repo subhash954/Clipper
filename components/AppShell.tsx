@@ -19,7 +19,8 @@ import {
   HardDrive,
   Key,
   Sparkles,
-  Calendar
+  Calendar,
+  Building2
 } from 'lucide-react';
 import { ApiKeyModal } from './ApiKeyModal';
 
@@ -48,6 +49,7 @@ export const AppShell: React.FC<AppShellProps> = ({
     { label: 'Publishing', href: '/publishing', icon: Zap, matchPrefix: '/publishing' },
     { label: 'Calendar', href: '/calendar', icon: Calendar, matchPrefix: '/calendar' },
     { label: 'Analytics', href: '/analytics', icon: BarChart3, matchPrefix: '/analytics' },
+    { label: 'Agency', href: '/agency', icon: Building2, matchPrefix: '/agency' },
   ];
 
   return (

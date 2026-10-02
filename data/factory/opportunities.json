@@ -666,5 +666,705 @@
     },
     "createdAt": "2026-10-02T00:35:05.896Z",
     "updatedAt": "2026-10-02T00:35:05.896Z"
+  },
+  {
+    "id": "opp-perf-contrarian-1790902705706",
+    "projectId": "proj-perf-1",
+    "sourceStart": 0,
+    "sourceEnd": 30,
+    "sourceTranscript": "Stop building microservices if you have under 100 engineers.",
+    "topic": "Stop Building Microservices Too Early",
+    "subtopic": "Architecture",
+    "contentType": "SHORT_VIDEO",
+    "hook": "Stop building microservices if you have under 100 engineers.",
+    "payoff": "Monoliths scale to millions of users with lower latency and maintenance overhead.",
+    "score": 82,
+    "confidence": 0.9,
+    "evidence": {
+      "start": 0,
+      "end": 30,
+      "quote": "Stop building microservices if you have under 100 engineers."
+    },
+    "platformFit": {
+      "youtube_shorts": 85,
+      "instagram_reels": 80,
+      "tiktok": 75,
+      "linkedin": 90,
+      "x": 80,
+      "facebook": 70
+    },
+    "pillars": [
+      "Architecture"
+    ],
+    "status": "COMPLETED",
+    "lineage": {
+      "sourceProjectId": "proj-perf-1",
+      "sourceStart": 0,
+      "sourceEnd": 30,
+      "wordCount": 50,
+      "extractedAt": "2026-10-02T00:58:25.701Z"
+    },
+    "createdAt": "2026-10-02T00:58:25.706Z",
+    "updatedAt": "2026-10-02T00:58:25.706Z"
+  },
+  {
+    "id": "opp-clip-1-1790902705695",
+    "projectId": "proj-factory-e2e",
+    "sourceStart": 0,
+    "sourceEnd": 14.25,
+    "sourceTranscript": "Stop building a brand and start building a world. Most creators focus on logos, but real loyalty comes from immersive storytelling. How do we apply that today? Ninety percent of success is consistency.",
+    "topic": "The Contrarian Truth About Mastering Video Strategy",
+    "subtopic": "Contrarian",
+    "contentType": "YOUTUBE_SHORT",
+    "hook": "Stop building a brand and start building a world.",
+    "payoff": "Stop building a brand and start building a world.",
+    "audience": "Creators & Knowledge Seekers",
+    "score": 87,
+    "confidence": 0.94,
+    "evidence": {
+      "start": 0,
+      "end": 14.25,
+      "quote": "Stop building a brand and start building a world. Most creators focus on logos, but real loyalty comes from immersive storytelling. How do we apply that today? "
+    },
+    "platformFit": {
+      "youtube_shorts": 89,
+      "instagram_reels": 85,
+      "tiktok": 91,
+      "linkedin": 60,
+      "x": 82,
+      "facebook": 78
+    },
+    "pillars": [
+      "Contrarian",
+      "Case Studies",
+      "Education"
+    ],
+    "status": "DISCOVERED",
+    "lineage": {
+      "sourceProjectId": "proj-factory-e2e",
+      "sourceClipId": "clip-1-1790902705695",
+      "sourceStart": 0,
+      "sourceEnd": 14.25,
+      "wordCount": 33,
+      "extractedAt": "2026-10-02T00:58:25.699Z"
+    },
+    "createdAt": "2026-10-02T00:58:25.699Z",
+    "updatedAt": "2026-10-02T00:58:25.699Z"
+  },
+  {
+    "id": "opp-perf-question-1790902707132",
+    "projectId": "proj-perf-1",
+    "sourceStart": 30,
+    "sourceEnd": 75,
+    "sourceTranscript": "What is Docker and how does it actually work under the hood?",
+    "topic": "What Is Docker Containerization?",
+    "subtopic": "DevOps",
+    "contentType": "SHORT_VIDEO",
+    "hook": "What is Docker and how does it actually work under the hood?",
+    "payoff": "Containers isolate processes using Linux namespaces and cgroups.",
+    "score": 78,
+    "confidence": 0.8,
+    "evidence": {
+      "start": 30,
+      "end": 75,
+      "quote": "What is Docker and how does it actually work under the hood?"
+    },
+    "platformFit": {
+      "youtube_shorts": 75,
+      "instagram_reels": 70,
+      "tiktok": 70,
+      "linkedin": 75,
+      "x": 75,
+      "facebook": 65
+    },
+    "pillars": [
+      "DevOps"
+    ],
+    "status": "COMPLETED",
+    "lineage": {
+      "sourceProjectId": "proj-perf-1",
+      "sourceStart": 0,
+      "sourceEnd": 30,
+      "wordCount": 50,
+      "extractedAt": "2026-10-02T00:58:25.701Z"
+    },
+    "createdAt": "2026-10-02T00:58:27.132Z",
+    "updatedAt": "2026-10-02T00:58:27.132Z"
+  },
+  {
+    "id": "opp-perf-contrarian-1790902859547",
+    "projectId": "proj-perf-1",
+    "sourceStart": 0,
+    "sourceEnd": 30,
+    "sourceTranscript": "Stop building microservices if you have under 100 engineers.",
+    "topic": "Stop Building Microservices Too Early",
+    "subtopic": "Architecture",
+    "contentType": "SHORT_VIDEO",
+    "hook": "Stop building microservices if you have under 100 engineers.",
+    "payoff": "Monoliths scale to millions of users with lower latency and maintenance overhead.",
+    "score": 82,
+    "confidence": 0.9,
+    "evidence": {
+      "start": 0,
+      "end": 30,
+      "quote": "Stop building microservices if you have under 100 engineers."
+    },
+    "platformFit": {
+      "youtube_shorts": 85,
+      "instagram_reels": 80,
+      "tiktok": 75,
+      "linkedin": 90,
+      "x": 80,
+      "facebook": 70
+    },
+    "pillars": [
+      "Architecture"
+    ],
+    "status": "COMPLETED",
+    "lineage": {
+      "sourceProjectId": "proj-perf-1",
+      "sourceStart": 0,
+      "sourceEnd": 30,
+      "wordCount": 50,
+      "extractedAt": "2026-10-02T01:00:59.543Z"
+    },
+    "createdAt": "2026-10-02T01:00:59.547Z",
+    "updatedAt": "2026-10-02T01:00:59.547Z"
+  },
+  {
+    "id": "opp-perf-question-1790902860996",
+    "projectId": "proj-perf-1",
+    "sourceStart": 30,
+    "sourceEnd": 75,
+    "sourceTranscript": "What is Docker and how does it actually work under the hood?",
+    "topic": "What Is Docker Containerization?",
+    "subtopic": "DevOps",
+    "contentType": "SHORT_VIDEO",
+    "hook": "What is Docker and how does it actually work under the hood?",
+    "payoff": "Containers isolate processes using Linux namespaces and cgroups.",
+    "score": 78,
+    "confidence": 0.8,
+    "evidence": {
+      "start": 30,
+      "end": 75,
+      "quote": "What is Docker and how does it actually work under the hood?"
+    },
+    "platformFit": {
+      "youtube_shorts": 75,
+      "instagram_reels": 70,
+      "tiktok": 70,
+      "linkedin": 75,
+      "x": 75,
+      "facebook": 65
+    },
+    "pillars": [
+      "DevOps"
+    ],
+    "status": "COMPLETED",
+    "lineage": {
+      "sourceProjectId": "proj-perf-1",
+      "sourceStart": 0,
+      "sourceEnd": 30,
+      "wordCount": 50,
+      "extractedAt": "2026-10-02T01:00:59.543Z"
+    },
+    "createdAt": "2026-10-02T01:01:00.996Z",
+    "updatedAt": "2026-10-02T01:01:00.996Z"
+  },
+  {
+    "id": "opp-clip-1-1790902911187",
+    "projectId": "proj-factory-e2e",
+    "sourceStart": 0,
+    "sourceEnd": 14.25,
+    "sourceTranscript": "Stop building a brand and start building a world. Most creators focus on logos, but real loyalty comes from immersive storytelling. How do we apply that today? Ninety percent of success is consistency.",
+    "topic": "The Contrarian Truth About Mastering Video Strategy",
+    "subtopic": "Contrarian",
+    "contentType": "YOUTUBE_SHORT",
+    "hook": "Stop building a brand and start building a world.",
+    "payoff": "Stop building a brand and start building a world.",
+    "audience": "Creators & Knowledge Seekers",
+    "score": 87,
+    "confidence": 0.94,
+    "evidence": {
+      "start": 0,
+      "end": 14.25,
+      "quote": "Stop building a brand and start building a world. Most creators focus on logos, but real loyalty comes from immersive storytelling. How do we apply that today? "
+    },
+    "platformFit": {
+      "youtube_shorts": 89,
+      "instagram_reels": 85,
+      "tiktok": 91,
+      "linkedin": 60,
+      "x": 82,
+      "facebook": 78
+    },
+    "pillars": [
+      "Contrarian",
+      "Case Studies",
+      "Education"
+    ],
+    "status": "DISCOVERED",
+    "lineage": {
+      "sourceProjectId": "proj-factory-e2e",
+      "sourceClipId": "clip-1-1790902911187",
+      "sourceStart": 0,
+      "sourceEnd": 14.25,
+      "wordCount": 33,
+      "extractedAt": "2026-10-02T01:01:51.189Z"
+    },
+    "createdAt": "2026-10-02T01:01:51.189Z",
+    "updatedAt": "2026-10-02T01:01:51.189Z"
+  },
+  {
+    "id": "opp-perf-contrarian-1790902911372",
+    "projectId": "proj-perf-1",
+    "sourceStart": 0,
+    "sourceEnd": 30,
+    "sourceTranscript": "Stop building microservices if you have under 100 engineers.",
+    "topic": "Stop Building Microservices Too Early",
+    "subtopic": "Architecture",
+    "contentType": "SHORT_VIDEO",
+    "hook": "Stop building microservices if you have under 100 engineers.",
+    "payoff": "Monoliths scale to millions of users with lower latency and maintenance overhead.",
+    "score": 82,
+    "confidence": 0.9,
+    "evidence": {
+      "start": 0,
+      "end": 30,
+      "quote": "Stop building microservices if you have under 100 engineers."
+    },
+    "platformFit": {
+      "youtube_shorts": 85,
+      "instagram_reels": 80,
+      "tiktok": 75,
+      "linkedin": 90,
+      "x": 80,
+      "facebook": 70
+    },
+    "pillars": [
+      "Architecture"
+    ],
+    "status": "COMPLETED",
+    "lineage": {
+      "sourceProjectId": "proj-perf-1",
+      "sourceStart": 0,
+      "sourceEnd": 30,
+      "wordCount": 50,
+      "extractedAt": "2026-10-02T01:01:51.370Z"
+    },
+    "createdAt": "2026-10-02T01:01:51.372Z",
+    "updatedAt": "2026-10-02T01:01:51.372Z"
+  },
+  {
+    "id": "opp-perf-question-1790902911402",
+    "projectId": "proj-perf-1",
+    "sourceStart": 30,
+    "sourceEnd": 75,
+    "sourceTranscript": "What is Docker and how does it actually work under the hood?",
+    "topic": "What Is Docker Containerization?",
+    "subtopic": "DevOps",
+    "contentType": "SHORT_VIDEO",
+    "hook": "What is Docker and how does it actually work under the hood?",
+    "payoff": "Containers isolate processes using Linux namespaces and cgroups.",
+    "score": 78,
+    "confidence": 0.8,
+    "evidence": {
+      "start": 30,
+      "end": 75,
+      "quote": "What is Docker and how does it actually work under the hood?"
+    },
+    "platformFit": {
+      "youtube_shorts": 75,
+      "instagram_reels": 70,
+      "tiktok": 70,
+      "linkedin": 75,
+      "x": 75,
+      "facebook": 65
+    },
+    "pillars": [
+      "DevOps"
+    ],
+    "status": "COMPLETED",
+    "lineage": {
+      "sourceProjectId": "proj-perf-1",
+      "sourceStart": 0,
+      "sourceEnd": 30,
+      "wordCount": 50,
+      "extractedAt": "2026-10-02T01:01:51.370Z"
+    },
+    "createdAt": "2026-10-02T01:01:51.402Z",
+    "updatedAt": "2026-10-02T01:01:51.402Z"
+  },
+  {
+    "id": "opp-clip-1-1790902963104",
+    "projectId": "proj-factory-e2e",
+    "sourceStart": 0,
+    "sourceEnd": 14.25,
+    "sourceTranscript": "Stop building a brand and start building a world. Most creators focus on logos, but real loyalty comes from immersive storytelling. How do we apply that today? Ninety percent of success is consistency.",
+    "topic": "The Contrarian Truth About Mastering Video Strategy",
+    "subtopic": "Contrarian",
+    "contentType": "YOUTUBE_SHORT",
+    "hook": "Stop building a brand and start building a world.",
+    "payoff": "Stop building a brand and start building a world.",
+    "audience": "Creators & Knowledge Seekers",
+    "score": 87,
+    "confidence": 0.94,
+    "evidence": {
+      "start": 0,
+      "end": 14.25,
+      "quote": "Stop building a brand and start building a world. Most creators focus on logos, but real loyalty comes from immersive storytelling. How do we apply that today? "
+    },
+    "platformFit": {
+      "youtube_shorts": 89,
+      "instagram_reels": 85,
+      "tiktok": 91,
+      "linkedin": 60,
+      "x": 82,
+      "facebook": 78
+    },
+    "pillars": [
+      "Contrarian",
+      "Case Studies",
+      "Education"
+    ],
+    "status": "DISCOVERED",
+    "lineage": {
+      "sourceProjectId": "proj-factory-e2e",
+      "sourceClipId": "clip-1-1790902963104",
+      "sourceStart": 0,
+      "sourceEnd": 14.25,
+      "wordCount": 33,
+      "extractedAt": "2026-10-02T01:02:43.106Z"
+    },
+    "createdAt": "2026-10-02T01:02:43.106Z",
+    "updatedAt": "2026-10-02T01:02:43.106Z"
+  },
+  {
+    "id": "opp-perf-contrarian-1790902964949",
+    "projectId": "proj-perf-1",
+    "sourceStart": 0,
+    "sourceEnd": 30,
+    "sourceTranscript": "Stop building microservices if you have under 100 engineers.",
+    "topic": "Stop Building Microservices Too Early",
+    "subtopic": "Architecture",
+    "contentType": "SHORT_VIDEO",
+    "hook": "Stop building microservices if you have under 100 engineers.",
+    "payoff": "Monoliths scale to millions of users with lower latency and maintenance overhead.",
+    "score": 82,
+    "confidence": 0.9,
+    "evidence": {
+      "start": 0,
+      "end": 30,
+      "quote": "Stop building microservices if you have under 100 engineers."
+    },
+    "platformFit": {
+      "youtube_shorts": 85,
+      "instagram_reels": 80,
+      "tiktok": 75,
+      "linkedin": 90,
+      "x": 80,
+      "facebook": 70
+    },
+    "pillars": [
+      "Architecture"
+    ],
+    "status": "COMPLETED",
+    "lineage": {
+      "sourceProjectId": "proj-perf-1",
+      "sourceStart": 0,
+      "sourceEnd": 30,
+      "wordCount": 50,
+      "extractedAt": "2026-10-02T01:02:44.946Z"
+    },
+    "createdAt": "2026-10-02T01:02:44.949Z",
+    "updatedAt": "2026-10-02T01:02:44.949Z"
+  },
+  {
+    "id": "opp-perf-question-1790902964977",
+    "projectId": "proj-perf-1",
+    "sourceStart": 30,
+    "sourceEnd": 75,
+    "sourceTranscript": "What is Docker and how does it actually work under the hood?",
+    "topic": "What Is Docker Containerization?",
+    "subtopic": "DevOps",
+    "contentType": "SHORT_VIDEO",
+    "hook": "What is Docker and how does it actually work under the hood?",
+    "payoff": "Containers isolate processes using Linux namespaces and cgroups.",
+    "score": 78,
+    "confidence": 0.8,
+    "evidence": {
+      "start": 30,
+      "end": 75,
+      "quote": "What is Docker and how does it actually work under the hood?"
+    },
+    "platformFit": {
+      "youtube_shorts": 75,
+      "instagram_reels": 70,
+      "tiktok": 70,
+      "linkedin": 75,
+      "x": 75,
+      "facebook": 65
+    },
+    "pillars": [
+      "DevOps"
+    ],
+    "status": "COMPLETED",
+    "lineage": {
+      "sourceProjectId": "proj-perf-1",
+      "sourceStart": 0,
+      "sourceEnd": 30,
+      "wordCount": 50,
+      "extractedAt": "2026-10-02T01:02:44.946Z"
+    },
+    "createdAt": "2026-10-02T01:02:44.977Z",
+    "updatedAt": "2026-10-02T01:02:44.977Z"
+  },
+  {
+    "id": "opp-clip-1-1790903147081",
+    "projectId": "proj-factory-e2e",
+    "sourceStart": 0,
+    "sourceEnd": 14.25,
+    "sourceTranscript": "Stop building a brand and start building a world. Most creators focus on logos, but real loyalty comes from immersive storytelling. How do we apply that today? Ninety percent of success is consistency.",
+    "topic": "The Contrarian Truth About Mastering Video Strategy",
+    "subtopic": "Contrarian",
+    "contentType": "YOUTUBE_SHORT",
+    "hook": "Stop building a brand and start building a world.",
+    "payoff": "Stop building a brand and start building a world.",
+    "audience": "Creators & Knowledge Seekers",
+    "score": 87,
+    "confidence": 0.94,
+    "evidence": {
+      "start": 0,
+      "end": 14.25,
+      "quote": "Stop building a brand and start building a world. Most creators focus on logos, but real loyalty comes from immersive storytelling. How do we apply that today? "
+    },
+    "platformFit": {
+      "youtube_shorts": 89,
+      "instagram_reels": 85,
+      "tiktok": 91,
+      "linkedin": 60,
+      "x": 82,
+      "facebook": 78
+    },
+    "pillars": [
+      "Contrarian",
+      "Case Studies",
+      "Education"
+    ],
+    "status": "DISCOVERED",
+    "lineage": {
+      "sourceProjectId": "proj-factory-e2e",
+      "sourceClipId": "clip-1-1790903147081",
+      "sourceStart": 0,
+      "sourceEnd": 14.25,
+      "wordCount": 33,
+      "extractedAt": "2026-10-02T01:05:47.083Z"
+    },
+    "createdAt": "2026-10-02T01:05:47.083Z",
+    "updatedAt": "2026-10-02T01:05:47.083Z"
+  },
+  {
+    "id": "opp-perf-contrarian-1790903148742",
+    "projectId": "proj-perf-1",
+    "sourceStart": 0,
+    "sourceEnd": 30,
+    "sourceTranscript": "Stop building microservices if you have under 100 engineers.",
+    "topic": "Stop Building Microservices Too Early",
+    "subtopic": "Architecture",
+    "contentType": "SHORT_VIDEO",
+    "hook": "Stop building microservices if you have under 100 engineers.",
+    "payoff": "Monoliths scale to millions of users with lower latency and maintenance overhead.",
+    "score": 82,
+    "confidence": 0.9,
+    "evidence": {
+      "start": 0,
+      "end": 30,
+      "quote": "Stop building microservices if you have under 100 engineers."
+    },
+    "platformFit": {
+      "youtube_shorts": 85,
+      "instagram_reels": 80,
+      "tiktok": 75,
+      "linkedin": 90,
+      "x": 80,
+      "facebook": 70
+    },
+    "pillars": [
+      "Architecture"
+    ],
+    "status": "COMPLETED",
+    "lineage": {
+      "sourceProjectId": "proj-perf-1",
+      "sourceStart": 0,
+      "sourceEnd": 30,
+      "wordCount": 50,
+      "extractedAt": "2026-10-02T01:05:48.739Z"
+    },
+    "createdAt": "2026-10-02T01:05:48.742Z",
+    "updatedAt": "2026-10-02T01:05:48.742Z"
+  },
+  {
+    "id": "opp-perf-question-1790903148770",
+    "projectId": "proj-perf-1",
+    "sourceStart": 30,
+    "sourceEnd": 75,
+    "sourceTranscript": "What is Docker and how does it actually work under the hood?",
+    "topic": "What Is Docker Containerization?",
+    "subtopic": "DevOps",
+    "contentType": "SHORT_VIDEO",
+    "hook": "What is Docker and how does it actually work under the hood?",
+    "payoff": "Containers isolate processes using Linux namespaces and cgroups.",
+    "score": 78,
+    "confidence": 0.8,
+    "evidence": {
+      "start": 30,
+      "end": 75,
+      "quote": "What is Docker and how does it actually work under the hood?"
+    },
+    "platformFit": {
+      "youtube_shorts": 75,
+      "instagram_reels": 70,
+      "tiktok": 70,
+      "linkedin": 75,
+      "x": 75,
+      "facebook": 65
+    },
+    "pillars": [
+      "DevOps"
+    ],
+    "status": "COMPLETED",
+    "lineage": {
+      "sourceProjectId": "proj-perf-1",
+      "sourceStart": 0,
+      "sourceEnd": 30,
+      "wordCount": 50,
+      "extractedAt": "2026-10-02T01:05:48.739Z"
+    },
+    "createdAt": "2026-10-02T01:05:48.770Z",
+    "updatedAt": "2026-10-02T01:05:48.770Z"
+  },
+  {
+    "id": "opp-clip-1-1790903181244",
+    "projectId": "proj-factory-e2e",
+    "sourceStart": 0,
+    "sourceEnd": 14.25,
+    "sourceTranscript": "Stop building a brand and start building a world. Most creators focus on logos, but real loyalty comes from immersive storytelling. How do we apply that today? Ninety percent of success is consistency.",
+    "topic": "The Contrarian Truth About Mastering Video Strategy",
+    "subtopic": "Contrarian",
+    "contentType": "YOUTUBE_SHORT",
+    "hook": "Stop building a brand and start building a world.",
+    "payoff": "Stop building a brand and start building a world.",
+    "audience": "Creators & Knowledge Seekers",
+    "score": 87,
+    "confidence": 0.94,
+    "evidence": {
+      "start": 0,
+      "end": 14.25,
+      "quote": "Stop building a brand and start building a world. Most creators focus on logos, but real loyalty comes from immersive storytelling. How do we apply that today? "
+    },
+    "platformFit": {
+      "youtube_shorts": 89,
+      "instagram_reels": 85,
+      "tiktok": 91,
+      "linkedin": 60,
+      "x": 82,
+      "facebook": 78
+    },
+    "pillars": [
+      "Contrarian",
+      "Case Studies",
+      "Education"
+    ],
+    "status": "DISCOVERED",
+    "lineage": {
+      "sourceProjectId": "proj-factory-e2e",
+      "sourceClipId": "clip-1-1790903181244",
+      "sourceStart": 0,
+      "sourceEnd": 14.25,
+      "wordCount": 33,
+      "extractedAt": "2026-10-02T01:06:21.246Z"
+    },
+    "createdAt": "2026-10-02T01:06:21.246Z",
+    "updatedAt": "2026-10-02T01:06:21.246Z"
+  },
+  {
+    "id": "opp-perf-contrarian-1790903182615",
+    "projectId": "proj-perf-1",
+    "sourceStart": 0,
+    "sourceEnd": 30,
+    "sourceTranscript": "Stop building microservices if you have under 100 engineers.",
+    "topic": "Stop Building Microservices Too Early",
+    "subtopic": "Architecture",
+    "contentType": "SHORT_VIDEO",
+    "hook": "Stop building microservices if you have under 100 engineers.",
+    "payoff": "Monoliths scale to millions of users with lower latency and maintenance overhead.",
+    "score": 82,
+    "confidence": 0.9,
+    "evidence": {
+      "start": 0,
+      "end": 30,
+      "quote": "Stop building microservices if you have under 100 engineers."
+    },
+    "platformFit": {
+      "youtube_shorts": 85,
+      "instagram_reels": 80,
+      "tiktok": 75,
+      "linkedin": 90,
+      "x": 80,
+      "facebook": 70
+    },
+    "pillars": [
+      "Architecture"
+    ],
+    "status": "COMPLETED",
+    "lineage": {
+      "sourceProjectId": "proj-perf-1",
+      "sourceStart": 0,
+      "sourceEnd": 30,
+      "wordCount": 50,
+      "extractedAt": "2026-10-02T01:06:22.612Z"
+    },
+    "createdAt": "2026-10-02T01:06:22.615Z",
+    "updatedAt": "2026-10-02T01:06:22.615Z"
+  },
+  {
+    "id": "opp-perf-question-1790903182643",
+    "projectId": "proj-perf-1",
+    "sourceStart": 30,
+    "sourceEnd": 75,
+    "sourceTranscript": "What is Docker and how does it actually work under the hood?",
+    "topic": "What Is Docker Containerization?",
+    "subtopic": "DevOps",
+    "contentType": "SHORT_VIDEO",
+    "hook": "What is Docker and how does it actually work under the hood?",
+    "payoff": "Containers isolate processes using Linux namespaces and cgroups.",
+    "score": 78,
+    "confidence": 0.8,
+    "evidence": {
+      "start": 30,
+      "end": 75,
+      "quote": "What is Docker and how does it actually work under the hood?"
+    },
+    "platformFit": {
+      "youtube_shorts": 75,
+      "instagram_reels": 70,
+      "tiktok": 70,
+      "linkedin": 75,
+      "x": 75,
+      "facebook": 65
+    },
+    "pillars": [
+      "DevOps"
+    ],
+    "status": "COMPLETED",
+    "lineage": {
+      "sourceProjectId": "proj-perf-1",
+      "sourceStart": 0,
+      "sourceEnd": 30,
+      "wordCount": 50,
+      "extractedAt": "2026-10-02T01:06:22.612Z"
+    },
+    "createdAt": "2026-10-02T01:06:22.643Z",
+    "updatedAt": "2026-10-02T01:06:22.643Z"
   }
 ]
