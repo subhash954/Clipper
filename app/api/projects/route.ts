@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getStorage, ensureValidUuid } from '@/lib/storage';
 import { getStorageService } from '@/lib/storage/storageService';
 import { Project } from '@/lib/types';
-import { getAuthenticatedUser, requireProjectAccess } from '@/lib/auth/serverAuth';
+import { getAuthenticatedUser, requireProjectAccess, requireMediaOwnership } from '@/lib/auth/serverAuth';
 import { formatErrorResponse, ClipperError } from '@/lib/errors';
 
 export async function GET(req: NextRequest) {
@@ -72,6 +72,24 @@ export async function POST(req: NextRequest) {
           return NextResponse.json(errBody, { status });
         }
       }
+    }
+
+    // Validate media asset ownership if activeMediaId is provided
+    if (body.activeMediaId) {
+      await requireMediaOwnership(user, body.activeMediaId);
+    }
+
+    // Validate media asset ownership for clips and transcript if provided
+    if (body.clips && Array.isArray(body.clips)) {
+      for (const clip of body.clips) {
+        if (clip.sourceMediaId && clip.sourceMediaId !== body.activeMediaId) {
+          await requireMediaOwnership(user, clip.sourceMediaId);
+        }
+      }
+    }
+
+    if (body.transcript?.mediaAssetId && body.transcript.mediaAssetId !== body.activeMediaId) {
+      await requireMediaOwnership(user, body.transcript.mediaAssetId);
     }
 
     const project: Project = {

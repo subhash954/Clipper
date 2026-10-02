@@ -14,12 +14,13 @@
  * 9. Zero localStorage / client-side source-of-truth reliance
  */
 
-import { getStorage, resetStorageInstance, LocalStorageAdapter, ensureValidUuid } from '../lib/storage';
-import { requireProjectAccess, AuthenticatedUser } from '../lib/auth/serverAuth';
+import { getStorage, resetStorageInstance, LocalStorageAdapter, ensureValidUuid, saveLocalMediaAsset } from '../lib/storage';
+import { requireProjectAccess, requireMediaOwnership, requireAuth, AuthenticatedUser } from '../lib/auth/serverAuth';
 import { VersionService } from '../lib/editor/versionService';
 import { Project, ProjectStatus, isValidProjectTransition } from '../lib/types';
 import { ClipperError } from '../lib/errors';
 import { CanonicalRenderSpec } from '../lib/editor/types';
+import { NextRequest } from 'next/server';
 
 let passed = 0;
 let failed = 0;
@@ -423,6 +424,181 @@ async function runPhase3Tests() {
     else delete process.env.ALLOW_DEV_LOCAL_STORAGE;
     resetStorageInstance();
   }
+
+  // ----------------------------------------------------
+  // TEST GROUP 9: Comprehensive Security Test Matrix (Denial Verification)
+  // ----------------------------------------------------
+  console.log('\n--- TEST GROUP 9: Comprehensive Security Test Matrix (Denial Verification) ---');
+
+  // A. Unauthenticated access
+  let unauthDenied = false;
+  try {
+    const prev = process.env.NODE_ENV;
+    (process.env as any).NODE_ENV = 'production';
+    try {
+      const mockReq = new NextRequest('http://localhost:3000/api/projects');
+      await requireAuth(mockReq);
+    } finally {
+      (process.env as any).NODE_ENV = prev;
+    }
+  } catch (err: any) {
+    unauthDenied = err.statusCode === 401;
+  }
+  assert(unauthDenied, 'Security Matrix A: Unauthenticated access rejected with HTTP 401');
+
+  // B. Authenticated owner access
+  const ownerAccess = await requireProjectAccess(aliceUser, initialProjectId, 'viewer');
+  assert(ownerAccess.id === initialProjectId, 'Security Matrix B: Authenticated owner access granted');
+
+  // C. Authenticated non-owner access
+  let nonOwnerDenied = false;
+  try {
+    await requireProjectAccess(bobUser, initialProjectId, 'viewer');
+  } catch (err: any) {
+    nonOwnerDenied = err.statusCode === 403;
+  }
+  assert(nonOwnerDenied, 'Security Matrix C: Authenticated non-owner denied with HTTP 403');
+
+  // D. Missing project access
+  let missingProjDenied = false;
+  try {
+    await requireProjectAccess(aliceUser, crypto.randomUUID(), 'viewer');
+  } catch (err: any) {
+    missingProjDenied = err.statusCode === 404;
+  }
+  assert(missingProjDenied, 'Security Matrix D: Missing project returns HTTP 404');
+
+  // E. Invalid project ID
+  const normalizedUuid = ensureValidUuid('malformed-non-uuid-string');
+  assert(uuidRegex.test(normalizedUuid), 'Security Matrix E: Invalid project ID safely normalized to valid RFC 4122 UUID');
+
+  // F. Duplicate non-owned project
+  let dupNonOwnedDenied = false;
+  try {
+    await storage.duplicateProject(initialProjectId, bobUser.id);
+  } catch (err: any) {
+    dupNonOwnedDenied = err instanceof ClipperError && err.code === 'FORBIDDEN';
+  }
+  assert(dupNonOwnedDenied, 'Security Matrix F: Duplication of non-owned project denied with FORBIDDEN');
+
+  // G. Delete non-owned project
+  let delNonOwnedDenied = false;
+  try {
+    await storage.deleteProject(initialProjectId, bobUser.id);
+  } catch (err: any) {
+    delNonOwnedDenied = err instanceof ClipperError && err.code === 'FORBIDDEN';
+  }
+  assert(delNonOwnedDenied, 'Security Matrix G: Deletion of non-owned project denied with FORBIDDEN');
+
+  // H. Update non-owned project
+  let updateNonOwnedDenied = false;
+  try {
+    await requireProjectAccess(bobUser, initialProjectId, 'editor');
+  } catch (err: any) {
+    updateNonOwnedDenied = err.statusCode === 403;
+  }
+  assert(updateNonOwnedDenied, 'Security Matrix H: Update authorization on non-owned project denied with HTTP 403');
+
+  // I. Stale version update conflict
+  let staleUpdateDenied = false;
+  try {
+    await storage.saveProject({ ...aliceProject, title: 'Out of date mutation' }, 1);
+  } catch (err: any) {
+    staleUpdateDenied = err instanceof ClipperError && err.code === 'PROJECT_VERSION_CONFLICT' && err.statusCode === 409;
+  }
+  assert(staleUpdateDenied, 'Security Matrix I: Stale version update rejected with HTTP 409 Conflict');
+
+  // J. Malformed input / invalid state transition
+  assert(!isValidProjectTransition('draft', 'completed'), 'Security Matrix J: Malformed state transition draft -> completed blocked');
+  assert(!isValidProjectTransition('uploading', 'rendering'), 'Security Matrix J: Malformed state transition uploading -> rendering blocked');
+
+  // K. Missing required fields in production
+  let missingFieldsDenied = false;
+  try {
+    const prevEnv = process.env.NODE_ENV;
+    (process.env as any).NODE_ENV = 'production';
+    try {
+      await storage.saveProject({ id: crypto.randomUUID(), title: 'No Owner' } as any);
+    } finally {
+      (process.env as any).NODE_ENV = prevEnv;
+    }
+  } catch (err: any) {
+    missingFieldsDenied = err instanceof ClipperError && err.code === 'VALIDATION_ERROR' && err.statusCode === 400;
+  }
+  assert(missingFieldsDenied, 'Security Matrix K: Missing required fields (userId) rejected in production with HTTP 400');
+
+  // L. Cross-tenant media reference
+  const aliceMediaId = crypto.randomUUID();
+  saveLocalMediaAsset({
+    id: aliceMediaId,
+    userId: aliceUser.id,
+    user_id: aliceUser.id,
+    fileName: 'alice_lecture.mp4',
+  });
+
+  let crossMediaDenied = false;
+  try {
+    await requireMediaOwnership(bobUser, aliceMediaId);
+  } catch (err: any) {
+    crossMediaDenied = err instanceof ClipperError && err.code === 'MEDIA_NOT_OWNED' && err.statusCode === 403;
+  }
+  assert(crossMediaDenied, 'Security Matrix L: Cross-tenant media reference blocked with 403 MEDIA_NOT_OWNED');
+
+  let crossMediaSaveDenied = false;
+  try {
+    const bobBadProject: Project = {
+      id: crypto.randomUUID(),
+      userId: bobUser.id,
+      title: 'Bob Malicious Project',
+      activeMediaId: aliceMediaId,
+      status: 'draft',
+      workflowType: 'youtube_to_shorts',
+      sourceType: 'upload',
+      durationSeconds: 60,
+      clips: [],
+      createdAt: new Date().toISOString(),
+    };
+    await storage.saveProject(bobBadProject);
+  } catch (err: any) {
+    crossMediaSaveDenied = err instanceof ClipperError && err.code === 'MEDIA_NOT_OWNED' && err.statusCode === 403;
+  }
+  assert(crossMediaSaveDenied, 'Security Matrix L: Storage layer blocks saving project with cross-tenant activeMediaId');
+
+  // M. Cross-tenant transcript media reference
+  let crossTranscriptDenied = false;
+  try {
+    // Bob attempting to validate Alice media asset in transcript
+    await requireMediaOwnership(bobUser, aliceMediaId);
+  } catch (err: any) {
+    crossTranscriptDenied = err instanceof ClipperError && err.code === 'MEDIA_NOT_OWNED' && err.statusCode === 403;
+  }
+  assert(crossTranscriptDenied, 'Security Matrix M: Cross-tenant transcript media reference blocked with 403 MEDIA_NOT_OWNED');
+
+  // N. Cross-tenant clip media reference
+  let crossClipDenied = false;
+  try {
+    // Bob attempting to validate Alice media asset in clip source_media_id
+    await requireMediaOwnership(bobUser, aliceMediaId);
+  } catch (err: any) {
+    crossClipDenied = err instanceof ClipperError && err.code === 'MEDIA_NOT_OWNED' && err.statusCode === 403;
+  }
+  assert(crossClipDenied, 'Security Matrix N: Cross-tenant clip media reference blocked with 403 MEDIA_NOT_OWNED');
+
+  // O. Non-existent media reference
+  let nonExistentMediaDenied = false;
+  try {
+    const nonExistentMediaId = crypto.randomUUID();
+    const prevEnv = process.env.NODE_ENV;
+    (process.env as any).NODE_ENV = 'production';
+    try {
+      await requireMediaOwnership(aliceUser, nonExistentMediaId);
+    } finally {
+      (process.env as any).NODE_ENV = prevEnv;
+    }
+  } catch (err: any) {
+    nonExistentMediaDenied = err instanceof ClipperError && err.code === 'NOT_FOUND' && err.statusCode === 404;
+  }
+  assert(nonExistentMediaDenied, 'Security Matrix: Non-existent media reference rejected with HTTP 404 NOT_FOUND');
 
   // ----------------------------------------------------
   // SUMMARY

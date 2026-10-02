@@ -66,6 +66,31 @@ export class SupabaseStorageAdapter implements IStorageAdapter {
       project.version = project.version || 1;
     }
 
+    // Media Asset Ownership Validation
+    if (project.activeMediaId) {
+      const { data: mediaRow } = await supabase
+        .from('media_assets')
+        .select('id, user_id')
+        .eq('id', project.activeMediaId)
+        .maybeSingle();
+
+      if (!mediaRow) {
+        throw new ClipperError(
+          'NOT_FOUND',
+          `Referenced active media asset ${project.activeMediaId} does not exist.`,
+          404
+        );
+      }
+
+      if (mediaRow.user_id !== project.userId) {
+        throw new ClipperError(
+          'MEDIA_NOT_OWNED',
+          `Cannot link media asset ${project.activeMediaId} belonging to another user.`,
+          403
+        );
+      }
+    }
+
     const { error: projError } = await supabase.from('projects').upsert({
       id: validId,
       user_id: project.userId,
@@ -257,6 +282,13 @@ export class SupabaseStorageAdapter implements IStorageAdapter {
   }
 
   async deleteProject(id: string, userId?: string): Promise<boolean> {
+    if (userId) {
+      const existing = await this.getProject(id);
+      if (existing && existing.userId && existing.userId !== userId) {
+        throw new ClipperError('FORBIDDEN', 'Access denied to delete project', 403);
+      }
+    }
+
     let query = supabase
       .from('projects')
       .update({ deleted_at: new Date().toISOString() })
@@ -279,7 +311,7 @@ export class SupabaseStorageAdapter implements IStorageAdapter {
       throw new ClipperError('NOT_FOUND', `Project ${projectId} not found`, 404);
     }
 
-    if (source.userId && source.userId !== userId && process.env.NODE_ENV === 'production') {
+    if (source.userId && source.userId !== userId) {
       throw new ClipperError('FORBIDDEN', 'Cannot duplicate project: access denied', 403);
     }
 
@@ -478,6 +510,7 @@ export class SupabaseStorageAdapter implements IStorageAdapter {
 export class LocalStorageAdapter implements IStorageAdapter {
   private dataDir = path.join(process.cwd(), 'data');
   private projectsFile = path.join(process.cwd(), 'data', 'projects.json');
+  private mediaFile = path.join(process.cwd(), 'data', 'media_assets.json');
   private jobsFile = path.join(process.cwd(), 'data', 'render_jobs.json');
   private telemetryFile = path.join(process.cwd(), 'data', 'telemetry.json');
 
@@ -485,6 +518,17 @@ export class LocalStorageAdapter implements IStorageAdapter {
     if (!fs.existsSync(this.dataDir)) {
       fs.mkdirSync(this.dataDir, { recursive: true });
     }
+  }
+
+  saveMediaAsset(asset: any): void {
+    const list = this.readJson<any[]>(this.mediaFile, []);
+    const updated = [asset, ...list.filter((m) => m.id !== asset.id)];
+    this.writeJson(this.mediaFile, updated);
+  }
+
+  getMediaAsset(id: string): any | null {
+    const list = this.readJson<any[]>(this.mediaFile, []);
+    return list.find((m) => m.id === id) || null;
   }
 
   private readJson<T>(file: string, fallback: T): T {
@@ -512,6 +556,22 @@ export class LocalStorageAdapter implements IStorageAdapter {
         throw new ClipperError('VALIDATION_ERROR', 'Project ownership (userId) is required.', 400);
       }
       project.userId = DEV_DEFAULT_USER_ID;
+    }
+
+    // Media Asset Ownership Validation
+    if (project.activeMediaId) {
+      const mediaList = this.readJson<any[]>(this.mediaFile, []);
+      const media = mediaList.find((m) => m.id === project.activeMediaId);
+      if (media) {
+        const ownerId = media.user_id || media.userId;
+        if (ownerId && ownerId !== project.userId) {
+          throw new ClipperError(
+            'MEDIA_NOT_OWNED',
+            `Cannot link media asset ${project.activeMediaId} belonging to another user.`,
+            403
+          );
+        }
+      }
     }
 
     const all = this.readJson<Project[]>(this.projectsFile, []);
@@ -568,7 +628,7 @@ export class LocalStorageAdapter implements IStorageAdapter {
     if (!source || source.deletedAt) {
       throw new ClipperError('NOT_FOUND', `Project ${projectId} not found`, 404);
     }
-    if (source.userId && source.userId !== userId && process.env.NODE_ENV === 'production') {
+    if (source.userId && source.userId !== userId) {
       throw new ClipperError('FORBIDDEN', 'Cannot duplicate project: access denied', 403);
     }
     const newProjectId = crypto.randomUUID();
@@ -825,4 +885,28 @@ export function getMediaStorage(): MediaStorageAdapter {
   }
   return mediaStorageInstance;
 }
+
+export function saveLocalMediaAsset(asset: any): void {
+  const mediaFile = path.join(process.cwd(), 'data', 'media_assets.json');
+  try {
+    const list = fs.existsSync(mediaFile) ? JSON.parse(fs.readFileSync(mediaFile, 'utf-8')) : [];
+    const updated = [asset, ...list.filter((m: any) => m.id !== asset.id)];
+    fs.writeFileSync(mediaFile, JSON.stringify(updated, null, 2), 'utf-8');
+  } catch (err) {
+    console.error('Failed to save local media asset:', err);
+  }
+}
+
+export function getLocalMediaAsset(id: string): any | null {
+  const mediaFile = path.join(process.cwd(), 'data', 'media_assets.json');
+  try {
+    if (fs.existsSync(mediaFile)) {
+      const list = JSON.parse(fs.readFileSync(mediaFile, 'utf-8'));
+      return list.find((m: any) => m.id === id) || null;
+    }
+  } catch {}
+  return null;
+}
+
+
 

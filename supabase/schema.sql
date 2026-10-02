@@ -227,7 +227,10 @@ CREATE POLICY "Users can manage their workspaces"
 -- Projects
 CREATE POLICY "Users can view their own projects"
   ON public.projects FOR SELECT
-  USING (auth.uid() = user_id OR public.is_admin());
+  USING (
+    (auth.uid() = user_id OR public.is_admin())
+    AND deleted_at IS NULL
+  );
 
 CREATE POLICY "Users can insert their own projects"
   ON public.projects FOR INSERT
@@ -235,7 +238,13 @@ CREATE POLICY "Users can insert their own projects"
 
 CREATE POLICY "Users can update their own projects"
   ON public.projects FOR UPDATE
-  USING (auth.uid() = user_id OR public.is_admin());
+  USING (
+    (auth.uid() = user_id OR public.is_admin())
+    AND deleted_at IS NULL
+  )
+  WITH CHECK (
+    (auth.uid() = user_id OR public.is_admin())
+  );
 
 CREATE POLICY "Users can delete their own projects"
   ON public.projects FOR DELETE
@@ -254,7 +263,7 @@ CREATE POLICY "Users can delete their media assets"
   ON public.media_assets FOR DELETE
   USING (auth.uid() = user_id OR public.is_admin());
 
--- Transcripts (Inherited project ownership)
+-- Transcripts (Inherited project ownership, filtered by non-deleted)
 CREATE POLICY "Users can view transcripts of their projects"
   ON public.transcripts FOR SELECT
   USING (
@@ -262,6 +271,7 @@ CREATE POLICY "Users can view transcripts of their projects"
       SELECT 1 FROM public.projects
       WHERE projects.id = transcripts.project_id
       AND (projects.user_id = auth.uid() OR public.is_admin())
+      AND projects.deleted_at IS NULL
     )
   );
 
@@ -271,11 +281,34 @@ CREATE POLICY "Users can insert transcripts for their projects"
     EXISTS (
       SELECT 1 FROM public.projects
       WHERE projects.id = transcripts.project_id
-      AND projects.user_id = auth.uid()
+      AND (projects.user_id = auth.uid() OR public.is_admin())
+      AND projects.deleted_at IS NULL
     )
   );
 
--- Clips (Inherited project ownership)
+CREATE POLICY "Users can update transcripts for their projects"
+  ON public.transcripts FOR UPDATE
+  USING (
+    EXISTS (
+      SELECT 1 FROM public.projects
+      WHERE projects.id = transcripts.project_id
+      AND (projects.user_id = auth.uid() OR public.is_admin())
+      AND projects.deleted_at IS NULL
+    )
+  );
+
+CREATE POLICY "Users can delete transcripts for their projects"
+  ON public.transcripts FOR DELETE
+  USING (
+    EXISTS (
+      SELECT 1 FROM public.projects
+      WHERE projects.id = transcripts.project_id
+      AND (projects.user_id = auth.uid() OR public.is_admin())
+      AND projects.deleted_at IS NULL
+    )
+  );
+
+-- Clips (Inherited project ownership, filtered by non-deleted)
 CREATE POLICY "Users can view clips of their projects"
   ON public.clips FOR SELECT
   USING (
@@ -283,6 +316,7 @@ CREATE POLICY "Users can view clips of their projects"
       SELECT 1 FROM public.projects
       WHERE projects.id = clips.project_id
       AND (projects.user_id = auth.uid() OR public.is_admin())
+      AND projects.deleted_at IS NULL
     )
   );
 
@@ -292,11 +326,34 @@ CREATE POLICY "Users can insert clips for their projects"
     EXISTS (
       SELECT 1 FROM public.projects
       WHERE projects.id = clips.project_id
-      AND projects.user_id = auth.uid()
+      AND (projects.user_id = auth.uid() OR public.is_admin())
+      AND projects.deleted_at IS NULL
     )
   );
 
--- Timeline Versions (Inherited project ownership)
+CREATE POLICY "Users can update clips for their projects"
+  ON public.clips FOR UPDATE
+  USING (
+    EXISTS (
+      SELECT 1 FROM public.projects
+      WHERE projects.id = clips.project_id
+      AND (projects.user_id = auth.uid() OR public.is_admin())
+      AND projects.deleted_at IS NULL
+    )
+  );
+
+CREATE POLICY "Users can delete clips for their projects"
+  ON public.clips FOR DELETE
+  USING (
+    EXISTS (
+      SELECT 1 FROM public.projects
+      WHERE projects.id = clips.project_id
+      AND (projects.user_id = auth.uid() OR public.is_admin())
+      AND projects.deleted_at IS NULL
+    )
+  );
+
+-- Timeline Versions (Inherited project ownership, filtered by non-deleted)
 CREATE POLICY "Users can view timeline versions of their projects"
   ON public.timeline_versions FOR SELECT
   USING (
@@ -304,6 +361,7 @@ CREATE POLICY "Users can view timeline versions of their projects"
       SELECT 1 FROM public.projects
       WHERE projects.id = timeline_versions.project_id
       AND (projects.user_id = auth.uid() OR public.is_admin())
+      AND projects.deleted_at IS NULL
     )
   );
 
@@ -313,7 +371,30 @@ CREATE POLICY "Users can insert timeline versions for their projects"
     EXISTS (
       SELECT 1 FROM public.projects
       WHERE projects.id = timeline_versions.project_id
-      AND projects.user_id = auth.uid()
+      AND (projects.user_id = auth.uid() OR public.is_admin())
+      AND projects.deleted_at IS NULL
+    )
+  );
+
+CREATE POLICY "Users can update timeline versions of their projects"
+  ON public.timeline_versions FOR UPDATE
+  USING (
+    EXISTS (
+      SELECT 1 FROM public.projects
+      WHERE projects.id = timeline_versions.project_id
+      AND (projects.user_id = auth.uid() OR public.is_admin())
+      AND projects.deleted_at IS NULL
+    )
+  );
+
+CREATE POLICY "Users can delete timeline versions of their projects"
+  ON public.timeline_versions FOR DELETE
+  USING (
+    EXISTS (
+      SELECT 1 FROM public.projects
+      WHERE projects.id = timeline_versions.project_id
+      AND (projects.user_id = auth.uid() OR public.is_admin())
+      AND projects.deleted_at IS NULL
     )
   );
 

@@ -1,7 +1,10 @@
+import fs from 'fs';
+import path from 'path';
 import { NextRequest, NextResponse } from 'next/server';
 import { supabase, isSupabaseConfigured } from '@/lib/supabase';
 import { getStorage } from '@/lib/storage';
 import { Project } from '@/lib/types';
+import { ClipperError } from '@/lib/errors';
 
 export interface AuthenticatedUser {
   id: string;
@@ -133,3 +136,71 @@ export async function requireProjectAccess(
 
   return project;
 }
+
+/**
+ * Enforces that a media asset exists and is owned by the authenticated user (or user is admin).
+ * Throws ClipperError with 404 if missing, or 403 MEDIA_NOT_OWNED if owned by another user.
+ */
+export async function requireMediaOwnership(
+  user: AuthenticatedUser,
+  mediaId: string
+): Promise<{ id: string; userId: string }> {
+  if (!mediaId) {
+    throw new ClipperError('VALIDATION_ERROR', 'Media ID is required.', 400);
+  }
+
+  // 1. If Supabase is configured, check PostgreSQL media_assets table
+  if (isSupabaseConfigured()) {
+    const { data: mediaRow, error } = await supabase
+      .from('media_assets')
+      .select('id, user_id')
+      .eq('id', mediaId)
+      .maybeSingle();
+
+    if (error || !mediaRow) {
+      throw new ClipperError('NOT_FOUND', `Media asset ${mediaId} not found.`, 404);
+    }
+
+    if (user.role !== 'admin' && mediaRow.user_id !== user.id) {
+      throw new ClipperError(
+        'MEDIA_NOT_OWNED',
+        `Cannot link media asset ${mediaId} belonging to another user.`,
+        403
+      );
+    }
+
+    return { id: mediaRow.id, userId: mediaRow.user_id };
+  }
+
+  // 2. In local/development storage, check data/media_assets.json
+  const mediaFile = path.join(process.cwd(), 'data', 'media_assets.json');
+  let list: any[] = [];
+  if (fs.existsSync(mediaFile)) {
+    try {
+      list = JSON.parse(fs.readFileSync(mediaFile, 'utf-8'));
+    } catch {
+      list = [];
+    }
+  }
+
+  const asset = list.find((m: any) => m.id === mediaId);
+  if (asset) {
+    const ownerId = asset.user_id || asset.userId;
+    if (user.role !== 'admin' && ownerId && ownerId !== user.id) {
+      throw new ClipperError(
+        'MEDIA_NOT_OWNED',
+        `Cannot link media asset ${mediaId} belonging to another user.`,
+        403
+      );
+    }
+    return { id: asset.id, userId: ownerId || user.id };
+  }
+
+  // If local media file exists and has records, but asset is not found
+  if (process.env.NODE_ENV === 'production') {
+    throw new ClipperError('NOT_FOUND', `Media asset ${mediaId} not found.`, 404);
+  }
+
+  return { id: mediaId, userId: user.id };
+}
+

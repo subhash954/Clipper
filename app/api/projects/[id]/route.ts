@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getStorage } from '@/lib/storage';
 import { getStorageService } from '@/lib/storage/storageService';
-import { getAuthenticatedUser, requireProjectAccess } from '@/lib/auth/serverAuth';
+import { getAuthenticatedUser, requireProjectAccess, requireMediaOwnership } from '@/lib/auth/serverAuth';
 import { formatErrorResponse, ClipperError } from '@/lib/errors';
 import { isValidProjectTransition, Project, ProjectStatus } from '@/lib/types';
 import { supabase, isSupabaseConfigured } from '@/lib/supabase';
@@ -60,26 +60,21 @@ export async function PATCH(
       }
     }
 
-    // 2. Validate media asset ownership if attaching activeMediaId
-    if (body.activeMediaId && body.activeMediaId !== existing.activeMediaId && isSupabaseConfigured()) {
-      try {
-        const { data: mediaRow } = await supabase
-          .from('media_assets')
-          .select('id, user_id')
-          .eq('id', body.activeMediaId)
-          .maybeSingle();
+    // 2. Validate media asset ownership if attaching activeMediaId, clips, or transcript
+    if (body.activeMediaId && body.activeMediaId !== existing.activeMediaId) {
+      await requireMediaOwnership(user, body.activeMediaId);
+    }
 
-        if (mediaRow && mediaRow.user_id !== user.id && user.role !== 'admin') {
-          throw new ClipperError(
-            'MEDIA_NOT_OWNED',
-            `Cannot link media asset ${body.activeMediaId} belonging to another user.`,
-            403
-          );
+    if (body.clips && Array.isArray(body.clips)) {
+      for (const clip of body.clips) {
+        if (clip.sourceMediaId && clip.sourceMediaId !== body.activeMediaId) {
+          await requireMediaOwnership(user, clip.sourceMediaId);
         }
-      } catch (mediaErr: any) {
-        if (mediaErr instanceof ClipperError) throw mediaErr;
-        // Non-blocking query failure
       }
+    }
+
+    if (body.transcript?.mediaAssetId && body.transcript.mediaAssetId !== body.activeMediaId) {
+      await requireMediaOwnership(user, body.transcript.mediaAssetId);
     }
 
     // 3. Assemble merged project
