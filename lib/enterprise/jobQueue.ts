@@ -250,12 +250,41 @@ export class EnterpriseJobQueue {
     return queue.find(j => j.id === jobId) || null;
   }
 
+  async listJobs(organizationId?: string): Promise<EnterpriseJob[]> {
+    const queue = this.read<EnterpriseJob>(this.queueFile);
+    if (organizationId) {
+      return queue.filter(j => j.organizationId === organizationId);
+    }
+    return queue;
+  }
+
   async listDeadLetters(organizationId?: string): Promise<EnterpriseJob[]> {
     const dlq = this.read<EnterpriseJob>(this.dlqFile);
     if (organizationId) {
       return dlq.filter(j => j.organizationId === organizationId);
     }
     return dlq;
+  }
+
+  async recoverOrphanedJobs(): Promise<number> {
+    const queue = this.read<EnterpriseJob>(this.queueFile);
+    const now = Date.now();
+    let recovered = 0;
+
+    for (const j of queue) {
+      if ((j.status === 'LEASED' || j.status === 'PROCESSING') && j.leaseExpiresAt && new Date(j.leaseExpiresAt).getTime() < now) {
+        j.status = 'QUEUED';
+        j.workerId = undefined;
+        j.leaseExpiresAt = undefined;
+        j.updatedAt = new Date().toISOString();
+        recovered++;
+      }
+    }
+
+    if (recovered > 0) {
+      this.write(this.queueFile, queue);
+    }
+    return recovered;
   }
 }
 

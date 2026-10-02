@@ -23,12 +23,14 @@ export interface ITenantStore {
   getOrganization(id: string): Promise<Organization | null>;
   updateOrganization(id: string, updates: Partial<Organization>): Promise<Organization>;
   listOrganizations(userId: string): Promise<Organization[]>;
+  getAllOrganizations(): Promise<Organization[]>;
   deleteOrganization(id: string): Promise<boolean>;
 
   // Workspaces
   createWorkspace(organizationId: string, name: string, clientId?: string): Promise<Workspace>;
   getWorkspace(id: string): Promise<Workspace | null>;
   listWorkspaces(organizationId: string): Promise<Workspace[]>;
+  getAllWorkspaces(): Promise<Workspace[]>;
   updateWorkspace(id: string, updates: Partial<Workspace>): Promise<Workspace>;
   deleteWorkspace(id: string): Promise<boolean>;
 
@@ -144,6 +146,14 @@ export class LocalTenantStore implements ITenantStore {
     const members = this.read<OrganizationMember>(this.membersFile);
     const userOrgIds = new Set(members.filter(m => m.userId === userId).map(m => m.organizationId));
     return orgs.filter(o => o.ownerId === userId || userOrgIds.has(o.id));
+  }
+
+  async getAllOrganizations(): Promise<Organization[]> {
+    return this.read<Organization>(this.orgsFile);
+  }
+
+  async getAllWorkspaces(): Promise<Workspace[]> {
+    return this.read<Workspace>(this.workspacesFile);
   }
 
   async deleteOrganization(id: string): Promise<boolean> {

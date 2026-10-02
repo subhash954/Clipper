@@ -393,8 +393,21 @@ export interface SupportTicket {
   category: TicketCategory;
   priority: TicketPriority;
   status: TicketStatus;
+  resourceType?: string;
+  resourceId?: string;
+  resolutionNotes?: string;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface TicketMessage {
+  id: string;
+  ticketId: string;
+  authorId: string;
+  authorEmail: string;
+  authorRole: string;
+  message: string;
+  createdAt: string;
 }
 
 export type HealthStatus = 'healthy' | 'degraded' | 'down';
