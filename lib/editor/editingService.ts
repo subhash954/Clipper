@@ -691,105 +691,18 @@ export class EditingService {
   }
 
   /**
-   * Reverts the most recent EDL operation deterministically using the inverse params journal
+   * Reverts the most recent EDL operation deterministically using the journal cursor
    */
   static async undo(projectId: string, userId: string, expectedVersion: number): Promise<Timeline> {
     const storage = getStorage();
-    const timeline = await storage.getTimeline(projectId);
-    if (!timeline) {
-      throw new ClipperError('NOT_FOUND', `Timeline for project ${projectId} not found`, 404);
-    }
+    return await storage.undoTimeline(projectId, userId, expectedVersion);
+  }
 
-    if (storage.listTimelineOperations) {
-      const operations = await storage.listTimelineOperations(timeline.id);
-      if (operations.length === 0) {
-        return timeline; // Nothing to undo
-      }
-
-      const lastOp = operations[operations.length - 1];
-
-      // Reconstruct based on inverseParams
-      if (lastOp.type === 'SPLIT') {
-        const { itemAId, itemBId, originalItem, trackId } = lastOp.inverseParams;
-        const updatedTracks = timeline.tracks.map((t) => {
-          if (t.id !== trackId) return t;
-          const items = t.items.filter((i) => i.id !== itemAId && i.id !== itemBId);
-          items.push(originalItem);
-          items.sort((a, b) => a.timelineStart - b.timelineStart);
-          return { ...t, items };
-        });
-
-        const updatedTimeline: Timeline = {
-          ...timeline,
-          tracks: updatedTracks,
-          duration: recalculateTimelineDuration(updatedTracks),
-          updatedAt: new Date().toISOString(),
-        };
-
-        return await storage.saveTimeline(updatedTimeline, expectedVersion, userId);
-      }
-
-      if (lastOp.type === 'TRIM') {
-        const { itemId, originalItem, trackId } = lastOp.inverseParams;
-        const updatedTracks = timeline.tracks.map((t) => {
-          if (t.id !== trackId) return t;
-          return {
-            ...t,
-            items: t.items.map((i) => (i.id === itemId ? originalItem : i)),
-          };
-        });
-
-        const updatedTimeline: Timeline = {
-          ...timeline,
-          tracks: updatedTracks,
-          duration: recalculateTimelineDuration(updatedTracks),
-          updatedAt: new Date().toISOString(),
-        };
-
-        return await storage.saveTimeline(updatedTimeline, expectedVersion, userId);
-      }
-
-      if (lastOp.type === 'DELETE_ITEM') {
-        const { originalItem, trackId, previousItems } = lastOp.inverseParams;
-        const updatedTracks = timeline.tracks.map((t) => {
-          if (t.id !== trackId) return t;
-          return {
-            ...t,
-            items: previousItems || [...t.items, originalItem].sort((a, b) => a.timelineStart - b.timelineStart),
-          };
-        });
-
-        const updatedTimeline: Timeline = {
-          ...timeline,
-          tracks: updatedTracks,
-          duration: recalculateTimelineDuration(updatedTracks),
-          updatedAt: new Date().toISOString(),
-        };
-
-        return await storage.saveTimeline(updatedTimeline, expectedVersion, userId);
-      }
-
-      if (lastOp.type === 'DELETE_RANGE') {
-        const { trackId, originalItems } = lastOp.inverseParams;
-        const updatedTracks = timeline.tracks.map((t) => {
-          if (t.id !== trackId) return t;
-          return {
-            ...t,
-            items: originalItems,
-          };
-        });
-
-        const updatedTimeline: Timeline = {
-          ...timeline,
-          tracks: updatedTracks,
-          duration: recalculateTimelineDuration(updatedTracks),
-          updatedAt: new Date().toISOString(),
-        };
-
-        return await storage.saveTimeline(updatedTimeline, expectedVersion, userId);
-      }
-    }
-
-    return timeline;
+  /**
+   * Re-applies an undone EDL operation deterministically using the journal cursor
+   */
+  static async redo(projectId: string, userId: string, expectedVersion: number): Promise<Timeline> {
+    const storage = getStorage();
+    return await storage.redoTimeline(projectId, userId, expectedVersion);
   }
 }

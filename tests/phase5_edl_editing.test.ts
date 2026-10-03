@@ -368,6 +368,136 @@ async function runPhase5Tests() {
   assert(syncResult.timeline.version === 6, 'Transcript word cut committed to version 6');
 
   // --------------------------------------------------------------------------
+  // TEST GROUP 6B: Authoritative Multi-Step Redo & Branch Invalidation
+  // --------------------------------------------------------------------------
+  console.log('\n--- TEST GROUP 6B: Multi-Step Redo & Branch Invalidation ---');
+
+  // Fresh isolated project for clean A -> B -> C testing
+  const redoProjectId = `proj-redo-test-${Date.now()}`;
+  await storage.saveProject({
+    id: redoProjectId,
+    userId: testUserId,
+    title: 'Redo Test Project',
+    workflowType: 'youtube_to_shorts',
+    sourceType: 'upload',
+    clips: [],
+    durationSeconds: 60.0,
+    status: 'editing',
+    version: 1,
+    createdAt: new Date().toISOString(),
+  });
+
+  // State A: Initial timeline (version 1, 1 item)
+  const timelineA = await EditingService.getOrCreateTimeline(redoProjectId, testUserId);
+  assert(timelineA.version === 1, 'State A: version 1');
+  const videoTrackA = timelineA.tracks.find((t) => t.type === 'VIDEO')!;
+  assert(videoTrackA.items.length === 1, 'State A has 1 item');
+  const seedItemId = videoTrackA.items[0].id;
+
+  // State B: Split item at 30.0s (version 2, 2 items)
+  const editB = await EditingService.splitItem({
+    projectId: redoProjectId,
+    userId: testUserId,
+    itemId: seedItemId,
+    splitTime: 30.0,
+    expectedVersion: 1,
+  });
+  assert(editB.timeline.version === 2, 'State B: version 2 after split');
+  assert(editB.timeline.tracks.find((t) => t.type === 'VIDEO')!.items.length === 2, 'State B has 2 items');
+
+  // State C: Delete second item (version 3, 1 item)
+  const itemSplitBId = editB.operation.params.itemBId;
+  const editC = await EditingService.deleteItem({
+    projectId: redoProjectId,
+    userId: testUserId,
+    itemId: itemSplitBId,
+    ripple: true,
+    expectedVersion: 2,
+  });
+  assert(editC.timeline.version === 3, 'State C: version 3 after delete');
+  assert(editC.timeline.tracks.find((t) => t.type === 'VIDEO')!.items.length === 1, 'State C has 1 item');
+
+  // 1. Undo to B: expect version 4, 2 items
+  const undoToB = await EditingService.undo(redoProjectId, testUserId, 3);
+  assert(undoToB.version === 4, 'Undo C -> B: version incremented to 4');
+  assert(undoToB.tracks.find((t) => t.type === 'VIDEO')!.items.length === 2, 'Undo C -> B restored 2 items');
+
+  // 2. Undo to A: expect version 5, 1 item
+  const undoToA = await EditingService.undo(redoProjectId, testUserId, 4);
+  assert(undoToA.version === 5, 'Undo B -> A: version incremented to 5');
+  assert(undoToA.tracks.find((t) => t.type === 'VIDEO')!.items.length === 1, 'Undo B -> A restored 1 item');
+
+  // 3. Redo to B: expect version 6, 2 items
+  const redoToB = await EditingService.redo(redoProjectId, testUserId, 5);
+  assert(redoToB.version === 6, 'Redo A -> B: version incremented to 6');
+  assert(redoToB.tracks.find((t) => t.type === 'VIDEO')!.items.length === 2, 'Redo A -> B restored 2 items');
+
+  // 4. Redo to C: expect version 7, 1 item
+  const redoToC = await EditingService.redo(redoProjectId, testUserId, 6);
+  assert(redoToC.version === 7, 'Redo B -> C: version incremented to 7');
+  assert(redoToC.tracks.find((t) => t.type === 'VIDEO')!.items.length === 1, 'Redo B -> C restored 1 item');
+
+  // 5. Redo beyond C should fail (no further redo ops)
+  let redoBeyondThrew = false;
+  try {
+    await EditingService.redo(redoProjectId, testUserId, 7);
+  } catch (err: any) {
+    redoBeyondThrew = true;
+    assert(err.code === 'NO_REDO_OPERATION' || err.statusCode === 400, 'Redo beyond available ops rejected');
+  }
+  assert(redoBeyondThrew, 'Redo beyond available operations throws NO_REDO_OPERATION');
+
+  // 6. Test Branch Invalidation: Undo to B, then apply new Edit D
+  // Current state: C (version 7). Undo -> B (version 8).
+  const undoAgainToB = await EditingService.undo(redoProjectId, testUserId, 7);
+  assert(undoAgainToB.version === 8, 'Undo C -> B: version incremented to 8');
+  assert(undoAgainToB.tracks.find((t) => t.type === 'VIDEO')!.items.length === 2, 'Restored to B (2 items)');
+
+  // Apply new Edit D: trim item instead of deleting
+  const itemToTrimId = undoAgainToB.tracks.find((t) => t.type === 'VIDEO')!.items[0].id;
+  const editD = await EditingService.trimItem({
+    projectId: redoProjectId,
+    userId: testUserId,
+    itemId: itemToTrimId,
+    newTimelineStart: 2.0,
+    newTimelineEnd: 25.0,
+    expectedVersion: 8,
+  });
+  assert(editD.timeline.version === 9, 'Edit D: version incremented to 9');
+
+  // Attempting Redo now MUST fail because branch was invalidated by new edit D
+  let invalidatedRedoThrew = false;
+  try {
+    await EditingService.redo(redoProjectId, testUserId, 9);
+  } catch (err: any) {
+    invalidatedRedoThrew = true;
+    assert(err.code === 'NO_REDO_OPERATION' || err.statusCode === 400, 'Redo on invalidated branch rejected');
+  }
+  assert(invalidatedRedoThrew, 'Redo branch was invalidated by new edit D');
+
+  // --------------------------------------------------------------------------
+  // TEST GROUP 6C: Strict Numeric Input Validation
+  // --------------------------------------------------------------------------
+  console.log('\n--- TEST GROUP 6C: Strict Numeric Input Validation ---');
+
+  function isValidExpectedVersion(val: any): boolean {
+    return typeof val === 'number' && Number.isFinite(val) && Number.isInteger(val) && val >= 1;
+  }
+
+  assert(!isValidExpectedVersion(NaN), 'NaN rejected as expectedVersion');
+  assert(!isValidExpectedVersion(Infinity), 'Infinity rejected as expectedVersion');
+  assert(!isValidExpectedVersion(-Infinity), '-Infinity rejected as expectedVersion');
+  assert(!isValidExpectedVersion(1.5), 'Float 1.5 rejected as expectedVersion');
+  assert(!isValidExpectedVersion(-1), 'Negative -1 rejected as expectedVersion');
+  assert(!isValidExpectedVersion(0), '0 rejected as expectedVersion');
+  assert(!isValidExpectedVersion(null), 'null rejected as expectedVersion');
+  assert(!isValidExpectedVersion('1'), 'String "1" rejected as expectedVersion');
+  assert(!isValidExpectedVersion(true), 'Boolean true rejected as expectedVersion');
+  assert(!isValidExpectedVersion({}), 'Object rejected as expectedVersion');
+  assert(isValidExpectedVersion(1), 'Integer 1 accepted as expectedVersion');
+  assert(isValidExpectedVersion(10), 'Integer 10 accepted as expectedVersion');
+
+  // --------------------------------------------------------------------------
   // TEST GROUP 7: Determinism Verification
   // --------------------------------------------------------------------------
   console.log('\n--- TEST GROUP 7: Determinism Verification ---');

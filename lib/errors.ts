@@ -33,7 +33,9 @@ export type ClipperErrorCode =
   | 'INVALID_TRIM_RANGE'
   | 'INVALID_TRIM_BOUNDS'
   | 'INVALID_RANGE'
-  | 'INVALID_SPEED';
+  | 'INVALID_SPEED'
+  | 'NO_UNDO_OPERATION'
+  | 'NO_REDO_OPERATION';
 
 export interface StructuredErrorResponse {
   code: ClipperErrorCode;

@@ -41,6 +41,7 @@ export interface Timeline {
   duration: number;       // Max presentation duration across all tracks (seconds)
   timebase: string;       // e.g. '30fps', '60fps', 'ms'
   status: 'active' | 'archived';
+  currentOperationIndex?: number; // Pointer to current position in operations journal
   tracks: TimelineTrack[];
   createdAt: string;
   updatedAt: string;
@@ -54,14 +55,18 @@ export type EDLOperationType =
   | 'MOVE_ITEM'
   | 'INSERT_ITEM'
   | 'SET_SPEED'
-  | 'SET_ENABLED';
+  | 'SET_ENABLED'
+  | 'UNDO'
+  | 'REDO';
 
 export interface EDLOperation {
   id: string;
   timelineId: string;
-  type: EDLOperationType;
+  type: EDLOperationType | string;
   params: Record<string, any>;
   inverseParams: Record<string, any>;
+  snapshotBefore?: TimelineTrack[];
+  snapshotAfter?: TimelineTrack[];
   version: number;        // Version of the timeline after this operation was committed
   userId?: string;
   createdAt: string;

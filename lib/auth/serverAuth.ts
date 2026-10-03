@@ -128,13 +128,47 @@ export async function requireProjectAccess(
     return project;
   }
 
-  // Strict tenant ownership check
-  const effectiveOwner = project.userId || (user.isDevUser ? DEV_USER_ID : null);
-  if (!effectiveOwner || effectiveOwner !== user.id) {
-    throw new AuthError('Forbidden: You do not have permission to access this project.', 403);
+  // Role hierarchy enforcement: viewer (1) < editor (2) < owner (3) < admin (4)
+  const ROLE_HIERARCHY: Record<string, number> = {
+    viewer: 1,
+    editor: 2,
+    owner: 3,
+    admin: 4,
+  };
+
+  const userLevel = ROLE_HIERARCHY[user.role] ?? 1;
+  const requiredLevel = ROLE_HIERARCHY[minRole] ?? 1;
+
+  if (userLevel < requiredLevel) {
+    throw new AuthError(`Forbidden: Role '${user.role}' does not satisfy required role '${minRole}'.`, 403);
   }
 
-  return project;
+  // Strict tenant ownership check
+  const effectiveOwner = project.userId || (user.isDevUser ? DEV_USER_ID : null);
+  if (effectiveOwner === user.id) {
+    return project;
+  }
+
+  // Legitimate workspace editor / collaborator check
+  if (project.workspaceId && isSupabaseConfigured()) {
+    const { data: member } = await supabase
+      .from('organization_members')
+      .select('role, status')
+      .eq('workspace_id', project.workspaceId)
+      .eq('user_id', user.id)
+      .eq('status', 'active')
+      .maybeSingle();
+
+    if (member) {
+      const memberRole = member.role.toLowerCase();
+      const memberLevel = ROLE_HIERARCHY[memberRole] ?? 1;
+      if (memberLevel >= requiredLevel) {
+        return project;
+      }
+    }
+  }
+
+  throw new AuthError('Forbidden: You do not have permission to access this project.', 403);
 }
 
 /**

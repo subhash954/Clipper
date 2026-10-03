@@ -47,6 +47,8 @@ export interface IStorageAdapter {
   listTranscriptSegments?(transcriptId: string): Promise<TranscriptSegment[]>;
   getTimeline(projectId: string): Promise<Timeline | null>;
   saveTimeline(timeline: Timeline, expectedVersion?: number, userId?: string, operation?: EDLOperation): Promise<Timeline>;
+  undoTimeline(projectId: string, userId?: string, expectedVersion?: number): Promise<Timeline>;
+  redoTimeline(projectId: string, userId?: string, expectedVersion?: number): Promise<Timeline>;
   recordTimelineOperation?(operation: EDLOperation): Promise<void>;
   listTimelineOperations?(timelineId: string): Promise<EDLOperation[]>;
 }
@@ -1129,6 +1131,70 @@ export class SupabaseStorageAdapter implements IStorageAdapter {
     return data as Timeline;
   }
 
+  async undoTimeline(projectId: string, userId?: string, expectedVersion?: number): Promise<Timeline> {
+    const { data, error } = await supabase.rpc('undo_timeline_atomic', {
+      p_project_id: projectId,
+      p_user_id: userId || null,
+      p_expected_version: expectedVersion !== undefined ? expectedVersion : null,
+    });
+
+    if (error) {
+      if (error.code === '23505' || error.message?.includes('TIMELINE_VERSION_CONFLICT')) {
+        throw new ClipperError(
+          'TIMELINE_VERSION_CONFLICT',
+          `Timeline version conflict during undo: ${error.message}`,
+          409,
+          true,
+          { expectedVersion }
+        );
+      }
+      if (error.code === '42501' || error.message?.includes('FORBIDDEN')) {
+        throw new ClipperError('FORBIDDEN', error.message, 403);
+      }
+      if (error.code === 'P0002' || error.message?.includes('NO_UNDO_OPERATION')) {
+        throw new ClipperError('NO_UNDO_OPERATION', error.message, 400);
+      }
+      if (error.message?.includes('PROJECT_NOT_FOUND')) {
+        throw new ClipperError('NOT_FOUND', error.message, 404);
+      }
+      throw new ClipperError('DATABASE_ERROR', `Failed to undo timeline: ${error.message}`, 500);
+    }
+
+    return data as Timeline;
+  }
+
+  async redoTimeline(projectId: string, userId?: string, expectedVersion?: number): Promise<Timeline> {
+    const { data, error } = await supabase.rpc('redo_timeline_atomic', {
+      p_project_id: projectId,
+      p_user_id: userId || null,
+      p_expected_version: expectedVersion !== undefined ? expectedVersion : null,
+    });
+
+    if (error) {
+      if (error.code === '23505' || error.message?.includes('TIMELINE_VERSION_CONFLICT')) {
+        throw new ClipperError(
+          'TIMELINE_VERSION_CONFLICT',
+          `Timeline version conflict during redo: ${error.message}`,
+          409,
+          true,
+          { expectedVersion }
+        );
+      }
+      if (error.code === '42501' || error.message?.includes('FORBIDDEN')) {
+        throw new ClipperError('FORBIDDEN', error.message, 403);
+      }
+      if (error.code === 'P0002' || error.message?.includes('NO_REDO_OPERATION')) {
+        throw new ClipperError('NO_REDO_OPERATION', error.message, 400);
+      }
+      if (error.message?.includes('PROJECT_NOT_FOUND')) {
+        throw new ClipperError('NOT_FOUND', error.message, 404);
+      }
+      throw new ClipperError('DATABASE_ERROR', `Failed to redo timeline: ${error.message}`, 500);
+    }
+
+    return data as Timeline;
+  }
+
   async listTimelineOperations(timelineId: string): Promise<EDLOperation[]> {
     const { data, error } = await supabase
       .from('timeline_operations')
@@ -1746,6 +1812,32 @@ export class LocalStorageAdapter implements IStorageAdapter {
     const newVersion = existing ? existing.version + 1 : 1;
     const now = new Date().toISOString();
     const timelineId = existing ? existing.id : (timeline.id || crypto.randomUUID());
+    const currentCursor = existing?.currentOperationIndex ?? 0;
+
+    // Truncate redo branch: remove any operations where operationIndex > currentCursor
+    const ops = this.readJson<any[]>(this.timelineOpsFile, []);
+    const filteredOps = ops.filter(
+      (op) => !(op.timelineId === timelineId && (op.operationIndex ?? op.operation_index ?? 0) > currentCursor)
+    );
+
+    let nextCursor = currentCursor;
+    if (operation && operation.type) {
+      nextCursor = currentCursor + 1;
+      const newOp: any = {
+        ...operation,
+        id: operation.id || crypto.randomUUID(),
+        timelineId,
+        operationIndex: nextCursor,
+        operation_index: nextCursor,
+        snapshotBefore: existing ? existing.tracks : [],
+        snapshotAfter: timeline.tracks,
+        version: newVersion,
+        userId: userId || operation.userId,
+        createdAt: now,
+      };
+      filteredOps.push(newOp);
+    }
+    this.writeJson(this.timelineOpsFile, filteredOps);
 
     const savedTimeline: Timeline = {
       ...timeline,
@@ -1755,6 +1847,7 @@ export class LocalStorageAdapter implements IStorageAdapter {
       duration: timeline.duration,
       timebase: timeline.timebase || '30fps',
       status: timeline.status || 'active',
+      currentOperationIndex: nextCursor,
       tracks: (timeline.tracks || []).map((tr, trIdx) => ({
         ...tr,
         id: tr.id || crypto.randomUUID(),
@@ -1773,20 +1866,109 @@ export class LocalStorageAdapter implements IStorageAdapter {
     const remaining = timelines.filter((t) => t.projectId !== timeline.projectId && t.id !== timelineId);
     this.writeJson(this.timelinesFile, [savedTimeline, ...remaining]);
 
-    if (operation && operation.type) {
-      const ops = this.readJson<EDLOperation[]>(this.timelineOpsFile, []);
-      const newOp: EDLOperation = {
-        ...operation,
-        id: operation.id || crypto.randomUUID(),
-        timelineId,
-        version: newVersion,
-        userId: userId || operation.userId,
-        createdAt: now,
-      };
-      this.writeJson(this.timelineOpsFile, [...ops, newOp]);
+    return savedTimeline;
+  }
+
+  async undoTimeline(projectId: string, userId?: string, expectedVersion?: number): Promise<Timeline> {
+    const timelines = this.readJson<Timeline[]>(this.timelinesFile, []);
+    const existing = timelines.find((t) => t.projectId === projectId || t.id === projectId);
+    if (!existing) {
+      throw new ClipperError('NOT_FOUND', `Timeline for project ${projectId} not found`, 404);
     }
 
-    return savedTimeline;
+    if (expectedVersion !== undefined && existing.version !== expectedVersion) {
+      throw new ClipperError(
+        'TIMELINE_VERSION_CONFLICT',
+        `Timeline version conflict during undo: Expected version ${expectedVersion}, but found version ${existing.version}.`,
+        409,
+        true,
+        { expectedVersion, currentVersion: existing.version }
+      );
+    }
+
+    const currentCursor = existing.currentOperationIndex ?? 0;
+    if (currentCursor <= 0) {
+      throw new ClipperError('NO_UNDO_OPERATION', 'Nothing to undo', 400);
+    }
+
+    const ops = this.readJson<any[]>(this.timelineOpsFile, []);
+    const targetOp = ops.find(
+      (op) =>
+        op.timelineId === existing.id &&
+        (op.operationIndex === currentCursor || op.operation_index === currentCursor)
+    );
+
+    if (!targetOp) {
+      throw new ClipperError('NO_UNDO_OPERATION', `Operation not found at cursor ${currentCursor}`, 400);
+    }
+
+    if (String(targetOp.type || targetOp.operation_type).toLowerCase() === 'create_timeline') {
+      throw new ClipperError('NO_UNDO_OPERATION', 'Cannot undo initial timeline creation', 400);
+    }
+
+    const restoredTracks = targetOp.snapshotBefore || targetOp.snapshot_before || [];
+    const newVersion = existing.version + 1;
+    const now = new Date().toISOString();
+
+    const updatedTimeline: Timeline = {
+      ...existing,
+      version: newVersion,
+      currentOperationIndex: currentCursor - 1,
+      tracks: restoredTracks,
+      updatedAt: now,
+    };
+
+    const remaining = timelines.filter((t) => t.id !== existing.id && t.projectId !== existing.projectId);
+    this.writeJson(this.timelinesFile, [updatedTimeline, ...remaining]);
+    return updatedTimeline;
+  }
+
+  async redoTimeline(projectId: string, userId?: string, expectedVersion?: number): Promise<Timeline> {
+    const timelines = this.readJson<Timeline[]>(this.timelinesFile, []);
+    const existing = timelines.find((t) => t.projectId === projectId || t.id === projectId);
+    if (!existing) {
+      throw new ClipperError('NOT_FOUND', `Timeline for project ${projectId} not found`, 404);
+    }
+
+    if (expectedVersion !== undefined && existing.version !== expectedVersion) {
+      throw new ClipperError(
+        'TIMELINE_VERSION_CONFLICT',
+        `Timeline version conflict during redo: Expected version ${expectedVersion}, but found version ${existing.version}.`,
+        409,
+        true,
+        { expectedVersion, currentVersion: existing.version }
+      );
+    }
+
+    const currentCursor = existing.currentOperationIndex ?? 0;
+    const targetCursor = currentCursor + 1;
+
+    const ops = this.readJson<any[]>(this.timelineOpsFile, []);
+    const targetOp = ops.find(
+      (op) =>
+        op.timelineId === existing.id &&
+        (op.operationIndex === targetCursor || op.operation_index === targetCursor)
+    );
+
+    if (!targetOp) {
+      throw new ClipperError('NO_REDO_OPERATION', 'No operations available to redo', 400);
+    }
+
+    const restoredTracks = targetOp.snapshotAfter || targetOp.snapshot_after || [];
+    const newVersion = existing.version + 1;
+    const now = new Date().toISOString();
+
+    const updatedTimeline: Timeline = {
+      ...existing,
+      version: newVersion,
+      currentOperationIndex: targetCursor,
+      tracks: restoredTracks,
+      updatedAt: now,
+    };
+
+    const remaining = timelines.filter((t) => t.id !== existing.id && t.projectId !== existing.projectId);
+    this.writeJson(this.timelinesFile, [updatedTimeline, ...remaining]);
+    return updatedTimeline;
   }
 
   async listTimelineOperations(timelineId: string): Promise<EDLOperation[]> {
