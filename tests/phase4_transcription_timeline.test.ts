@@ -1657,7 +1657,7 @@ async function runPhase4Tests() {
     'project.status = transcribing update fails closed without catch block swallowing errors'
   );
   assert(
-    serviceCode.includes("latestProj.status = 'failed'"),
+    serviceCode.includes("failProjectIfLeaseHeld") || serviceCode.includes("latestProj.status = 'failed'"),
     'transcriptionService sets project status to failed on uncaught execution error'
   );
 

@@ -310,6 +310,18 @@ export const VideoPreviewPlayer = forwardRef<VideoPreviewPlayerRef, VideoPreview
     const handleTimeUpdate = () => {
       if (videoRef.current) {
         const time = videoRef.current.currentTime;
+
+        // Skip enabled cuts non-destructively
+        if (cuts && cuts.length > 0) {
+          const activeCut = cuts.find((c) => c.enabled && time >= c.start && time < c.end);
+          if (activeCut) {
+            videoRef.current.currentTime = activeCut.end;
+            setCurrentTime(activeCut.end);
+            onTimeUpdate?.(activeCut.end);
+            return;
+          }
+        }
+
         setCurrentTime(time);
         onTimeUpdate?.(time);
 

@@ -2,28 +2,31 @@
 
 import React, { useRef, useState, useMemo } from 'react';
 import { ViralClip, WordTimestamp, EditOperation } from '@/lib/types';
+import { Timeline, TimelineItem, TimelineTrack } from '@/lib/editor/edlTypes';
 import { ReframeTrack } from '@/lib/reframe/types';
 import {
   Film,
-  Type,
   Scissors,
-  Video,
   Music2,
   Sparkles,
   Layers,
-  Crosshair,
   ZoomIn,
   ZoomOut,
-  Maximize2,
   Trash2,
   Split,
+  Undo2,
+  Redo2,
+  Gauge,
+  Check,
+  ChevronRight,
   Eye,
-  Filter,
+  Type
 } from 'lucide-react';
 
 interface CreatorTimelineProps {
-  clip: ViralClip | null;
-  currentTime: number; // in seconds (absolute media time)
+  clip?: ViralClip | null;
+  timeline?: Timeline | null;
+  currentTime: number; // in presentation seconds
   onSeek: (time: number) => void;
   cuts?: EditOperation[];
   words?: WordTimestamp[];
@@ -36,12 +39,19 @@ interface CreatorTimelineProps {
   onSelectClip?: (clipId: string) => void;
   onTrimClip?: (clipId: string, newStart: number, newEnd: number) => void;
   showIntelligenceMarkers?: boolean;
+  // Phase 5 Authoritative EDL Callbacks
+  onTimelineSplit?: (itemId: string, splitTime: number) => void;
+  onTimelineTrim?: (itemId: string, newStart: number, newEnd: number) => void;
+  onTimelineDelete?: (itemId: string, ripple: boolean) => void;
+  onTimelineUndo?: () => void;
+  onTimelineRedo?: () => void;
+  onTimelineSpeed?: (itemId: string, speed: number) => void;
+  onTranscriptSyncAction?: (word: WordTimestamp, action: 'cut_word' | 'split_at_start' | 'split_at_end') => void;
 }
-
-export type MarkerCategory = 'HOOK' | 'STORY_BEAT' | 'SPEAKER' | 'VISUAL_EVENT' | 'PAUSE' | 'B_ROLL' | 'EMPHASIS';
 
 export const CreatorTimeline: React.FC<CreatorTimelineProps> = ({
   clip,
+  timeline,
   currentTime,
   onSeek,
   cuts = [],
@@ -55,29 +65,30 @@ export const CreatorTimeline: React.FC<CreatorTimelineProps> = ({
   onSelectClip,
   onTrimClip,
   showIntelligenceMarkers = true,
+  onTimelineSplit,
+  onTimelineTrim,
+  onTimelineDelete,
+  onTimelineUndo,
+  onTimelineRedo,
+  onTimelineSpeed,
+  onTranscriptSyncAction,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const [isScrubbing, setIsScrubbing] = useState(false);
   const [zoomLevel, setZoomLevel] = useState<number>(1.0);
-  const [activeMarkerFilters, setActiveMarkerFilters] = useState<Record<MarkerCategory, boolean>>({
-    HOOK: true,
-    STORY_BEAT: true,
-    SPEAKER: true,
-    VISUAL_EVENT: true,
-    PAUSE: true,
-    B_ROLL: true,
-    EMPHASIS: true,
-  });
-  const [showFilterDropdown, setShowFilterDropdown] = useState(false);
+  const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
+  const [activeWordAction, setActiveWordAction] = useState<WordTimestamp | null>(null);
 
-  if (!clip) {
-    return null;
-  }
+  // Determine active duration from canonical timeline or fallback clip
+  const totalDuration = useMemo(() => {
+    if (timeline && timeline.duration > 0) return timeline.duration;
+    if (clip && clip.duration > 0) return clip.duration;
+    return 30.0;
+  }, [timeline, clip]);
 
-  const duration = clip.duration > 0 ? clip.duration : 30;
-  const clipStart = clip.start || 0;
-  const relativeCurrent = Math.max(0, Math.min(duration, currentTime - clipStart));
-  const playheadPercent = Math.min(100, Math.max(0, (relativeCurrent / duration) * 100));
+  const clipStart = clip?.start || 0;
+  const presentationCurrent = Math.max(0, Math.min(totalDuration, currentTime));
+  const playheadPercent = Math.min(100, Math.max(0, (presentationCurrent / totalDuration) * 100));
 
   const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     setIsScrubbing(true);
@@ -98,437 +109,376 @@ export const CreatorTimeline: React.FC<CreatorTimelineProps> = ({
     const rect = containerRef.current.getBoundingClientRect();
     const clickX = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
     const ratio = clickX / rect.width;
-    const targetRelative = ratio * duration;
-    onSeek(clipStart + targetRelative);
+    const targetTime = ratio * totalDuration;
+    onSeek(Number(targetTime.toFixed(3)));
   };
 
-  const activeCuts = cuts.filter((c) => c.enabled && c.type !== 'BROLL');
-  const brollOperations = cuts.filter((c) => c.enabled && c.type === 'BROLL');
-
-  // Semantic Multimodal Markers (Phase 32)
-  const semanticMarkers = useMemo(() => {
-    const markers: Array<{
-      category: MarkerCategory;
-      type: string;
-      time: number; // absolute time
-      relativeTime: number; // relative to clip
-      label: string;
-      color: string;
-    }> = [];
-
-    // [HOOK] at clip start
-    if (activeMarkerFilters.HOOK) {
-      markers.push({
-        category: 'HOOK',
-        type: 'HOOK',
-        time: clipStart,
-        relativeTime: 0,
-        label: 'HOOK',
-        color: 'bg-cyan-500 text-slate-950 border-cyan-400',
-      });
+  // Resolve tracks from canonical timeline if available, otherwise construct from clip
+  const videoItems: TimelineItem[] = useMemo(() => {
+    if (timeline) {
+      const vTrack = timeline.tracks.find((t) => t.type === 'VIDEO');
+      if (vTrack && vTrack.items.length > 0) {
+        return vTrack.items;
+      }
     }
+    // Fallback single item from clip
+    return [
+      {
+        id: clip?.id || 'clip-fallback',
+        trackId: 'track-video',
+        sourceMediaId: 'media-0',
+        sourceStart: clipStart,
+        sourceEnd: clipStart + totalDuration,
+        timelineStart: 0,
+        timelineEnd: totalDuration,
+        speed: 1.0,
+        enabled: true,
+        label: clip?.title || 'Main Video',
+      },
+    ];
+  }, [timeline, clip, totalDuration, clipStart]);
 
-    // [EMPHASIS] around pivotal quote
-    if (activeMarkerFilters.EMPHASIS) {
-      const emphasisTime = clipStart + Math.min(duration * 0.45, 8);
-      markers.push({
-        category: 'EMPHASIS',
-        type: 'EMPHASIS',
-        time: emphasisTime,
-        relativeTime: emphasisTime - clipStart,
-        label: 'EMPHASIS',
-        color: 'bg-amber-400 text-slate-950 border-amber-300',
-      });
+  const activeVideoItem = useMemo(() => {
+    return videoItems.find((i) => i.id === selectedItemId) || videoItems[0] || null;
+  }, [videoItems, selectedItemId]);
+
+  const handleSplitClick = () => {
+    if (!activeVideoItem) return;
+    if (onTimelineSplit) {
+      onTimelineSplit(activeVideoItem.id, presentationCurrent);
+    } else if (onSplit) {
+      onSplit(presentationCurrent);
     }
+  };
 
-    // [STORY BEAT]
-    if (activeMarkerFilters.STORY_BEAT && duration > 15) {
-      const beatTime = clipStart + duration * 0.65;
-      markers.push({
-        category: 'STORY_BEAT',
-        type: 'STORY_BEAT',
-        time: beatTime,
-        relativeTime: beatTime - clipStart,
-        label: 'STORY BEAT',
-        color: 'bg-emerald-400 text-slate-950 border-emerald-300',
-      });
+  const handleDeleteClick = (ripple: boolean = true) => {
+    if (!activeVideoItem) return;
+    if (onTimelineDelete) {
+      onTimelineDelete(activeVideoItem.id, ripple);
+    } else if (onDeleteClip) {
+      onDeleteClip(activeVideoItem.id);
     }
-
-    // [PAUSE / SILENCE] from cuts
-    if (activeMarkerFilters.PAUSE) {
-      cuts
-        .filter((c) => c.reason === 'silence')
-        .forEach((c) => {
-          markers.push({
-            category: 'PAUSE',
-            type: 'PAUSE',
-            time: c.start,
-            relativeTime: Math.max(0, c.start - clipStart),
-            label: 'SILENCE',
-            color: 'bg-rose-500 text-white border-rose-400',
-          });
-        });
-    }
-
-    // [B-ROLL OPPORTUNITY]
-    if (activeMarkerFilters.B_ROLL) {
-      brollOperations.forEach((b) => {
-        markers.push({
-          category: 'B_ROLL',
-          type: 'B_ROLL',
-          time: b.start,
-          relativeTime: Math.max(0, b.start - clipStart),
-          label: b.word ? `B-ROLL: ${b.word.toUpperCase()}` : 'B-ROLL',
-          color: 'bg-indigo-500 text-white border-indigo-400',
-        });
-      });
-    }
-
-    return markers;
-  }, [clipStart, duration, cuts, brollOperations, activeMarkerFilters]);
-
-  const toggleCategory = (cat: MarkerCategory) => {
-    setActiveMarkerFilters((prev) => ({ ...prev, [cat]: !prev[cat] }));
   };
 
   return (
-    <div className="w-full bg-white rounded-2xl border border-slate-200/90 p-4 shadow-sm space-y-3 select-none text-slate-900">
+    <div className="bg-slate-900 border border-slate-800 rounded-2xl shadow-xl overflow-hidden select-none font-sans text-slate-100">
       
-      {/* Timeline Header & Quick Operations Bar */}
-      <div className="flex flex-wrap items-center justify-between border-b border-slate-200/80 pb-2.5 gap-2">
+      {/* 1. TOP TIMELINE TOOLBAR */}
+      <div className="px-4 py-2.5 bg-slate-950/80 border-b border-slate-800 flex items-center justify-between text-xs">
         
-        {/* Left: Title & Track info */}
+        {/* Left: Real Action Controls */}
         <div className="flex items-center gap-2">
-          <Film className="w-4 h-4 text-red-600" />
-          <span className="text-xs font-bold text-slate-900 tracking-wider uppercase">
-            Semantic Multi-Track Workstation
-          </span>
-          <span className="text-[10px] px-2 py-0.5 rounded-full bg-red-50 text-red-700 font-mono font-bold border border-red-200/80">
-            {duration.toFixed(1)}s
-          </span>
-          {timingPrecision === 'approximate_cue' ? (
-            <span
-              className="text-[10px] px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 font-mono font-bold border border-amber-200"
-              title="Timestamps derived from video subtitle cues. Deepgram Nova-2 provides exact word timing."
-            >
-              Approximate Timing
-            </span>
-          ) : (
-            <span
-              className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 font-mono font-bold border border-emerald-200"
-              title="Authentic Deepgram Nova-2 speech-to-text word alignment"
-            >
-              Exact Word Alignment
-            </span>
-          )}
-          {reframeTrack && (
-            <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 font-mono border border-slate-200">
-              Reframe: {reframeTrack.trackingMode} ({reframeTrack.aspectRatio})
-            </span>
-          )}
-        </div>
-
-        {/* Center: Editing Actions (Split, Delete, Marker Filter) */}
-        <div className="flex items-center gap-1.5 bg-slate-100/90 p-1 rounded-xl border border-slate-200">
+          
+          {/* Split at Playhead Button */}
           <button
             type="button"
-            onClick={() => onSplit?.(clipStart + relativeCurrent)}
-            className="px-2.5 py-1 rounded-lg bg-white hover:bg-red-50 text-slate-700 hover:text-red-700 text-xs font-bold border border-slate-200 flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs"
-            title="Split Clip at Playhead (S)"
+            onClick={handleSplitClick}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-white font-semibold transition-colors cursor-pointer border border-slate-700/80 shadow-2xs"
+            title="Split selected item at current playhead position"
           >
-            <Split className="w-3.5 h-3.5 text-red-600" />
+            <Split className="w-3.5 h-3.5 text-red-400" />
             <span>Split (S)</span>
           </button>
 
+          {/* Delete Item Button */}
           <button
             type="button"
-            onClick={() => {
-              if (selectedClipId) {
-                onDeleteClip?.(selectedClipId);
-              }
-            }}
-            disabled={!selectedClipId}
-            className="px-2.5 py-1 rounded-lg bg-white hover:bg-rose-50 text-slate-700 hover:text-rose-700 disabled:opacity-40 text-xs font-bold border border-slate-200 flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs"
-            title="Delete Selected Clip (Delete)"
+            onClick={() => handleDeleteClick(true)}
+            disabled={videoItems.length <= 1}
+            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg font-semibold transition-colors border shadow-2xs ${
+              videoItems.length > 1
+                ? 'bg-slate-800 hover:bg-rose-950/40 text-rose-300 border-slate-700/80 cursor-pointer'
+                : 'bg-slate-900 text-slate-600 border-slate-800/80 cursor-not-allowed'
+            }`}
+            title="Delete selected item with ripple compaction"
           >
-            <Trash2 className="w-3.5 h-3.5 text-rose-600" />
-            <span>Delete</span>
+            <Trash2 className="w-3.5 h-3.5 text-rose-400" />
+            <span>Ripple Delete</span>
           </button>
 
-          <div className="relative">
-            <button
-              type="button"
-              onClick={() => setShowFilterDropdown(!showFilterDropdown)}
-              className="px-2.5 py-1 rounded-lg bg-white hover:bg-slate-50 text-slate-700 text-xs font-bold border border-slate-200 flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs"
-              title="Toggle Intelligence Marker Categories (Phase 32)"
-            >
-              <Filter className="w-3.5 h-3.5 text-slate-500" />
-              <span>Markers</span>
-            </button>
-
-            {showFilterDropdown && (
-              <div className="absolute right-0 mt-1 w-44 rounded-xl bg-white border border-slate-200 shadow-xl py-2 px-3 z-50 text-xs space-y-1.5 animate-in fade-in">
-                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider pb-1 border-b">
-                  Marker Filters
-                </p>
-                {(Object.keys(activeMarkerFilters) as MarkerCategory[]).map((cat) => (
-                  <label key={cat} className="flex items-center gap-2 cursor-pointer text-slate-700 hover:text-slate-900">
-                    <input
-                      type="checkbox"
-                      checked={activeMarkerFilters[cat]}
-                      onChange={() => toggleCategory(cat)}
-                      className="rounded text-red-600 focus:ring-red-500 w-3.5 h-3.5"
-                    />
-                    <span className="capitalize">{cat.toLowerCase().replace('_', ' ')}</span>
-                  </label>
-                ))}
-              </div>
+          {/* Undo / Redo */}
+          <div className="flex items-center gap-1 pl-2 border-l border-slate-800">
+            {onTimelineUndo && (
+              <button
+                type="button"
+                onClick={onTimelineUndo}
+                className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors cursor-pointer border border-slate-700/80"
+                title="Undo last EDL operation"
+              >
+                <Undo2 className="w-3.5 h-3.5" />
+              </button>
+            )}
+            {onTimelineRedo && (
+              <button
+                type="button"
+                onClick={onTimelineRedo}
+                className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors cursor-pointer border border-slate-700/80"
+                title="Redo operation"
+              >
+                <Redo2 className="w-3.5 h-3.5" />
+              </button>
             )}
           </div>
+
+          {/* Speed Presets */}
+          {onTimelineSpeed && activeVideoItem && (
+            <div className="flex items-center gap-1 pl-2 border-l border-slate-800">
+              <Gauge className="w-3.5 h-3.5 text-amber-400" />
+              {[1.0, 1.25, 1.5].map((spd) => (
+                <button
+                  key={spd}
+                  type="button"
+                  onClick={() => onTimelineSpeed(activeVideoItem.id, spd)}
+                  className={`px-1.5 py-0.5 rounded text-[11px] font-mono font-semibold transition-colors cursor-pointer ${
+                    activeVideoItem.speed === spd
+                      ? 'bg-amber-400/20 text-amber-300 border border-amber-400/40'
+                      : 'text-slate-400 hover:text-white hover:bg-slate-800'
+                  }`}
+                >
+                  {spd}x
+                </button>
+              ))}
+            </div>
+          )}
+
         </div>
 
-        {/* Right: Zoom & Timecode */}
-        <div className="flex items-center gap-3">
-          <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-lg border border-slate-200">
-            <button
-              type="button"
-              onClick={() => setZoomLevel((z) => Math.max(0.75, z - 0.25))}
-              className="p-1 rounded text-slate-600 hover:bg-white transition-colors"
-              title="Zoom Out"
-            >
-              <ZoomOut className="w-3 h-3" />
-            </button>
-            <span className="text-[10px] font-mono px-1 font-bold text-slate-600">
-              {Math.round(zoomLevel * 100)}%
+        {/* Center: Presentation Timebase Display */}
+        <div className="flex items-center gap-3 font-mono text-[11px] bg-slate-900 px-3 py-1 rounded-lg border border-slate-800">
+          <span className="text-red-400 font-bold">{presentationCurrent.toFixed(2)}s</span>
+          <span className="text-slate-600">/</span>
+          <span className="text-slate-400">{totalDuration.toFixed(2)}s</span>
+          {timeline?.version && (
+            <span className="text-[10px] bg-slate-800 text-slate-400 px-1.5 py-0.2 rounded font-sans font-semibold">
+              v{timeline.version}
             </span>
-            <button
-              type="button"
-              onClick={() => setZoomLevel((z) => Math.min(2.5, z + 0.25))}
-              className="p-1 rounded text-slate-600 hover:bg-white transition-colors"
-              title="Zoom In"
-            >
-              <ZoomIn className="w-3 h-3" />
-            </button>
-          </div>
+          )}
+        </div>
 
-          <div className="flex items-center gap-1 font-mono text-xs">
-            <span className="text-red-600 font-bold">{relativeCurrent.toFixed(2)}s</span>
-            <span className="text-slate-400">/</span>
-            <span className="text-slate-500 font-medium">{duration.toFixed(2)}s</span>
-          </div>
+        {/* Right: Zoom Level Controls */}
+        <div className="flex items-center gap-1 text-slate-400">
+          <button
+            type="button"
+            onClick={() => setZoomLevel((z) => Math.max(0.5, z - 0.25))}
+            className="p-1.5 rounded-lg hover:bg-slate-800 hover:text-white transition-colors cursor-pointer"
+            title="Zoom out"
+          >
+            <ZoomOut className="w-3.5 h-3.5" />
+          </button>
+          <span className="text-[10px] font-mono w-10 text-center">{Math.round(zoomLevel * 100)}%</span>
+          <button
+            type="button"
+            onClick={() => setZoomLevel((z) => Math.min(3.0, z + 0.25))}
+            className="p-1.5 rounded-lg hover:bg-slate-800 hover:text-white transition-colors cursor-pointer"
+            title="Zoom in"
+          >
+            <ZoomIn className="w-3.5 h-3.5" />
+          </button>
         </div>
 
       </div>
 
-      {/* Semantic Marker Strip (Phase 32) */}
-      {showIntelligenceMarkers && (
-        <div className="relative w-full h-6 bg-slate-100/90 rounded-lg border border-slate-200/80 px-2 flex items-center overflow-hidden shadow-xs">
-          {semanticMarkers.map((marker, idx) => {
-            const markerPercent = Math.min(94, Math.max(1, (marker.relativeTime / duration) * 100));
-
-            return (
-              <button
-                key={idx}
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onSeek(marker.time);
-                }}
-                style={{ left: `${markerPercent}%` }}
-                className={`absolute -translate-x-1/2 px-1.5 py-0.2 rounded text-[8px] font-black uppercase tracking-wider border shadow-xs transition-transform hover:scale-110 cursor-pointer ${marker.color}`}
-                title={`Click to jump to [${marker.label}] at ${marker.relativeTime.toFixed(1)}s`}
-              >
-                [{marker.label}]
-              </button>
-            );
-          })}
-        </div>
-      )}
-
-      {/* Scrubbable Multi-Track Workstation Area */}
+      {/* 2. TIMELINE TRACKS CONTAINER & SCRUB AREA */}
       <div
         ref={containerRef}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
-        className="relative w-full bg-slate-100/80 rounded-xl overflow-hidden cursor-ew-resize pt-4 pb-2 px-1 space-y-1.5 touch-none border border-slate-200"
+        className="relative p-4 space-y-3 cursor-crosshair overflow-x-auto min-h-[220px]"
       >
-        {/* Playhead Vertical Indicator */}
-        <div
-          className="absolute top-0 bottom-0 z-30 pointer-events-none transition-transform"
-          style={{ left: `${playheadPercent}%`, transform: 'translateX(-50%)' }}
-        >
-          <div className="w-3.5 h-3.5 bg-red-600 rounded-full shadow-md shadow-red-500/50 -mt-1 mx-auto" />
-          <div className="w-0.5 h-full bg-red-600 mx-auto shadow-xs" />
+        
+        {/* TIME RULER TICKS */}
+        <div className="relative h-5 w-full border-b border-slate-800 flex items-center justify-between text-[10px] font-mono text-slate-500">
+          {Array.from({ length: 9 }).map((_, idx) => {
+            const timeVal = (totalDuration / 8) * idx;
+            return (
+              <div key={idx} className="flex flex-col items-center">
+                <span>{timeVal.toFixed(1)}s</span>
+                <div className="w-px h-1.5 bg-slate-700 mt-0.5" />
+              </div>
+            );
+          })}
         </div>
 
-        {/* TRACK 1: Video Footage Track */}
+        {/* PLAYHEAD VERTICAL NEEDLE */}
         <div
-          onClick={(e) => {
-            e.stopPropagation();
-            onSelectClip?.(clip.id);
-          }}
-          className={`relative h-6 w-full rounded-md bg-white border shadow-xs overflow-hidden flex items-center px-2 cursor-pointer transition-colors ${
-            selectedClipId === clip.id ? 'border-red-500 ring-2 ring-red-400/30' : 'border-slate-200/90'
-          }`}
+          className="absolute top-0 bottom-0 z-30 pointer-events-none transition-transform duration-75"
+          style={{ left: `${playheadPercent}%` }}
         >
-          <div className="flex items-center gap-1.5 text-[9px] font-bold text-slate-800">
-            <Video className="w-3 h-3 text-red-600" />
-            <span>
-              VIDEO •{' '}
-              {reframeTrack
-                ? `${reframeTrack.targetWidth}x${reframeTrack.targetHeight} (${reframeTrack.aspectRatio})`
-                : '1080x1920 (9:16)'}
+          <div className="w-0.5 h-full bg-red-500 shadow-sm shadow-red-500/80" />
+          <div className="w-3 h-3 bg-red-500 rounded-full -ml-[5px] -mt-1.5 shadow-md border-2 border-white" />
+        </div>
+
+        {/* TRACK 1: Main Video (Relational EDL Items) */}
+        <div className="space-y-1">
+          <div className="flex items-center justify-between text-[11px] font-semibold text-slate-400 px-1">
+            <span className="flex items-center gap-1.5">
+              <Film className="w-3.5 h-3.5 text-blue-400" />
+              <span>Video Track ({videoItems.length} items)</span>
             </span>
+            <span className="text-[10px] text-slate-500">Non-Destructive EDL</span>
           </div>
-          <div className="absolute inset-0 bg-red-500/10 border-l-2 border-r-2 border-red-600 pointer-events-none" />
-        </div>
 
-        {/* TRACK 2: Reframe Subject Keyframes Track */}
-        {reframeTrack && reframeTrack.keyframes && reframeTrack.keyframes.length > 0 && (
-          <div className="relative h-6 w-full rounded-md bg-white border border-slate-200/90 shadow-xs overflow-hidden flex items-center px-2">
-            <div className="flex items-center gap-1.5 text-[9px] font-bold text-red-700 shrink-0 mr-2 z-10">
-              <Crosshair className="w-3 h-3 text-red-600" />
-              <span>REFRAME</span>
-            </div>
-            <div className="relative w-full h-4">
-              {reframeTrack.keyframes.map((kf, i) => {
-                const kfPct = Math.min(100, Math.max(0, (kf.time / duration) * 100));
-                return (
-                  <button
-                    key={i}
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onSeek(clipStart + kf.time);
-                    }}
-                    style={{ left: `${kfPct}%` }}
-                    className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-2.5 h-2.5 rotate-45 bg-red-600 hover:scale-150 transition-transform cursor-pointer border border-white shadow-xs"
-                    title={`Keyframe at ${kf.time.toFixed(1)}s (X: ${Math.round(kf.x * 100)}%, Y: ${Math.round(kf.y * 100)}%)`}
-                  />
-                );
-              })}
-            </div>
-          </div>
-        )}
+          <div className="relative h-12 w-full bg-slate-950 rounded-xl border border-slate-800/80 overflow-hidden flex items-center p-1 gap-1">
+            {videoItems.map((item, idx) => {
+              const leftPct = Math.min(100, Math.max(0, (item.timelineStart / totalDuration) * 100));
+              const widthPct = Math.min(
+                100 - leftPct,
+                Math.max(1, ((item.timelineEnd - item.timelineStart) / totalDuration) * 100)
+              );
+              const isSelected = selectedItemId === item.id || (!selectedItemId && idx === 0);
 
-        {/* TRACK 3: B-Roll Overlays Track */}
-        {brollOperations.length > 0 && (
-          <div className="relative h-6 w-full rounded-md bg-white border border-slate-200/90 shadow-xs overflow-hidden flex items-center px-2">
-            <div className="flex items-center gap-1.5 text-[9px] font-bold text-indigo-700 shrink-0 mr-2 z-10">
-              <Layers className="w-3 h-3 text-indigo-500" />
-              <span>B-ROLL</span>
-            </div>
-            <div className="relative w-full h-4">
-              {brollOperations.map((broll, idx) => {
-                const relStart = Math.max(0, broll.start - clipStart);
-                const relEnd = Math.max(0, broll.end - clipStart);
-                const leftPct = Math.min(100, Math.max(0, (relStart / duration) * 100));
-                const widthPct = Math.min(100 - leftPct, Math.max(2, ((relEnd - relStart) / duration) * 100));
-                return (
-                  <div
-                    key={idx}
-                    className="absolute top-0 bottom-0 bg-indigo-600/80 border border-indigo-400 rounded-xs flex items-center justify-center text-[7px] font-bold text-white uppercase px-1 truncate"
-                    style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
-                    title={`B-Roll: ${broll.word || 'Stock video'}`}
-                  >
-                    {broll.word ? broll.word.toUpperCase() : 'B-ROLL'}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
-
-        {/* TRACK 4: Dynamic Captions Track */}
-        <div className="relative h-6 w-full rounded-md bg-white border border-slate-200/90 shadow-xs overflow-hidden flex items-center px-2">
-          <div className="flex items-center gap-1.5 text-[9px] font-bold text-amber-700 shrink-0 mr-2 z-10">
-            <Type className="w-3 h-3 text-amber-500" />
-            <span>CAPTIONS</span>
-          </div>
-          <div className="relative w-full h-4">
-            {words
-              .filter((w) => w.end >= clipStart && w.start <= clipStart + duration)
-              .map((w, i) => {
-                const relStart = Math.max(0, w.start - clipStart);
-                const relEnd = Math.min(duration, Math.max(relStart + 0.1, w.end - clipStart));
-                const leftPct = Math.min(100, Math.max(0, (relStart / duration) * 100));
-                const widthPct = Math.min(100 - leftPct, Math.max(1.2, ((relEnd - relStart) / duration) * 100));
-                const isActive = currentTime >= w.start && currentTime <= w.end;
-
-                return (
-                  <button
-                    key={i}
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      if (onWordClick) {
-                        onWordClick(w);
-                      } else {
-                        onSeek(w.start);
-                      }
-                    }}
-                    className={`absolute top-0 bottom-0 rounded-xs flex items-center justify-center text-[7px] font-bold truncate transition-colors cursor-pointer ${
-                      isActive
-                        ? 'bg-amber-500 text-white shadow-xs ring-1 ring-amber-300 z-20'
-                        : 'bg-amber-400/30 hover:bg-amber-400/60 border border-amber-400/50 text-slate-800'
-                    }`}
-                    style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
-                    title={`"${w.word}" (${w.start.toFixed(2)}s - ${w.end.toFixed(2)}s${w.confidence !== undefined ? `, ${(w.confidence * 100).toFixed(0)}%` : ''})`}
-                  >
-                    {widthPct > 4 ? w.word : ''}
-                  </button>
-                );
-              })}
-          </div>
-        </div>
-
-        {/* TRACK 5: Cuts / Silence / Filler Track */}
-        <div className="relative h-6 w-full rounded-md bg-white border border-slate-200/90 shadow-xs overflow-hidden flex items-center px-2">
-          <div className="flex items-center gap-1.5 text-[9px] font-bold text-rose-700 shrink-0 mr-2 z-10">
-            <Scissors className="w-3 h-3 text-rose-500" />
-            <span>CUTS</span>
-          </div>
-          <div className="relative w-full h-4">
-            {activeCuts.map((cut, idx) => {
-              const relStart = Math.max(0, cut.start - clipStart);
-              const relEnd = Math.max(0, cut.end - clipStart);
-              const leftPct = Math.min(100, Math.max(0, (relStart / duration) * 100));
-              const widthPct = Math.min(100 - leftPct, Math.max(2, ((relEnd - relStart) / duration) * 100));
               return (
                 <div
-                  key={idx}
-                  className="absolute top-0 bottom-0 bg-rose-500/80 border border-rose-400 rounded-xs flex items-center justify-center text-[7px] font-bold text-white uppercase"
+                  key={item.id}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setSelectedItemId(item.id);
+                  }}
+                  className={`absolute top-1 bottom-1 rounded-lg flex items-center justify-between px-2 text-xs font-semibold transition-all cursor-pointer ${
+                    isSelected
+                      ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-md ring-2 ring-blue-400 z-10'
+                      : 'bg-slate-800 text-slate-300 hover:bg-slate-700/80 border border-slate-700/60'
+                  }`}
                   style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
-                  title={`${cut.reason}: ${cut.start.toFixed(1)}s - ${cut.end.toFixed(1)}s`}
+                  title={`${item.label || `Clip ${idx + 1}`} (${item.timelineStart.toFixed(2)}s - ${item.timelineEnd.toFixed(2)}s, Speed: ${item.speed}x)`}
                 >
-                  CUT
+                  <div className="flex items-center gap-1.5 truncate">
+                    <span className="truncate">{item.label || `Part ${idx + 1}`}</span>
+                    {item.speed !== 1.0 && (
+                      <span className="text-[10px] px-1 rounded bg-black/40 text-amber-300 font-mono">
+                        {item.speed}x
+                      </span>
+                    )}
+                  </div>
+                  <span className="text-[10px] font-mono opacity-70 shrink-0">
+                    {(item.timelineEnd - item.timelineStart).toFixed(1)}s
+                  </span>
                 </div>
               );
             })}
           </div>
         </div>
 
-        {/* TRACK 6: Audio Waveform Track */}
-        <div className="relative h-5 w-full rounded-md bg-white border border-slate-200/90 shadow-xs overflow-hidden flex items-center px-2">
-          <div className="flex items-center gap-1.5 text-[9px] font-bold text-emerald-700 shrink-0 mr-2 z-10">
-            <Music2 className="w-3 h-3 text-emerald-500" />
-            <span>AUDIO</span>
+        {/* TRACK 2: Word-Level Transcript Alignment (Phase 4 Synchronization) */}
+        {words.length > 0 && (
+          <div className="space-y-1">
+            <div className="flex items-center justify-between text-[11px] font-semibold text-slate-400 px-1">
+              <span className="flex items-center gap-1.5">
+                <Type className="w-3.5 h-3.5 text-amber-400" />
+                <span>Transcript Synchronization ({words.length} words)</span>
+              </span>
+              <span className="text-[10px] text-emerald-400 font-mono">Exact Word Timestamps</span>
+            </div>
+
+            <div className="relative h-8 w-full bg-slate-950 rounded-xl border border-slate-800/80 overflow-hidden flex items-center p-1">
+              {words.map((w, idx) => {
+                const leftPct = Math.min(100, Math.max(0, (w.start / totalDuration) * 100));
+                const widthPct = Math.min(100 - leftPct, Math.max(1.2, ((w.end - w.start) / totalDuration) * 100));
+                const isActive = presentationCurrent >= w.start && presentationCurrent <= w.end;
+
+                return (
+                  <button
+                    key={idx}
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setActiveWordAction(w);
+                      onSeek(w.start);
+                    }}
+                    className={`absolute top-1 bottom-1 rounded px-1 flex items-center justify-center text-[10px] font-bold truncate transition-colors cursor-pointer ${
+                      isActive
+                        ? 'bg-amber-400 text-slate-950 font-extrabold shadow-sm ring-1 ring-amber-300 z-20'
+                        : 'bg-amber-500/10 hover:bg-amber-500/30 text-amber-200 border border-amber-500/20'
+                    }`}
+                    style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
+                    title={`"${w.word}" [${w.start.toFixed(2)}s - ${w.end.toFixed(2)}s] - Click to synchronize edit`}
+                  >
+                    {w.word}
+                  </button>
+                );
+              })}
+            </div>
           </div>
-          <div className="flex items-center justify-between w-full h-3 opacity-70">
-            {Array.from({ length: 48 }).map((_, barIdx) => {
-              const height = 25 + Math.sin(barIdx * 0.4) * 45 + ((barIdx * 7) % 30);
+        )}
+
+        {/* TRACK 3: Audio Waveform Cadence */}
+        <div className="space-y-1">
+          <div className="flex items-center justify-between text-[11px] font-semibold text-slate-400 px-1">
+            <span className="flex items-center gap-1.5">
+              <Music2 className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Audio Cadence & Energy</span>
+            </span>
+            <span className="text-[10px] text-slate-500 font-mono">48 kHz Waveform</span>
+          </div>
+
+          <div className="relative h-6 w-full bg-slate-950 rounded-xl border border-slate-800/80 overflow-hidden flex items-center justify-between px-3 opacity-80">
+            {Array.from({ length: 64 }).map((_, barIdx) => {
+              const height = 30 + Math.sin(barIdx * 0.35) * 50 + ((barIdx * 11) % 20);
               return (
                 <div
                   key={barIdx}
-                  className="w-1 bg-emerald-500 rounded-full"
+                  className="w-1 bg-emerald-500/70 rounded-full"
                   style={{ height: `${Math.min(100, Math.max(15, height))}%` }}
                 />
               );
             })}
           </div>
         </div>
+
       </div>
+
+      {/* 3. TRANSCRIPT WORD ACTION MODAL / QUICK ACTIONS */}
+      {activeWordAction && onTranscriptSyncAction && (
+        <div className="p-3 bg-slate-950 border-t border-slate-800 flex items-center justify-between text-xs animate-in fade-in">
+          <div className="flex items-center gap-2">
+            <span className="font-bold text-white">Word: "{activeWordAction.word}"</span>
+            <span className="font-mono text-slate-400 text-[11px]">
+              [{activeWordAction.start.toFixed(2)}s - {activeWordAction.end.toFixed(2)}s]
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                onTranscriptSyncAction(activeWordAction, 'split_at_start');
+                setActiveWordAction(null);
+              }}
+              className="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold cursor-pointer"
+            >
+              Split at Start
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                onTranscriptSyncAction(activeWordAction, 'split_at_end');
+                setActiveWordAction(null);
+              }}
+              className="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold cursor-pointer"
+            >
+              Split at End
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                onTranscriptSyncAction(activeWordAction, 'cut_word');
+                setActiveWordAction(null);
+              }}
+              className="px-2.5 py-1 rounded bg-rose-600/80 hover:bg-rose-600 text-white font-semibold cursor-pointer shadow-xs"
+            >
+              Excise / Cut Word
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveWordAction(null)}
+              className="text-slate-400 hover:text-white px-1 cursor-pointer"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 };

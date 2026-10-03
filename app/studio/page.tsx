@@ -21,6 +21,7 @@ import { ExportModal } from '@/components/ExportModal';
 import { PricingModal } from '@/components/PricingModal';
 import { TimelineVersionModal } from '@/components/TimelineVersionModal';
 import { CanonicalRenderSpec, EditorCommand } from '@/lib/editor/types';
+import { Timeline } from '@/lib/editor/edlTypes';
 import { createDefaultRenderSpec, splitClipAt, deleteClip, trimClip } from '@/lib/editor/timelineEngine';
 import { EditorCommandManager, createEditorCommand } from '@/lib/editor/commandHistory';
 import { parseAIEditCommand } from '@/lib/editor/aiEditCommands';
@@ -105,6 +106,7 @@ export default function StudioPage() {
   const [aiCommandInput, setAICommandInput] = useState('');
   const [isAICommandRunning, setIsAICommandRunning] = useState(false);
   const [canonicalSpec, setCanonicalSpec] = useState<CanonicalRenderSpec | null>(null);
+  const [timeline, setTimeline] = useState<Timeline | null>(null);
   const commandManagerRef = useRef<EditorCommandManager | null>(null);
 
   // Active Tool for Editor (Workflow inspired by modern AI Video SaaS)
@@ -524,6 +526,147 @@ export default function StudioPage() {
       setAICommandInput('');
     } finally {
       setIsAICommandRunning(false);
+    }
+  };
+
+  // Synchronize canonical timeline from backend whenever projectId changes
+  useEffect(() => {
+    if (!projectId) return;
+    fetch(`/api/editor/timeline?projectId=${projectId}`)
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.timeline) setTimeline(data.timeline);
+      })
+      .catch(() => {});
+  }, [projectId]);
+
+  // Phase 5: Authoritative Non-Destructive EDL Handlers
+  const handleTimelineSplit = async (itemId: string, splitTime: number) => {
+    if (!timeline || !projectId) return;
+    try {
+      const res = await fetch('/api/editor/timeline', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'split',
+          projectId,
+          itemId,
+          splitTime,
+          expectedVersion: timeline.version,
+        }),
+      });
+      const data = await res.json();
+      if (data.timeline) setTimeline(data.timeline);
+    } catch (err) {
+      console.error('Failed to split timeline item:', err);
+    }
+  };
+
+  const handleTimelineTrim = async (itemId: string, newStart: number, newEnd: number) => {
+    if (!timeline || !projectId) return;
+    try {
+      const res = await fetch('/api/editor/timeline', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'trim',
+          projectId,
+          itemId,
+          newTimelineStart: newStart,
+          newTimelineEnd: newEnd,
+          expectedVersion: timeline.version,
+        }),
+      });
+      const data = await res.json();
+      if (data.timeline) setTimeline(data.timeline);
+    } catch (err) {
+      console.error('Failed to trim timeline item:', err);
+    }
+  };
+
+  const handleTimelineDelete = async (itemId: string, ripple: boolean = true) => {
+    if (!timeline || !projectId) return;
+    try {
+      const res = await fetch('/api/editor/timeline', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'delete_item',
+          projectId,
+          itemId,
+          ripple,
+          expectedVersion: timeline.version,
+        }),
+      });
+      const data = await res.json();
+      if (data.timeline) setTimeline(data.timeline);
+    } catch (err) {
+      console.error('Failed to delete timeline item:', err);
+    }
+  };
+
+  const handleTimelineUndo = async () => {
+    if (!timeline || !projectId) return;
+    try {
+      const res = await fetch('/api/editor/timeline', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'undo',
+          projectId,
+          expectedVersion: timeline.version,
+        }),
+      });
+      const data = await res.json();
+      if (data.timeline) setTimeline(data.timeline);
+    } catch (err) {
+      console.error('Failed to undo timeline operation:', err);
+    }
+  };
+
+  const handleTimelineSpeed = async (itemId: string, speed: number) => {
+    if (!timeline || !projectId) return;
+    try {
+      const res = await fetch('/api/editor/timeline', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'set_speed',
+          projectId,
+          itemId,
+          speed,
+          expectedVersion: timeline.version,
+        }),
+      });
+      const data = await res.json();
+      if (data.timeline) setTimeline(data.timeline);
+    } catch (err) {
+      console.error('Failed to set speed:', err);
+    }
+  };
+
+  const handleTranscriptSyncAction = async (
+    word: WordTimestamp,
+    action: 'cut_word' | 'split_at_start' | 'split_at_end'
+  ) => {
+    if (!timeline || !projectId) return;
+    try {
+      const res = await fetch('/api/editor/timeline', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'sync_words',
+          projectId,
+          wordStart: word.start,
+          wordEnd: word.end,
+          wordAction: action,
+          expectedVersion: timeline.version,
+        }),
+      });
+      const data = await res.json();
+      if (data.timeline) setTimeline(data.timeline);
+    } catch (err) {
+      console.error('Failed to sync transcript words to timeline:', err);
     }
   };
 
@@ -962,6 +1105,7 @@ export default function StudioPage() {
             <div className="bg-white border border-slate-200/90 shadow-sm p-4 rounded-2xl">
               <CreatorTimeline
                 clip={activeClip}
+                timeline={timeline}
                 currentTime={currentTime}
                 onSeek={handleJumpToTime}
                 cuts={activeCuts}
@@ -973,6 +1117,12 @@ export default function StudioPage() {
                 onDeleteClip={handleDeleteSelectedClip}
                 selectedClipId={activeClipId}
                 onSelectClip={(id) => setActiveClipId(id)}
+                onTimelineSplit={handleTimelineSplit}
+                onTimelineTrim={handleTimelineTrim}
+                onTimelineDelete={handleTimelineDelete}
+                onTimelineUndo={handleTimelineUndo}
+                onTimelineSpeed={handleTimelineSpeed}
+                onTranscriptSyncAction={handleTranscriptSyncAction}
               />
             </div>
 

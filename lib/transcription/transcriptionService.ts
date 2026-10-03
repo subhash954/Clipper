@@ -551,27 +551,22 @@ export class TranscriptionService {
     const leaseToken = lockResult.leaseToken;
 
     // 6. Transition Project Status to Transcribing (Strict Fail-Closed with Lease Fencing)
-    if (storage.updateProjectStatusIfLeaseHeld) {
-      const transcribingSet = await storage.updateProjectStatusIfLeaseHeld(
-        projectId,
-        lockKey,
-        leaseToken,
-        'transcribing',
-        undefined,
-        lockResult.leaseGeneration
+    const transcribingSet = await storage.updateProjectStatusIfLeaseHeld(
+      projectId,
+      lockKey,
+      leaseToken,
+      'transcribing',
+      undefined,
+      lockResult.leaseGeneration
+    );
+    if (!transcribingSet) {
+      throw new ClipperError(
+        'CONCURRENT_TRANSCRIPTION',
+        'Failed to transition project to transcribing: active lease lost or expired.',
+        409
       );
-      if (!transcribingSet) {
-        throw new ClipperError(
-          'CONCURRENT_TRANSCRIPTION',
-          'Failed to transition project to transcribing: active lease lost or expired.',
-          409
-        );
-      }
-      project.status = 'transcribing';
-    } else {
-      project.status = 'transcribing';
-      await storage.saveProject(project);
     }
+    project.status = 'transcribing';
 
     // 7. Resolve Audio for Transcription (Storage Authority: Bunny in Production)
     let resolvedAudioBuffer = params.audioBuffer;
@@ -925,22 +920,13 @@ export class TranscriptionService {
       // Revert project status to 'failed' on error ONLY if current worker held and still holds the active lease
       try {
         if (leaseToken && !lockLost) {
-          if (storage.failProjectIfLeaseHeld) {
-            await storage.failProjectIfLeaseHeld(
-              projectId,
-              lockKey,
-              leaseToken,
-              err.message || 'Transcription failed',
-              lockResult?.leaseGeneration
-            );
-          } else {
-            const latestProj = await storage.getProject(projectId);
-            if (latestProj && latestProj.status === 'transcribing') {
-              latestProj.status = 'failed';
-              latestProj.errorMessage = err.message || 'Transcription failed';
-              await storage.saveProject(latestProj);
-            }
-          }
+          await storage.failProjectIfLeaseHeld(
+            projectId,
+            lockKey,
+            leaseToken,
+            err.message || 'Transcription failed',
+            lockResult?.leaseGeneration
+          );
         }
       } catch (statusErr) {
         console.error('Failed to update project status to failed:', statusErr);

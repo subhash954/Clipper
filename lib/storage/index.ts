@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { Project, RenderJob, CostTelemetryRecord, Transcript, TranscriptSegment, NormalizedTranscriptWord, WordTimestamp, MediaAsset } from '../types';
+import { Timeline, TimelineTrack, TimelineItem, EDLOperation } from '../editor/edlTypes';
 import { supabase, isSupabaseConfigured } from '../supabase';
 import { ClipperError } from '../errors';
 
@@ -40,10 +41,14 @@ export interface IStorageAdapter {
   acquireTranscriptionLock(lockKey: string, projectId: string, mediaAssetId: string | null, userId: string, ttlSeconds?: number): Promise<LockAcquisitionResult>;
   releaseTranscriptionLock(lockKey: string, leaseToken: string): Promise<boolean>;
   renewTranscriptionLock(lockKey: string, leaseToken: string, ttlSeconds?: number): Promise<boolean>;
-  updateProjectStatusIfLeaseHeld?(projectId: string, lockKey: string, leaseToken: string, targetStatus: Project['status'], errorMessage?: string, leaseGeneration?: number): Promise<boolean>;
-  failProjectIfLeaseHeld?(projectId: string, lockKey: string, leaseToken: string, errorMessage?: string, leaseGeneration?: number): Promise<boolean>;
+  updateProjectStatusIfLeaseHeld(projectId: string, lockKey: string, leaseToken: string, targetStatus: Project['status'], errorMessage?: string, leaseGeneration?: number): Promise<boolean>;
+  failProjectIfLeaseHeld(projectId: string, lockKey: string, leaseToken: string, errorMessage?: string, leaseGeneration?: number): Promise<boolean>;
   listTranscriptWords?(transcriptId: string): Promise<NormalizedTranscriptWord[]>;
   listTranscriptSegments?(transcriptId: string): Promise<TranscriptSegment[]>;
+  getTimeline(projectId: string): Promise<Timeline | null>;
+  saveTimeline(timeline: Timeline, expectedVersion?: number, userId?: string, operation?: EDLOperation): Promise<Timeline>;
+  recordTimelineOperation?(operation: EDLOperation): Promise<void>;
+  listTimelineOperations?(timelineId: string): Promise<EDLOperation[]>;
 }
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -635,55 +640,25 @@ export class SupabaseStorageAdapter implements IStorageAdapter {
   ): Promise<boolean> {
     if (!leaseToken) return false;
 
-    // 1. Attempt atomic RPC execution in PostgreSQL
-    try {
-      const { data, error } = await supabase.rpc('update_project_status_if_lease_held', {
-        p_project_id: projectId,
-        p_lock_key: lockKey,
-        p_lease_token: leaseToken,
-        p_target_status: targetStatus,
-        p_error_message: errorMessage || null,
-        p_lease_generation: leaseGeneration || null,
-      });
-      if (!error && typeof data === 'boolean') {
-        return data;
-      }
-    } catch {
-      // Fallback to query
+    // Strict Fail-Closed Atomic RPC execution in PostgreSQL (single transaction)
+    const { data, error } = await supabase.rpc('update_project_status_if_lease_held', {
+      p_project_id: projectId,
+      p_lock_key: lockKey,
+      p_lease_token: leaseToken,
+      p_target_status: targetStatus,
+      p_error_message: errorMessage || null,
+      p_lease_generation: leaseGeneration || null,
+    });
+
+    if (error) {
+      throw new ClipperError(
+        'DATABASE_ERROR',
+        `Failed to atomically update project status under lease: ${error.message}`,
+        500
+      );
     }
 
-    // 2. Query fallback with lease and generation check
-    const now = new Date().toISOString();
-    let query = supabase
-      .from('transcription_locks')
-      .select('lease_token')
-      .eq('lock_key', lockKey)
-      .eq('lease_token', leaseToken)
-      .gt('expires_at', now);
-
-    if (leaseGeneration !== undefined) {
-      query = query.eq('lease_generation', leaseGeneration);
-    }
-
-    const { data: lock } = await query.maybeSingle();
-    if (!lock) {
-      return false; // Stale worker cannot modify project status
-    }
-
-    const updatePayload: any = {
-      status: targetStatus,
-      updated_at: now,
-    };
-    if (errorMessage !== undefined) {
-      updatePayload.error_message = errorMessage;
-    }
-
-    const { error } = await supabase
-      .from('projects')
-      .update(updatePayload)
-      .eq('id', projectId);
-
-    return !error;
+    return typeof data === 'boolean' ? data : false;
   }
 
   async failProjectIfLeaseHeld(
@@ -1054,6 +1029,125 @@ export class SupabaseStorageAdapter implements IStorageAdapter {
       createdAt: s.created_at,
     }));
   }
+
+  async getTimeline(projectId: string): Promise<Timeline | null> {
+    const { data: timelineRow, error } = await supabase
+      .from('timelines')
+      .select('*')
+      .eq('project_id', projectId)
+      .maybeSingle();
+
+    if (error || !timelineRow) return null;
+
+    const { data: trackRows, error: trackErr } = await supabase
+      .from('tracks')
+      .select('*, timeline_items(*)')
+      .eq('timeline_id', timelineRow.id)
+      .order('track_index', { ascending: true });
+
+    if (trackErr) {
+      throw new ClipperError('DATABASE_ERROR', `Failed to load tracks: ${trackErr.message}`, 500);
+    }
+
+    const tracks: TimelineTrack[] = (trackRows || []).map((tr: any) => ({
+      id: tr.id,
+      timelineId: tr.timeline_id,
+      type: tr.track_type,
+      index: tr.track_index,
+      name: tr.name,
+      isMuted: tr.is_muted,
+      isLocked: tr.is_locked,
+      items: (tr.timeline_items || [])
+        .map((ti: any) => ({
+          id: ti.id,
+          trackId: ti.track_id,
+          sourceMediaId: ti.source_media_id,
+          sourceStart: Number(ti.source_start),
+          sourceEnd: Number(ti.source_end),
+          timelineStart: Number(ti.timeline_start),
+          timelineEnd: Number(ti.timeline_end),
+          speed: Number(ti.speed),
+          enabled: ti.enabled,
+          label: ti.label,
+          metadata: ti.metadata,
+          createdAt: ti.created_at,
+          updatedAt: ti.updated_at,
+        }))
+        .sort((a: any, b: any) => a.timelineStart - b.timelineStart),
+      createdAt: tr.created_at,
+      updatedAt: tr.updated_at,
+    }));
+
+    return {
+      id: timelineRow.id,
+      projectId: timelineRow.project_id,
+      version: timelineRow.version,
+      duration: Number(timelineRow.duration),
+      timebase: timelineRow.timebase,
+      status: timelineRow.status,
+      tracks,
+      createdAt: timelineRow.created_at,
+      updatedAt: timelineRow.updated_at,
+    };
+  }
+
+  async saveTimeline(
+    timeline: Timeline,
+    expectedVersion?: number,
+    userId?: string,
+    operation?: EDLOperation
+  ): Promise<Timeline> {
+    const { data, error } = await supabase.rpc('save_timeline_atomic', {
+      p_project_id: timeline.projectId,
+      p_user_id: userId || null,
+      p_expected_version: expectedVersion !== undefined ? expectedVersion : null,
+      p_duration: timeline.duration,
+      p_timebase: timeline.timebase || '30fps',
+      p_tracks: timeline.tracks,
+      p_operation: operation || null,
+    });
+
+    if (error) {
+      if (error.code === '23505' || error.message?.includes('TIMELINE_VERSION_CONFLICT')) {
+        throw new ClipperError(
+          'TIMELINE_VERSION_CONFLICT',
+          `Timeline version conflict: ${error.message}`,
+          409,
+          true,
+          { expectedVersion }
+        );
+      }
+      if (error.code === '42501' || error.message?.includes('FORBIDDEN') || error.message?.includes('MEDIA_NOT_OWNED')) {
+        throw new ClipperError('FORBIDDEN', error.message, 403);
+      }
+      if (error.code === 'P0002' || error.message?.includes('PROJECT_NOT_FOUND')) {
+        throw new ClipperError('NOT_FOUND', error.message, 404);
+      }
+      throw new ClipperError('DATABASE_ERROR', `Failed to save timeline: ${error.message}`, 500);
+    }
+
+    return data as Timeline;
+  }
+
+  async listTimelineOperations(timelineId: string): Promise<EDLOperation[]> {
+    const { data, error } = await supabase
+      .from('timeline_operations')
+      .select('*')
+      .eq('timeline_id', timelineId)
+      .order('operation_index', { ascending: true });
+
+    if (error || !data) return [];
+    return data.map((d: any) => ({
+      id: d.id,
+      timelineId: d.timeline_id,
+      type: d.operation_type,
+      params: d.params,
+      inverseParams: d.inverse_params,
+      version: d.version_after,
+      userId: d.user_id,
+      createdAt: d.created_at,
+    }));
+  }
 }
 
 /**
@@ -1069,6 +1163,8 @@ export class LocalStorageAdapter implements IStorageAdapter {
   private segmentsFile = path.join(process.cwd(), 'data', 'transcript_segments.json');
   private wordsFile = path.join(process.cwd(), 'data', 'transcript_words.json');
   private locksFile = path.join(process.cwd(), 'data', 'transcription_locks.json');
+  private timelinesFile = path.join(process.cwd(), 'data', 'timelines.json');
+  private timelineOpsFile = path.join(process.cwd(), 'data', 'timeline_operations.json');
 
   constructor() {
     if (!fs.existsSync(this.dataDir)) {
@@ -1618,6 +1714,84 @@ export class LocalStorageAdapter implements IStorageAdapter {
   async listTranscriptSegments(transcriptId: string): Promise<TranscriptSegment[]> {
     const segments = this.readJson<any[]>(this.segmentsFile, []);
     return segments.filter((s) => s.transcriptId === transcriptId);
+  }
+
+  async getTimeline(projectId: string): Promise<Timeline | null> {
+    const timelines = this.readJson<Timeline[]>(this.timelinesFile, []);
+    const found = timelines.find((t) => t.projectId === projectId || t.id === projectId);
+    return found || null;
+  }
+
+  async saveTimeline(
+    timeline: Timeline,
+    expectedVersion?: number,
+    userId?: string,
+    operation?: EDLOperation
+  ): Promise<Timeline> {
+    const timelines = this.readJson<Timeline[]>(this.timelinesFile, []);
+    const existing = timelines.find((t) => t.projectId === timeline.projectId || t.id === timeline.id);
+
+    if (existing) {
+      if (expectedVersion !== undefined && existing.version !== expectedVersion) {
+        throw new ClipperError(
+          'TIMELINE_VERSION_CONFLICT',
+          `Timeline version conflict: Expected version ${expectedVersion}, but found version ${existing.version}.`,
+          409,
+          true,
+          { expectedVersion, currentVersion: existing.version }
+        );
+      }
+    }
+
+    const newVersion = existing ? existing.version + 1 : 1;
+    const now = new Date().toISOString();
+    const timelineId = existing ? existing.id : (timeline.id || crypto.randomUUID());
+
+    const savedTimeline: Timeline = {
+      ...timeline,
+      id: timelineId,
+      projectId: timeline.projectId,
+      version: newVersion,
+      duration: timeline.duration,
+      timebase: timeline.timebase || '30fps',
+      status: timeline.status || 'active',
+      tracks: (timeline.tracks || []).map((tr, trIdx) => ({
+        ...tr,
+        id: tr.id || crypto.randomUUID(),
+        timelineId,
+        index: tr.index !== undefined ? tr.index : trIdx,
+        items: (tr.items || []).map((ti) => ({
+          ...ti,
+          id: ti.id || crypto.randomUUID(),
+          trackId: tr.id || ti.trackId,
+        })),
+      })),
+      createdAt: existing ? existing.createdAt : now,
+      updatedAt: now,
+    };
+
+    const remaining = timelines.filter((t) => t.projectId !== timeline.projectId && t.id !== timelineId);
+    this.writeJson(this.timelinesFile, [savedTimeline, ...remaining]);
+
+    if (operation && operation.type) {
+      const ops = this.readJson<EDLOperation[]>(this.timelineOpsFile, []);
+      const newOp: EDLOperation = {
+        ...operation,
+        id: operation.id || crypto.randomUUID(),
+        timelineId,
+        version: newVersion,
+        userId: userId || operation.userId,
+        createdAt: now,
+      };
+      this.writeJson(this.timelineOpsFile, [...ops, newOp]);
+    }
+
+    return savedTimeline;
+  }
+
+  async listTimelineOperations(timelineId: string): Promise<EDLOperation[]> {
+    const ops = this.readJson<EDLOperation[]>(this.timelineOpsFile, []);
+    return ops.filter((op) => op.timelineId === timelineId);
   }
 }
 
