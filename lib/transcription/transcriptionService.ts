@@ -854,8 +854,17 @@ export class TranscriptionService {
         updatedAt: new Date().toISOString(),
       };
 
-      // 13. Persist Transcript Relational Child Tables and Project State
-      const savedTranscript = await storage.saveTranscript(finalTranscript, projectId, currentUserId);
+      // 13. Persist Transcript Relational Child Tables and Project State (Protected by Active Lease)
+      const savedTranscript = await storage.saveTranscript(
+        finalTranscript,
+        projectId,
+        currentUserId,
+        {
+          leaseToken,
+          lockKey,
+          leaseGeneration: lockResult.leaseGeneration,
+        }
+      );
 
       if (lockLost) {
         throw new ClipperError(
@@ -904,13 +913,17 @@ export class TranscriptionService {
         durationSeconds,
       };
     } catch (err: any) {
-      // Revert project status to 'failed' on error
+      // Revert project status to 'failed' on error ONLY if current worker still holds the lease
       try {
-        const latestProj = await storage.getProject(projectId);
-        if (latestProj && latestProj.status === 'transcribing') {
-          latestProj.status = 'failed';
-          latestProj.errorMessage = err.message || 'Transcription failed';
-          await storage.saveProject(latestProj);
+        if (storage.failProjectIfLeaseHeld && leaseToken) {
+          await storage.failProjectIfLeaseHeld(projectId, lockKey, leaseToken, err.message || 'Transcription failed');
+        } else if (!lockLost) {
+          const latestProj = await storage.getProject(projectId);
+          if (latestProj && latestProj.status === 'transcribing') {
+            latestProj.status = 'failed';
+            latestProj.errorMessage = err.message || 'Transcription failed';
+            await storage.saveProject(latestProj);
+          }
         }
       } catch (statusErr) {
         console.error('Failed to update project status to failed:', statusErr);

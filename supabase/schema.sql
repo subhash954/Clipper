@@ -246,9 +246,12 @@ CREATE TABLE IF NOT EXISTS public.cost_telemetry (
 CREATE INDEX IF NOT EXISTS idx_cost_telemetry_user_id ON public.cost_telemetry(user_id);
 
 -- 12. Database-Backed Concurrency Protection Table
+CREATE SEQUENCE IF NOT EXISTS public.transcription_lease_generation_seq START WITH 1;
+
 CREATE TABLE IF NOT EXISTS public.transcription_locks (
   lock_key TEXT PRIMARY KEY,
   lease_token UUID NOT NULL DEFAULT gen_random_uuid(),
+  lease_generation BIGINT NOT NULL DEFAULT nextval('public.transcription_lease_generation_seq'),
   project_id UUID NOT NULL REFERENCES public.projects(id) ON DELETE CASCADE,
   media_asset_id UUID,
   user_id UUID NOT NULL,
@@ -264,6 +267,7 @@ CREATE TABLE IF NOT EXISTS public.transcription_locks (
 CREATE INDEX IF NOT EXISTS idx_transcription_locks_expires ON public.transcription_locks(expires_at);
 CREATE INDEX IF NOT EXISTS idx_transcription_locks_project ON public.transcription_locks(project_id);
 CREATE INDEX IF NOT EXISTS idx_transcription_locks_lease_token ON public.transcription_locks(lease_token);
+CREATE INDEX IF NOT EXISTS idx_transcription_locks_generation ON public.transcription_locks(lease_generation);
 
 -- -------------------------------------------------------------
 -- ROW LEVEL SECURITY (RLS) POLICIES
@@ -654,7 +658,7 @@ CREATE POLICY "Users can view cost telemetry of their projects"
     public.is_admin()
   );
 
--- Atomic PostgreSQL RPC function for transcript replacement (Hardened SECURITY DEFINER)
+-- Atomic PostgreSQL RPC function for transcript replacement (Hardened SECURITY DEFINER + Fencing)
 CREATE OR REPLACE FUNCTION public.replace_transcript_atomic(
   p_user_id UUID,
   p_transcript_id UUID,
@@ -674,7 +678,10 @@ CREATE OR REPLACE FUNCTION public.replace_transcript_atomic(
   p_error_message TEXT,
   p_metadata JSONB,
   p_segments JSONB,
-  p_word_rows JSONB
+  p_word_rows JSONB,
+  p_lease_token UUID,
+  p_lock_key TEXT DEFAULT NULL,
+  p_lease_generation BIGINT DEFAULT NULL
 )
 RETURNS JSONB
 LANGUAGE plpgsql
@@ -684,6 +691,8 @@ AS $$
 DECLARE
   v_project RECORD;
   v_media RECORD;
+  v_lock RECORD;
+  v_lock_key TEXT;
   v_transcript_id UUID;
   v_seg JSONB;
   v_word JSONB;
@@ -693,8 +702,49 @@ BEGIN
     RAISE EXCEPTION 'Authentication required: p_user_id cannot be null' USING ERRCODE = '42501';
   END IF;
 
-  -- B. Validate Project Existence & Ownership
-  SELECT * INTO v_project FROM public.projects WHERE id = p_project_id;
+  -- B. Active Lease Ownership Validation (Fencing & Stale-Worker Protection)
+  -- 1. Validate that p_lease_token is provided
+  IF p_lease_token IS NULL THEN
+    RAISE EXCEPTION 'Active lease_token is required to commit transcript' USING ERRCODE = '55P03';
+  END IF;
+
+  -- 2. Derive or use provided lock_key
+  IF p_lock_key IS NOT NULL AND length(trim(p_lock_key)) > 0 THEN
+    v_lock_key := p_lock_key;
+  ELSE
+    v_lock_key := p_project_id::TEXT || ':' || COALESCE(p_media_asset_id::TEXT, 'none') || ':deepgram:nova-2:exact_word';
+  END IF;
+
+  -- 3. Row-level exclusive lock on the active lease row
+  SELECT * INTO v_lock
+  FROM public.transcription_locks
+  WHERE lock_key = v_lock_key
+  FOR UPDATE;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Transcription lease missing for lock %', v_lock_key USING ERRCODE = '55P03';
+  END IF;
+
+  -- 4. Verify lease token ownership
+  IF v_lock.lease_token <> p_lease_token THEN
+    RAISE EXCEPTION 'Stale worker rejected: lease token % does not match active lease token % for lock %',
+      p_lease_token, v_lock.lease_token, v_lock_key USING ERRCODE = '55P03';
+  END IF;
+
+  -- 5. Verify lease generation / fencing if provided
+  IF p_lease_generation IS NOT NULL AND v_lock.lease_generation <> p_lease_generation THEN
+    RAISE EXCEPTION 'Stale worker rejected: lease generation % superseded by % for lock %',
+      p_lease_generation, v_lock.lease_generation, v_lock_key USING ERRCODE = '55P03';
+  END IF;
+
+  -- 6. Verify lease has not expired
+  IF v_lock.expires_at <= NOW() THEN
+    RAISE EXCEPTION 'Transcription lease expired at % (now: %) for lock %',
+      v_lock.expires_at, NOW(), v_lock_key USING ERRCODE = '55P03';
+  END IF;
+
+  -- C. Validate Project Existence & Ownership
+  SELECT * INTO v_project FROM public.projects WHERE id = p_project_id FOR UPDATE;
   IF NOT FOUND OR v_project.deleted_at IS NOT NULL THEN
     RAISE EXCEPTION 'Project % does not exist or has been deleted', p_project_id USING ERRCODE = 'P0002';
   END IF;
@@ -703,7 +753,7 @@ BEGIN
     RAISE EXCEPTION 'Access denied: user % does not own project %', p_user_id, p_project_id USING ERRCODE = '42501';
   END IF;
 
-  -- C. Validate Media Asset Ownership & Project Association
+  -- D. Validate Media Asset Ownership & Project Association
   IF p_media_asset_id IS NOT NULL THEN
     SELECT * INTO v_media FROM public.media_assets WHERE id = p_media_asset_id;
     IF NOT FOUND THEN
@@ -723,13 +773,13 @@ BEGIN
     END IF;
   END IF;
 
-  -- D. Resolve Canonical Existing Transcript ID (Preserve Existing Parent ID)
+  -- E. Resolve Canonical Existing Transcript ID (Preserve Existing Parent ID)
   SELECT id INTO v_transcript_id FROM public.transcripts WHERE project_id = p_project_id;
   IF v_transcript_id IS NULL THEN
     v_transcript_id := p_transcript_id;
   END IF;
 
-  -- E. Upsert Master Transcript Record
+  -- F. Upsert Master Transcript Record
   INSERT INTO public.transcripts (
     id,
     project_id,
@@ -785,11 +835,11 @@ BEGIN
     updated_at = NOW()
   RETURNING id INTO v_transcript_id;
 
-  -- F. Delete Existing Child Words & Segments for Canonical Transcript
+  -- G. Delete Existing Child Words & Segments for Canonical Transcript
   DELETE FROM public.transcript_words WHERE transcript_id = v_transcript_id;
   DELETE FROM public.transcript_segments WHERE transcript_id = v_transcript_id;
 
-  -- G. Insert Normalized Segments Using Canonical v_transcript_id
+  -- H. Insert Normalized Segments Using Canonical v_transcript_id
   IF p_segments IS NOT NULL AND jsonb_array_length(p_segments) > 0 THEN
     FOR v_seg IN SELECT * FROM jsonb_array_elements(p_segments)
     LOOP
@@ -817,7 +867,7 @@ BEGIN
     END LOOP;
   END IF;
 
-  -- H. Insert Normalized Words Using Canonical v_transcript_id
+  -- I. Insert Normalized Words Using Canonical v_transcript_id
   IF p_word_rows IS NOT NULL AND jsonb_array_length(p_word_rows) > 0 THEN
     FOR v_word IN SELECT * FROM jsonb_array_elements(p_word_rows)
     LOOP
@@ -849,23 +899,30 @@ BEGIN
     END LOOP;
   END IF;
 
+  -- J. Atomically Transition Project Status to transcript_ready
+  UPDATE public.projects
+  SET status = 'transcript_ready',
+      active_media_id = COALESCE(p_media_asset_id, active_media_id),
+      updated_at = NOW()
+  WHERE id = p_project_id;
+
   RETURN jsonb_build_object('success', true, 'transcript_id', v_transcript_id);
 END;
 $$;
 
 -- Lock down Execution Permissions (Principle of Least Privilege)
 REVOKE ALL ON FUNCTION public.replace_transcript_atomic(
-  UUID, UUID, UUID, UUID, TEXT, JSONB, JSONB, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, NUMERIC, TEXT, TEXT, JSONB, JSONB, JSONB
+  UUID, UUID, UUID, UUID, TEXT, JSONB, JSONB, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, NUMERIC, TEXT, TEXT, JSONB, JSONB, JSONB, UUID, TEXT, BIGINT
 ) FROM PUBLIC;
 
 REVOKE ALL ON FUNCTION public.replace_transcript_atomic(
-  UUID, UUID, UUID, UUID, TEXT, JSONB, JSONB, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, NUMERIC, TEXT, TEXT, JSONB, JSONB, JSONB
+  UUID, UUID, UUID, UUID, TEXT, JSONB, JSONB, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, NUMERIC, TEXT, TEXT, JSONB, JSONB, JSONB, UUID, TEXT, BIGINT
 ) FROM anon;
 
 REVOKE ALL ON FUNCTION public.replace_transcript_atomic(
-  UUID, UUID, UUID, UUID, TEXT, JSONB, JSONB, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, NUMERIC, TEXT, TEXT, JSONB, JSONB, JSONB
+  UUID, UUID, UUID, UUID, TEXT, JSONB, JSONB, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, NUMERIC, TEXT, TEXT, JSONB, JSONB, JSONB, UUID, TEXT, BIGINT
 ) FROM authenticated;
 
 GRANT EXECUTE ON FUNCTION public.replace_transcript_atomic(
-  UUID, UUID, UUID, UUID, TEXT, JSONB, JSONB, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, NUMERIC, TEXT, TEXT, JSONB, JSONB, JSONB
+  UUID, UUID, UUID, UUID, TEXT, JSONB, JSONB, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, NUMERIC, TEXT, TEXT, JSONB, JSONB, JSONB, UUID, TEXT, BIGINT
 ) TO service_role;

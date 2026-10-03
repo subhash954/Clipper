@@ -9,6 +9,13 @@ export const DEV_DEFAULT_USER_ID = '00000000-0000-0000-0000-000000000001';
 export interface LockAcquisitionResult {
   acquired: boolean;
   leaseToken?: string;
+  leaseGeneration?: number;
+}
+
+export interface LeaseContext {
+  leaseToken: string;
+  lockKey?: string;
+  leaseGeneration?: number;
 }
 
 export interface CostTelemetryScope {
@@ -28,11 +35,12 @@ export interface IStorageAdapter {
   listRenderJobs(userId?: string): Promise<RenderJob[]>;
   recordCostTelemetry(telemetry: CostTelemetryRecord): Promise<void>;
   getCostTelemetry(scope?: string | CostTelemetryScope): Promise<CostTelemetryRecord[]>;
-  saveTranscript(transcript: Transcript, projectId: string, userId: string): Promise<Transcript>;
+  saveTranscript(transcript: Transcript, projectId: string, userId: string, leaseContext?: LeaseContext): Promise<Transcript>;
   getTranscript(projectId: string): Promise<Transcript | null>;
   acquireTranscriptionLock(lockKey: string, projectId: string, mediaAssetId: string | null, userId: string, ttlSeconds?: number): Promise<LockAcquisitionResult>;
   releaseTranscriptionLock(lockKey: string, leaseToken: string): Promise<boolean>;
   renewTranscriptionLock(lockKey: string, leaseToken: string, ttlSeconds?: number): Promise<boolean>;
+  failProjectIfLeaseHeld?(projectId: string, lockKey: string, leaseToken: string, errorMessage?: string): Promise<boolean>;
   listTranscriptWords?(transcriptId: string): Promise<NormalizedTranscriptWord[]>;
   listTranscriptSegments?(transcriptId: string): Promise<TranscriptSegment[]>;
 }
@@ -567,12 +575,16 @@ export class SupabaseStorageAdapter implements IStorageAdapter {
       created_at: now.toISOString(),
       updated_at: now.toISOString(),
       expires_at: expiresAt,
-    }).select('lease_token').maybeSingle();
+    }).select('lease_token, lease_generation').maybeSingle();
 
     if (error) {
       return { acquired: false };
     }
-    return { acquired: true, leaseToken: data?.lease_token || leaseToken };
+    return {
+      acquired: true,
+      leaseToken: data?.lease_token || leaseToken,
+      leaseGeneration: data?.lease_generation ? Number(data.lease_generation) : undefined,
+    };
   }
 
   async releaseTranscriptionLock(lockKey: string, leaseToken: string): Promise<boolean> {
@@ -612,7 +624,45 @@ export class SupabaseStorageAdapter implements IStorageAdapter {
     return true;
   }
 
-  async saveTranscript(transcript: Transcript, projectId: string, userId: string): Promise<Transcript> {
+  async failProjectIfLeaseHeld(
+    projectId: string,
+    lockKey: string,
+    leaseToken: string,
+    errorMessage?: string
+  ): Promise<boolean> {
+    if (!leaseToken) return false;
+    const now = new Date().toISOString();
+    const { data: lock } = await supabase
+      .from('transcription_locks')
+      .select('lease_token')
+      .eq('lock_key', lockKey)
+      .eq('lease_token', leaseToken)
+      .gt('expires_at', now)
+      .maybeSingle();
+
+    if (!lock) {
+      return false; // Stale worker cannot fail the project
+    }
+
+    const { error } = await supabase
+      .from('projects')
+      .update({
+        status: 'failed',
+        error_message: errorMessage || 'Transcription failed',
+        updated_at: now,
+      })
+      .eq('id', projectId)
+      .eq('status', 'transcribing');
+
+    return !error;
+  }
+
+  async saveTranscript(
+    transcript: Transcript,
+    projectId: string,
+    userId: string,
+    leaseContext?: LeaseContext
+  ): Promise<Transcript> {
     const validTranscriptId = ensureValidUuid(transcript.id);
     const words = transcript.words || [];
     const utterances = transcript.utterances || [];
@@ -746,6 +796,9 @@ export class SupabaseStorageAdapter implements IStorageAdapter {
         p_metadata: transcript.metadata || {},
         p_segments: segmentRows,
         p_word_rows: wordRows,
+        p_lease_token: leaseContext?.leaseToken || null,
+        p_lock_key: leaseContext?.lockKey || null,
+        p_lease_generation: leaseContext?.leaseGeneration || null,
       });
 
       if (!rpcError) {
@@ -753,11 +806,27 @@ export class SupabaseStorageAdapter implements IStorageAdapter {
         if (rpcData && (rpcData as any).transcript_id) {
           canonicalTranscriptId = (rpcData as any).transcript_id;
         }
-      } else if (!rpcError.message?.includes('does not exist') && !rpcError.message?.includes('function')) {
-        throw new ClipperError('DATABASE_ERROR', `Atomic transcript replacement failed: ${rpcError.message}`, 500);
+      } else {
+        if (
+          rpcError.code === '55P03' ||
+          rpcError.message?.toLowerCase().includes('lease') ||
+          rpcError.message?.includes('Stale worker')
+        ) {
+          throw new ClipperError('CONCURRENT_TRANSCRIPTION', `Atomic lease check failed: ${rpcError.message}`, 409);
+        }
+        if (!rpcError.message?.includes('does not exist') && !rpcError.message?.includes('function')) {
+          throw new ClipperError('DATABASE_ERROR', `Atomic transcript replacement failed: ${rpcError.message}`, 500);
+        }
       }
     } catch (rpcErr: any) {
       if (rpcErr instanceof ClipperError) throw rpcErr;
+      if (
+        rpcErr.code === '55P03' ||
+        rpcErr.message?.toLowerCase().includes('lease') ||
+        rpcErr.message?.includes('Stale worker')
+      ) {
+        throw new ClipperError('CONCURRENT_TRANSCRIPTION', `Atomic lease check failed: ${rpcErr.message}`, 409);
+      }
       if (!rpcErr.message?.includes('does not exist') && !rpcErr.message?.includes('function')) {
         throw new ClipperError('DATABASE_ERROR', `Atomic transcript replacement failed: ${rpcErr.message}`, 500);
       }
@@ -1174,9 +1243,12 @@ export class LocalStorageAdapter implements IStorageAdapter {
       return { acquired: false };
     }
     const leaseToken = crypto.randomUUID();
+    const maxGen = locks.reduce((max: number, l: any) => Math.max(max, l.leaseGeneration || 0), 0);
+    const leaseGeneration = maxGen + 1;
     const newLock = {
       lockKey,
       leaseToken,
+      leaseGeneration,
       projectId,
       mediaAssetId,
       userId,
@@ -1189,7 +1261,7 @@ export class LocalStorageAdapter implements IStorageAdapter {
       expiresAt: new Date(now + ttlSeconds * 1000).toISOString(),
     };
     this.writeJson(this.locksFile, [...activeLocks, newLock]);
-    return { acquired: true, leaseToken };
+    return { acquired: true, leaseToken, leaseGeneration };
   }
 
   async releaseTranscriptionLock(lockKey: string, leaseToken: string): Promise<boolean> {
@@ -1221,12 +1293,68 @@ export class LocalStorageAdapter implements IStorageAdapter {
     return true;
   }
 
-  async saveTranscript(transcript: Transcript, projectId: string, userId: string): Promise<Transcript> {
+  async failProjectIfLeaseHeld(
+    projectId: string,
+    lockKey: string,
+    leaseToken: string,
+    errorMessage?: string
+  ): Promise<boolean> {
+    if (!leaseToken) return false;
+    const locks = this.readJson<any[]>(this.locksFile, []);
+    const now = Date.now();
+    const lock = locks.find(
+      (l) => l.lockKey === lockKey && l.leaseToken === leaseToken && new Date(l.expiresAt).getTime() > now
+    );
+    if (!lock) {
+      return false; // Stale worker cannot fail the project
+    }
+    const project = await this.getProject(projectId);
+    if (project && project.status === 'transcribing') {
+      project.status = 'failed';
+      project.errorMessage = errorMessage || 'Transcription failed';
+      await this.saveProject(project);
+      return true;
+    }
+    return false;
+  }
+
+  async saveTranscript(
+    transcript: Transcript,
+    projectId: string,
+    userId: string,
+    leaseContext?: LeaseContext
+  ): Promise<Transcript> {
     const validId = ensureValidUuid(transcript.id);
     const words = transcript.words || [];
     const utterances = transcript.utterances || [];
     const lastWord = words.length > 0 ? words[words.length - 1] : undefined;
     const duration = transcript.duration ?? (lastWord ? lastWord.end : 0);
+
+    // 0. Active Lease Ownership Validation (Fencing & Stale-Worker Protection)
+    const locks = this.readJson<any[]>(this.locksFile, []);
+    const now = Date.now();
+    const activeLockForProject = locks.find(
+      (l) => l.projectId === projectId && new Date(l.expiresAt).getTime() > now
+    );
+
+    if (leaseContext?.leaseToken) {
+      const lockKey = leaseContext.lockKey || `${projectId}:${transcript.mediaAssetId || 'none'}:deepgram:nova-2:exact_word`;
+      const lock = locks.find((l) => l.lockKey === lockKey);
+      if (!lock) {
+        throw new ClipperError('CONCURRENT_TRANSCRIPTION', `Transcription lease missing for lock ${lockKey}`, 409);
+      }
+      if (lock.leaseToken !== leaseContext.leaseToken) {
+        throw new ClipperError('CONCURRENT_TRANSCRIPTION', `Stale worker rejected: lease token ${leaseContext.leaseToken} does not match active lease token ${lock.leaseToken}`, 409);
+      }
+      if (leaseContext.leaseGeneration && lock.leaseGeneration !== leaseContext.leaseGeneration) {
+        throw new ClipperError('CONCURRENT_TRANSCRIPTION', `Stale worker rejected: lease generation ${leaseContext.leaseGeneration} superseded by ${lock.leaseGeneration}`, 409);
+      }
+      if (new Date(lock.expiresAt).getTime() <= now) {
+        throw new ClipperError('CONCURRENT_TRANSCRIPTION', `Transcription lease expired for lock ${lockKey}`, 409);
+      }
+    } else if (activeLockForProject) {
+      throw new ClipperError('CONCURRENT_TRANSCRIPTION', 'Active transcription lock exists for project but no lease token provided.', 409);
+    }
 
     // 1. Authenticated User Identity Check (Strict Fail-Closed)
     if (!userId) {
@@ -1375,6 +1503,10 @@ export class LocalStorageAdapter implements IStorageAdapter {
     const projIdx = projects.findIndex((p) => p.id === projectId);
     if (projIdx !== -1) {
       projects[projIdx].transcript = record;
+      projects[projIdx].status = 'transcript_ready';
+      if (transcript.mediaAssetId) {
+        projects[projIdx].activeMediaId = transcript.mediaAssetId;
+      }
       projects[projIdx].updatedAt = new Date().toISOString();
       this.writeJson(this.projectsFile, projects);
     }

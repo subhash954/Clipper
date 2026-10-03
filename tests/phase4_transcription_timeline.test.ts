@@ -2113,12 +2113,23 @@ async function runPhase4Tests() {
       const pgWordA1Id = ensureValidUuid();
       const pgWordB1Id = ensureValidUuid();
 
+      const pgLockKey = `${pgProjId}:${pgMediaId}:deepgram:nova-2:exact_word`;
+      const pgLeaseToken = ensureValidUuid();
+
       runPsql(`
         INSERT INTO auth.users (id, email) VALUES ('${pgUserId}', '${pgEmail}') ON CONFLICT (id) DO NOTHING;
         INSERT INTO public.profiles (id, email, full_name) VALUES ('${pgUserId}', '${pgEmail}', 'PG Tester') ON CONFLICT (id) DO NOTHING;
         INSERT INTO public.projects (id, user_id, title, workflow_type, status) VALUES ('${pgProjId}', '${pgUserId}', 'PG Project', 'youtube_to_shorts', 'created') ON CONFLICT (id) DO NOTHING;
         INSERT INTO public.media_assets (id, project_id, user_id, file_name, file_url, storage_path, mime_type, size_bytes, duration, status)
         VALUES ('${pgMediaId}', '${pgProjId}', '${pgUserId}', 'test.mp4', 'https://cdn.example.com/test.mp4', 'uploads/test.mp4', 'video/mp4', 1024, 10.0, 'ready') ON CONFLICT (id) DO NOTHING;
+        INSERT INTO public.transcription_locks (
+          lock_key, lease_token, project_id, media_asset_id, user_id, provider, model, timing_precision, status, expires_at
+        ) VALUES (
+          '${pgLockKey}', '${pgLeaseToken}', '${pgProjId}', '${pgMediaId}', '${pgUserId}', 'deepgram', 'nova-2', 'exact_word', 'in_progress', NOW() + INTERVAL '60 seconds'
+        ) ON CONFLICT (lock_key) DO UPDATE SET
+          lease_token = EXCLUDED.lease_token,
+          lease_generation = nextval('public.transcription_lease_generation_seq'),
+          expires_at = EXCLUDED.expires_at;
       `);
 
       // 2. Invoke replace_transcript_atomic for Transcript A
@@ -2142,7 +2153,9 @@ async function runPhase4Tests() {
           NULL,
           '{}'::jsonb,
           '[{"id": "${pgSegAId}", "segment_index": 0, "start_time": 0.0, "end_time": 5.0, "text": "Transcript A"}]'::jsonb,
-          '[{"id": "${pgWordA1Id}", "segment_id": "${pgSegAId}", "word_index": 0, "word": "Transcript", "start_time": 0.0, "end_time": 2.0}]'::jsonb
+          '[{"id": "${pgWordA1Id}", "segment_id": "${pgSegAId}", "word_index": 0, "word": "Transcript", "start_time": 0.0, "end_time": 2.0}]'::jsonb,
+          '${pgLeaseToken}'::UUID,
+          '${pgLockKey}'::TEXT
         );
       `).trim();
       assert(rpcResultA.includes(pgTranscriptAId), 'Real PostgreSQL: Transcript A created with requested parent ID');
@@ -2168,7 +2181,9 @@ async function runPhase4Tests() {
           NULL,
           '{}'::jsonb,
           '[{"id": "${pgSegBId}", "segment_index": 0, "start_time": 1.237, "end_time": 1.999, "text": "Transcript B"}]'::jsonb,
-          '[{"id": "${pgWordB1Id}", "segment_id": "${pgSegBId}", "word_index": 0, "word": "Transcript", "start_time": 1.237, "end_time": 1.999}]'::jsonb
+          '[{"id": "${pgWordB1Id}", "segment_id": "${pgSegBId}", "word_index": 0, "word": "Transcript", "start_time": 1.237, "end_time": 1.999}]'::jsonb,
+          '${pgLeaseToken}'::UUID,
+          '${pgLockKey}'::TEXT
         );
       `).trim();
       assert(
@@ -2223,7 +2238,9 @@ async function runPhase4Tests() {
             NULL,
             '{}'::jsonb,
             '[]'::jsonb,
-            '[]'::jsonb
+            '[]'::jsonb,
+            '${pgLeaseToken}'::UUID,
+            '${pgLockKey}'::TEXT
           );
         `);
       } catch (rbErr) {
@@ -2241,6 +2258,7 @@ async function runPhase4Tests() {
 
       // Clean up test rows
       runPsql(`
+        DELETE FROM public.transcription_locks WHERE lock_key = '${pgLockKey}';
         DELETE FROM public.transcripts WHERE project_id = '${pgProjId}';
         DELETE FROM public.media_assets WHERE id = '${pgMediaId}';
         DELETE FROM public.projects WHERE id = '${pgProjId}';
@@ -2261,6 +2279,110 @@ async function runPhase4Tests() {
     console.log('REAL DATABASE TESTS: NOT EXECUTED');
     console.log('REASON: Local PostgreSQL test database not reachable');
   }
+
+  // =========================================================================
+  // TEST GROUP 19: Phase 4.5 Stale-Worker Write Protection & Atomic Commit Gate
+  // =========================================================================
+  console.log('\n--- TEST GROUP 19: Phase 4.5 Stale-Worker Write Protection & Fencing ---');
+  const migration45Path = path.join(process.cwd(), 'supabase', 'migrations', '20261003_phase_4_5_stale_worker_fencing.sql');
+  assert(fs.existsSync(migration45Path), 'Migration 20261003_phase_4_5_stale_worker_fencing.sql exists');
+
+  const migration45Content = fs.readFileSync(migration45Path, 'utf-8');
+  assert(
+    migration45Content.includes('CREATE SEQUENCE IF NOT EXISTS public.transcription_lease_generation_seq') &&
+    migration45Content.includes('p_lease_token UUID') &&
+    migration45Content.includes('FOR UPDATE'),
+    'Migration 4.5 adds lease_generation sequence, p_lease_token requirement, and FOR UPDATE row lock'
+  );
+
+  const schema45Content = fs.readFileSync(path.join(process.cwd(), 'supabase', 'schema.sql'), 'utf-8');
+  assert(
+    schema45Content.includes('transcription_lease_generation_seq') &&
+    schema45Content.includes('idx_transcription_locks_generation') &&
+    schema45Content.includes('p_lease_token UUID'),
+    'supabase/schema.sql synchronized with lease_generation and lease-aware replace_transcript_atomic'
+  );
+
+  // Local Storage Stale-Worker Write Rejection Test
+  const fenceProj: Project = {
+    id: ensureValidUuid(),
+    userId: aliceId,
+    title: 'Fencing Test Project',
+    workflowType: 'youtube_to_shorts',
+    sourceType: 'upload',
+    durationSeconds: 10,
+    status: 'transcribing',
+    clips: [],
+    createdAt: new Date().toISOString(),
+  };
+  await storage.saveProject(fenceProj);
+
+  const fenceLockKey = `${fenceProj.id}:none:deepgram:nova-2:exact_word`;
+  const workerA_Acq = await storage.acquireTranscriptionLock(fenceLockKey, fenceProj.id, null, aliceId, 1);
+  assert(workerA_Acq.acquired === true, 'Worker A acquires lease with generation 1');
+  const fenceTokenA = workerA_Acq.leaseToken!;
+
+  // Allow Worker A's lease to expire
+  await new Promise((res) => setTimeout(res, 1100));
+
+  // Worker B acquires the lease with higher generation
+  const workerB_Acq = await storage.acquireTranscriptionLock(fenceLockKey, fenceProj.id, null, aliceId, 10);
+  assert(workerB_Acq.acquired === true, 'Worker B acquires lease after Worker A expires');
+  const fenceTokenB = workerB_Acq.leaseToken!;
+  assert(fenceTokenA !== fenceTokenB, 'Worker B lease token is distinct from Worker A');
+
+  // Worker B commits Transcript B
+  const transcriptB: Transcript = {
+    id: ensureValidUuid(),
+    projectId: fenceProj.id,
+    text: 'Transcript B is authoritative',
+    words: [{ word: 'authoritative', start: 0, end: 1, confidence: 0.99 }],
+    timingPrecision: 'exact_word',
+    status: 'completed',
+  };
+  const committedB = await storage.saveTranscript(transcriptB, fenceProj.id, aliceId, {
+    leaseToken: fenceTokenB,
+    lockKey: fenceLockKey,
+    leaseGeneration: workerB_Acq.leaseGeneration,
+  });
+  assert(committedB.text === 'Transcript B is authoritative', 'Worker B transcript successfully committed');
+
+  // Stale Worker A resumes and attempts to commit Transcript A
+  const transcriptA: Transcript = {
+    id: ensureValidUuid(),
+    projectId: fenceProj.id,
+    text: 'Stale Worker A Attempt',
+    words: [{ word: 'Stale', start: 0, end: 1, confidence: 0.5 }],
+    timingPrecision: 'exact_word',
+    status: 'completed',
+  };
+  let staleWorkerARejected = false;
+  try {
+    await storage.saveTranscript(transcriptA, fenceProj.id, aliceId, {
+      leaseToken: fenceTokenA,
+      lockKey: fenceLockKey,
+      leaseGeneration: workerA_Acq.leaseGeneration,
+    });
+  } catch (err: any) {
+    staleWorkerARejected = err.code === 'CONCURRENT_TRANSCRIPTION' || err.statusCode === 409;
+  }
+  assert(staleWorkerARejected, 'Stale Worker A commit attempt rejected with 409 CONCURRENT_TRANSCRIPTION');
+
+  // Verify canonical transcript remains Transcript B
+  const finalTranscript = await storage.getTranscript(fenceProj.id);
+  assert(finalTranscript?.text === 'Transcript B is authoritative', 'Canonical transcript remains strictly Transcript B');
+
+  // Stale Worker A attempts failProjectIfLeaseHeld -> rejected because lease is owned by B
+  if (storage.failProjectIfLeaseHeld) {
+    const failedByStaleA = await storage.failProjectIfLeaseHeld(fenceProj.id, fenceLockKey, fenceTokenA, 'Stale fail attempt');
+    assert(failedByStaleA === false, 'Stale Worker A cannot transition project status to failed');
+
+    const checkProj = await storage.getProject(fenceProj.id);
+    assert(checkProj?.status === 'transcript_ready', 'Project status remains transcript_ready');
+  }
+
+  // Release Worker B lease
+  await storage.releaseTranscriptionLock(fenceLockKey, fenceTokenB);
 
   console.log('\n====================================================');
   console.log(`PHASE 4 TEST SUMMARY: ${passed} PASSED, ${failed} FAILED`);
