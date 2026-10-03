@@ -1697,6 +1697,242 @@ async function runPhase4Tests() {
     'supabase/schema.sql upgraded to exact NUMERIC(12, 3) millisecond and NUMERIC(5, 4) confidence precision'
   );
 
+  // --- TEST GROUP 17: Phase 4.3 Canonical Replacement & Schema Security Hardening ---
+  console.log('\n--- TEST GROUP 17: Phase 4.3 Canonical Replacement & Schema Security Hardening ---');
+
+  // Test 1: Migration 4.3 and Schema Hardening Verification
+  const migration43Path = path.join(__dirname, '../supabase/migrations/20261003_phase_4_3_canonical_replacement_locks.sql');
+  assert(fs.existsSync(migration43Path), 'Migration 20261003_phase_4_3_canonical_replacement_locks.sql exists');
+  const migration43Content = fs.readFileSync(migration43Path, 'utf8');
+
+  assert(
+    migration43Content.includes('ALTER TABLE public.transcription_locks ENABLE ROW LEVEL SECURITY;'),
+    'Migration enables ROW LEVEL SECURITY on public.transcription_locks'
+  );
+  assert(
+    migration43Content.includes('REVOKE ALL ON public.transcription_locks FROM PUBLIC') &&
+    migration43Content.includes('FROM anon') &&
+    migration43Content.includes('FROM authenticated'),
+    'Migration revokes all permissions on transcription_locks from client roles'
+  );
+  assert(
+    migration43Content.includes('GRANT ALL ON public.transcription_locks TO service_role;'),
+    'Migration grants permissions on transcription_locks strictly to service_role'
+  );
+  assert(
+    migration43Content.includes('SELECT id INTO v_transcript_id FROM public.transcripts WHERE project_id = p_project_id;'),
+    'Migration resolves canonical existing transcript ID to preserve parent ID'
+  );
+  assert(
+    migration43Content.includes('p_timing_label TEXT'),
+    'Migration adds p_timing_label parameter to replace_transcript_atomic'
+  );
+
+  const schema43Content = fs.readFileSync(path.join(__dirname, '../supabase/schema.sql'), 'utf8');
+  assert(
+    schema43Content.includes('ALTER TABLE public.transcription_locks ENABLE ROW LEVEL SECURITY;') &&
+    schema43Content.includes('GRANT ALL ON public.transcription_locks TO service_role;'),
+    'supabase/schema.sql secures transcription_locks with RLS and service_role grant'
+  );
+  assert(
+    schema43Content.includes('SELECT id INTO v_transcript_id FROM public.transcripts WHERE project_id = p_project_id;') &&
+    schema43Content.includes('p_timing_label TEXT') &&
+    schema43Content.includes('timing_label = EXCLUDED.timing_label'),
+    'supabase/schema.sql synchronizes canonical v_transcript_id and timing_label persistence'
+  );
+
+  // Test 2: Canonical Transcript ID Replacement & Child FK Integrity (forceRerun simulation)
+  const canonProj: Project = {
+    id: ensureValidUuid(),
+    userId: aliceId,
+    title: 'Canonical ID Replacement Project',
+    sourceType: 'upload',
+    workflowType: 'youtube_to_shorts',
+    durationSeconds: 10,
+    status: 'ready',
+    clips: [],
+    createdAt: new Date().toISOString(),
+  };
+  await storage.saveProject(canonProj);
+
+  const v1TranscriptId = ensureValidUuid();
+  const v1SegId = ensureValidUuid();
+  const transcriptV1: Transcript = {
+    id: v1TranscriptId,
+    projectId: canonProj.id,
+    text: 'Version one text.',
+    timingPrecision: 'exact_word',
+    timingLabel: 'Deepgram Nova-2 Word-Level Alignment',
+    provider: 'deepgram',
+    model: 'nova-2',
+    duration: 5.0,
+    status: 'completed',
+    segments: [
+      {
+        id: v1SegId,
+        transcriptId: v1TranscriptId,
+        segmentIndex: 0,
+        start: 0.0,
+        end: 2.0,
+        text: 'Version one',
+      },
+    ],
+    words: [
+      { word: 'Version', start: 0.0, end: 1.0, segmentId: v1SegId } as any,
+      { word: 'one', start: 1.0, end: 2.0, segmentId: v1SegId } as any,
+    ],
+  };
+
+  const savedV1 = await storage.saveTranscript(transcriptV1, canonProj.id, aliceId);
+  assert(savedV1.id === v1TranscriptId, 'Initial transcript creates parent with canonical ID');
+
+  // Second write: forceRerun generates a NEW UUID for the payload, but must preserve canonical parent ID
+  const v2RequestedId = ensureValidUuid();
+  assert(v2RequestedId !== v1TranscriptId, 'Simulated forceRerun requested ID differs from existing parent ID');
+  const v2SegId = ensureValidUuid();
+  const transcriptV2: Transcript = {
+    id: v2RequestedId,
+    projectId: canonProj.id,
+    text: 'Version two replacement.',
+    timingPrecision: 'exact_word',
+    timingLabel: 'Deepgram Nova-2 Word-Level Alignment',
+    provider: 'deepgram',
+    model: 'nova-2',
+    duration: 4.0,
+    status: 'completed',
+    segments: [
+      {
+        id: v2SegId,
+        transcriptId: v2RequestedId,
+        segmentIndex: 0,
+        start: 0.0,
+        end: 2.5,
+        text: 'Version two',
+      },
+    ],
+    words: [
+      { word: 'Version', start: 0.0, end: 1.0, segmentId: v2SegId } as any,
+      { word: 'two', start: 1.0, end: 2.0, segmentId: v2SegId } as any,
+      { word: 'replacement', start: 2.0, end: 2.5, segmentId: v2SegId } as any,
+    ],
+  };
+
+  const savedV2 = await storage.saveTranscript(transcriptV2, canonProj.id, aliceId);
+  assert(savedV2.id === v1TranscriptId, 'forceRerun preserves canonical parent transcript ID (does NOT orphan children)');
+
+  // Verify reload via getTranscript(projectId)
+  const reloadedCanon = await storage.getTranscript(canonProj.id);
+  assert(reloadedCanon !== null, 'getTranscript retrieves updated canonical transcript');
+  assert(reloadedCanon?.id === v1TranscriptId, 'Persisted parent transcript retains canonical ID');
+  assert(reloadedCanon?.text === 'Version two replacement.', 'Master transcript text updated to version two');
+  assert(reloadedCanon?.words.length === 3, 'Old words replaced: now contains exactly 3 words');
+
+  // Verify child tables normalization and absence of orphan rows
+  const wordsForV1 = await (storage as any).listTranscriptWords(v1TranscriptId);
+  const wordsForV2 = await (storage as any).listTranscriptWords(v2RequestedId);
+  assert(wordsForV1.length === 3, 'All new words reference canonical transcript ID');
+  assert(wordsForV2.length === 0, 'Zero orphan words reference temporary requested ID');
+
+  const segsForV1 = await (storage as any).listTranscriptSegments(v1TranscriptId);
+  const segsForV2 = await (storage as any).listTranscriptSegments(v2RequestedId);
+  assert(segsForV1.length === 1, 'New segment references canonical transcript ID');
+  assert(segsForV2.length === 0, 'Zero orphan segments reference temporary requested ID');
+
+  // Test 3: timing_label Persistence & Retrieval
+  assert(
+    reloadedCanon?.timingPrecision === 'exact_word',
+    'Reloaded transcript preserves timingPrecision = exact_word'
+  );
+  assert(
+    reloadedCanon?.timingLabel === 'Deepgram Nova-2 Word-Level Alignment',
+    'Reloaded transcript preserves timingLabel = "Deepgram Nova-2 Word-Level Alignment"'
+  );
+
+  // Test 4: Remove Duplicate Transcript Persistence Authority
+  // Saving project metadata should NOT trigger saveTranscript or corrupt relational data
+  canonProj.title = 'Updated Project Title Without Transcript Duplication';
+  await storage.saveProject(canonProj);
+
+  const reloadedAfterProjectSave = await storage.getTranscript(canonProj.id);
+  assert(
+    reloadedAfterProjectSave?.id === v1TranscriptId && reloadedAfterProjectSave?.words.length === 3,
+    'Project metadata save does not duplicate or corrupt canonical relational transcript data'
+  );
+
+  // Test 5: Project Status Reconciliation on Existing Transcript
+  const reconProj: Project = {
+    id: ensureValidUuid(),
+    userId: aliceId,
+    title: 'Reconciliation Test Project',
+    sourceType: 'upload',
+    workflowType: 'youtube_to_shorts',
+    durationSeconds: 15,
+    status: 'failed', // Temporarily marked failed due to hypothetical network error after transcript write
+    clips: [],
+    createdAt: new Date().toISOString(),
+  };
+  await storage.saveProject(reconProj);
+
+  // Pre-persist valid completed transcript
+  await storage.saveTranscript({
+    id: ensureValidUuid(),
+    projectId: reconProj.id,
+    text: 'Reconciliation text.',
+    timingPrecision: 'exact_word',
+    timingLabel: 'Deepgram Nova-2 Word-Level Alignment',
+    provider: 'deepgram',
+    model: 'nova-2',
+    duration: 6.0,
+    status: 'completed',
+    words: [{ word: 'Reconciliation', start: 0.0, end: 1.0 }],
+  }, reconProj.id, aliceId);
+
+  // transcribeProjectMedia should detect existing matching completed transcript and reconcile project.status
+  const reconResult = await transcriptionService.transcribeProjectMedia({
+    projectId: reconProj.id,
+    userId: aliceId,
+    forceRerun: false,
+  });
+  assert(reconResult.isCached === true, 'Transcription service detects matching existing transcript');
+  const reconciledProject = await storage.getProject(reconProj.id);
+  assert(
+    reconciledProject?.status === 'transcript_ready',
+    'Self-healing: Project status successfully reconciled from failed to transcript_ready'
+  );
+
+  // Test 6: Timestamp Precision (1.237, 1.999) Exact Round Trip
+  const precisionSegId = ensureValidUuid();
+  const precisionTranscript: Transcript = {
+    id: ensureValidUuid(),
+    projectId: canonProj.id,
+    text: 'Precise millisecond speech.',
+    timingPrecision: 'exact_word',
+    timingLabel: 'Deepgram Nova-2 Word-Level Alignment',
+    provider: 'deepgram',
+    model: 'nova-2',
+    duration: 2.0,
+    status: 'completed',
+    segments: [
+      {
+        id: precisionSegId,
+        transcriptId: v1TranscriptId,
+        segmentIndex: 0,
+        start: 1.237,
+        end: 1.999,
+        text: 'Precise millisecond speech',
+      },
+    ],
+    words: [
+      { word: 'Precise', start: 1.237, end: 1.999, segmentId: precisionSegId } as any,
+    ],
+  };
+  await storage.saveTranscript(precisionTranscript, canonProj.id, aliceId);
+  const reloadedPrecision = await storage.getTranscript(canonProj.id);
+  assert(
+    reloadedPrecision?.words[0].start === 1.237 && reloadedPrecision?.words[0].end === 1.999,
+    'Exact millisecond timestamps (1.237, 1.999) round trip through storage with zero truncation'
+  );
+
   console.log('\n====================================================');
   console.log(`PHASE 4 TEST SUMMARY: ${passed} PASSED, ${failed} FAILED`);
   console.log('====================================================');

@@ -512,6 +512,13 @@ export class TranscriptionService {
 
         if (isMediaMatch && isProviderMatch && isTimingMatch) {
           const dur = existingTranscript.duration || (existingTranscript.words[existingTranscript.words.length - 1]?.end ?? 0);
+          if (project.status !== 'transcript_ready') {
+            project.status = 'transcript_ready';
+            if (targetMediaId) {
+              project.activeMediaId = targetMediaId;
+            }
+            await storage.saveProject(project);
+          }
           return {
             success: true,
             transcriptId: existingTranscript.id || ensureValidUuid(),
@@ -824,14 +831,22 @@ export class TranscriptionService {
       };
 
       // 13. Persist Transcript Relational Child Tables and Project State
-      await storage.saveTranscript(finalTranscript, projectId, currentUserId);
+      const savedTranscript = await storage.saveTranscript(finalTranscript, projectId, currentUserId);
 
-      project.transcript = finalTranscript;
       project.status = 'transcript_ready';
       if (targetMediaId) {
         project.activeMediaId = targetMediaId;
       }
-      await storage.saveProject(project);
+      try {
+        await storage.saveProject(project);
+      } catch (saveProjErr: any) {
+        console.error(`Failed to update project status to transcript_ready for ${projectId}:`, saveProjErr);
+        throw new ClipperError(
+          'DATABASE_ERROR',
+          `Transcript persisted successfully but failed to update project state to transcript_ready: ${saveProjErr.message}`,
+          500
+        );
+      }
 
       // 14. Record Cost Telemetry (Estimated Processing Cost)
       const costUSD = calculateDeepgramCost(durationSeconds);
@@ -848,8 +863,8 @@ export class TranscriptionService {
 
       return {
         success: true,
-        transcriptId,
-        transcript: finalTranscript,
+        transcriptId: savedTranscript.id || transcriptId,
+        transcript: savedTranscript,
         isCached: false,
         wordsCount: finalWords.length,
         durationSeconds,

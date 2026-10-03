@@ -122,10 +122,8 @@ export class SupabaseStorageAdapter implements IStorageAdapter {
       throw new ClipperError('DATABASE_ERROR', `Supabase saveProject failed: ${projError.message}`, 500);
     }
 
-    // Upsert transcript if present
-    if (project.transcript) {
-      await this.saveTranscript(project.transcript, validId, project.userId);
-    }
+    // Phase 4 canonical architecture: saveTranscript() is the sole canonical persistence
+    // operation for relational transcripts. saveProject() does not duplicate transcript writes.
 
     // Upsert clips
     if (project.clips && project.clips.length > 0) {
@@ -642,6 +640,7 @@ export class SupabaseStorageAdapter implements IStorageAdapter {
 
     // 5. Execute Atomic Transcript Replacement via PostgreSQL RPC
     let rpcSucceeded = false;
+    let canonicalTranscriptId = validTranscriptId;
     try {
       const { data: rpcData, error: rpcError } = await supabase.rpc('replace_transcript_atomic', {
         p_user_id: userId,
@@ -654,6 +653,7 @@ export class SupabaseStorageAdapter implements IStorageAdapter {
         p_language: transcript.language || 'en',
         p_source: transcript.source || 'deepgram',
         p_timing_precision: transcript.timingPrecision || 'exact_word',
+        p_timing_label: transcript.timingLabel || (transcript.timingPrecision === 'exact_word' ? 'Deepgram Nova-2 Word-Level Alignment' : null),
         p_provider: transcript.provider || 'deepgram',
         p_model: transcript.model || 'nova-2',
         p_duration: computedDuration,
@@ -666,6 +666,9 @@ export class SupabaseStorageAdapter implements IStorageAdapter {
 
       if (!rpcError) {
         rpcSucceeded = true;
+        if (rpcData && (rpcData as any).transcript_id) {
+          canonicalTranscriptId = (rpcData as any).transcript_id;
+        }
       } else if (!rpcError.message?.includes('does not exist') && !rpcError.message?.includes('function')) {
         throw new ClipperError('DATABASE_ERROR', `Atomic transcript replacement failed: ${rpcError.message}`, 500);
       }
@@ -707,6 +710,7 @@ export class SupabaseStorageAdapter implements IStorageAdapter {
         language: transcript.language || 'en',
         source: transcript.source || 'deepgram',
         timing_precision: transcript.timingPrecision || 'exact_word',
+        timing_label: transcript.timingLabel || (transcript.timingPrecision === 'exact_word' ? 'Deepgram Nova-2 Word-Level Alignment' : null),
         provider: transcript.provider || 'deepgram',
         model: transcript.model || 'nova-2',
         duration: computedDuration,
@@ -741,9 +745,10 @@ export class SupabaseStorageAdapter implements IStorageAdapter {
 
     return {
       ...transcript,
-      id: validTranscriptId,
+      id: canonicalTranscriptId,
       projectId,
       duration: computedDuration,
+      timingLabel: transcript.timingLabel || (transcript.timingPrecision === 'exact_word' ? 'Deepgram Nova-2 Word-Level Alignment' : undefined),
     };
   }
 
@@ -947,9 +952,8 @@ export class LocalStorageAdapter implements IStorageAdapter {
     const updated = [project, ...all.filter((p) => p.id !== project.id)];
     this.writeJson(this.projectsFile, updated);
 
-    if (project.transcript) {
-      await this.saveTranscript(project.transcript, project.id, project.userId);
-    }
+    // Phase 4 canonical architecture: saveTranscript() is the sole canonical persistence
+    // operation for relational transcripts. saveProject() does not duplicate transcript writes.
 
     return project;
   }
@@ -1160,25 +1164,31 @@ export class LocalStorageAdapter implements IStorageAdapter {
       }
     }
 
-    // 4. Stage all in-memory structures before any file mutation (Atomic staging)
+    // 4. Resolve canonical existing transcript for projectId to preserve parent ID
+    const transcripts = this.readJson<any[]>(this.transcriptsFile, []);
+    const existing = transcripts.find((t) => t.projectId === projectId);
+    const canonicalId = existing ? existing.id : validId;
+
+    // Stage all in-memory structures before any file mutation (Atomic staging)
     const record: Transcript = {
       ...transcript,
-      id: validId,
+      id: canonicalId,
       projectId,
       duration,
       status: transcript.status || 'completed',
       timingPrecision: transcript.timingPrecision || 'exact_word',
+      timingLabel: transcript.timingLabel || (transcript.timingPrecision === 'exact_word' ? 'Deepgram Nova-2 Word-Level Alignment' : undefined),
       provider: transcript.provider || 'deepgram',
       model: transcript.model || 'nova-2',
       updatedAt: new Date().toISOString(),
-      createdAt: transcript.createdAt || new Date().toISOString(),
+      createdAt: existing ? (existing.createdAt || existing.created_at || new Date().toISOString()) : (transcript.createdAt || new Date().toISOString()),
     };
 
     let newSegments: any[] = [];
     if (transcript.segments && transcript.segments.length > 0) {
       newSegments = transcript.segments.map((seg, idx) => ({
         id: ensureValidUuid(seg.id),
-        transcriptId: validId,
+        transcriptId: canonicalId,
         segmentIndex: seg.segmentIndex ?? idx,
         start: seg.start,
         end: seg.end,
@@ -1194,7 +1204,7 @@ export class LocalStorageAdapter implements IStorageAdapter {
     if (words.length > 0) {
       newWords = words.map((w, idx) => ({
         id: ensureValidUuid((w as any).id),
-        transcriptId: validId,
+        transcriptId: canonicalId,
         segmentId: (w as any).segmentId || null,
         wordIndex: idx,
         word: w.word,
@@ -1207,21 +1217,16 @@ export class LocalStorageAdapter implements IStorageAdapter {
     }
 
     // 5. Commit all writes to disk (only reached if all validations and mappings succeeded)
-    const transcripts = this.readJson<any[]>(this.transcriptsFile, []);
-    const updatedTranscripts = [record, ...transcripts.filter((t) => t.id !== validId && t.projectId !== projectId)];
+    const updatedTranscripts = [record, ...transcripts.filter((t) => t.id !== canonicalId && t.projectId !== projectId)];
     this.writeJson(this.transcriptsFile, updatedTranscripts);
 
-    if (newSegments.length > 0) {
-      const existingSegments = this.readJson<any[]>(this.segmentsFile, []).filter((s) => s.transcriptId !== validId);
-      this.writeJson(this.segmentsFile, [...existingSegments, ...newSegments]);
-    }
+    const existingSegments = this.readJson<any[]>(this.segmentsFile, []).filter((s) => s.transcriptId !== canonicalId);
+    this.writeJson(this.segmentsFile, [...existingSegments, ...newSegments]);
 
-    if (newWords.length > 0) {
-      const existingWords = this.readJson<any[]>(this.wordsFile, []).filter((w) => w.transcriptId !== validId);
-      this.writeJson(this.wordsFile, [...existingWords, ...newWords]);
-    }
+    const existingWords = this.readJson<any[]>(this.wordsFile, []).filter((w) => w.transcriptId !== canonicalId);
+    this.writeJson(this.wordsFile, [...existingWords, ...newWords]);
 
-    // Also sync to projects.json if project exists
+    // Also sync to projects.json if project exists (for compatibility/read caching)
     const projects = this.readJson<Project[]>(this.projectsFile, []);
     const projIdx = projects.findIndex((p) => p.id === projectId);
     if (projIdx !== -1) {
@@ -1252,6 +1257,7 @@ export class LocalStorageAdapter implements IStorageAdapter {
 
     return {
       ...found,
+      timingLabel: found.timingLabel || found.timing_label || (found.timingPrecision === 'exact_word' || found.timing_precision === 'exact_word' ? 'Deepgram Nova-2 Word-Level Alignment' : undefined),
       segments: segments.length > 0 ? segments : found.segments,
       words: words.length > 0 ? words : found.words,
     };

@@ -265,6 +265,13 @@ ALTER TABLE public.media_assets ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.transcripts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.transcript_segments ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.transcript_words ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.transcription_locks ENABLE ROW LEVEL SECURITY;
+
+-- Server-only coordination table: revoke direct client access
+REVOKE ALL ON public.transcription_locks FROM PUBLIC;
+REVOKE ALL ON public.transcription_locks FROM anon;
+REVOKE ALL ON public.transcription_locks FROM authenticated;
+GRANT ALL ON public.transcription_locks TO service_role;
 ALTER TABLE public.clips ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.timeline_versions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.render_jobs ENABLE ROW LEVEL SECURITY;
@@ -647,6 +654,7 @@ CREATE OR REPLACE FUNCTION public.replace_transcript_atomic(
   p_language TEXT,
   p_source TEXT,
   p_timing_precision TEXT,
+  p_timing_label TEXT,
   p_provider TEXT,
   p_model TEXT,
   p_duration NUMERIC,
@@ -664,6 +672,7 @@ AS $$
 DECLARE
   v_project RECORD;
   v_media RECORD;
+  v_transcript_id UUID;
   v_seg JSONB;
   v_word JSONB;
 BEGIN
@@ -702,7 +711,13 @@ BEGIN
     END IF;
   END IF;
 
-  -- D. Upsert Master Transcript Record
+  -- D. Resolve Canonical Existing Transcript ID (Preserve Existing Parent ID)
+  SELECT id INTO v_transcript_id FROM public.transcripts WHERE project_id = p_project_id;
+  IF v_transcript_id IS NULL THEN
+    v_transcript_id := p_transcript_id;
+  END IF;
+
+  -- E. Upsert Master Transcript Record
   INSERT INTO public.transcripts (
     id,
     project_id,
@@ -713,6 +728,7 @@ BEGIN
     language,
     source,
     timing_precision,
+    timing_label,
     provider,
     model,
     duration,
@@ -721,7 +737,7 @@ BEGIN
     metadata,
     updated_at
   ) VALUES (
-    p_transcript_id,
+    v_transcript_id,
     p_project_id,
     p_media_asset_id,
     p_transcript_text,
@@ -730,6 +746,7 @@ BEGIN
     COALESCE(p_language, 'en'),
     COALESCE(p_source, 'deepgram'),
     COALESCE(p_timing_precision, 'exact_word'),
+    p_timing_label,
     COALESCE(p_provider, 'deepgram'),
     COALESCE(p_model, 'nova-2'),
     p_duration,
@@ -746,19 +763,21 @@ BEGIN
     language = EXCLUDED.language,
     source = EXCLUDED.source,
     timing_precision = EXCLUDED.timing_precision,
+    timing_label = EXCLUDED.timing_label,
     provider = EXCLUDED.provider,
     model = EXCLUDED.model,
     duration = EXCLUDED.duration,
     status = EXCLUDED.status,
     error_message = EXCLUDED.error_message,
     metadata = EXCLUDED.metadata,
-    updated_at = NOW();
+    updated_at = NOW()
+  RETURNING id INTO v_transcript_id;
 
-  -- E. Delete Existing Child Words & Segments
-  DELETE FROM public.transcript_words WHERE transcript_id = p_transcript_id;
-  DELETE FROM public.transcript_segments WHERE transcript_id = p_transcript_id;
+  -- F. Delete Existing Child Words & Segments for Canonical Transcript
+  DELETE FROM public.transcript_words WHERE transcript_id = v_transcript_id;
+  DELETE FROM public.transcript_segments WHERE transcript_id = v_transcript_id;
 
-  -- F. Insert Normalized Segments
+  -- G. Insert Normalized Segments Using Canonical v_transcript_id
   IF p_segments IS NOT NULL AND jsonb_array_length(p_segments) > 0 THEN
     FOR v_seg IN SELECT * FROM jsonb_array_elements(p_segments)
     LOOP
@@ -774,7 +793,7 @@ BEGIN
         metadata
       ) VALUES (
         (v_seg->>'id')::UUID,
-        p_transcript_id,
+        v_transcript_id,
         (v_seg->>'segment_index')::INTEGER,
         (v_seg->>'start_time')::NUMERIC(12, 3),
         (v_seg->>'end_time')::NUMERIC(12, 3),
@@ -786,7 +805,7 @@ BEGIN
     END LOOP;
   END IF;
 
-  -- G. Insert Normalized Words
+  -- H. Insert Normalized Words Using Canonical v_transcript_id
   IF p_word_rows IS NOT NULL AND jsonb_array_length(p_word_rows) > 0 THEN
     FOR v_word IN SELECT * FROM jsonb_array_elements(p_word_rows)
     LOOP
@@ -802,7 +821,7 @@ BEGIN
         speaker
       ) VALUES (
         (v_word->>'id')::UUID,
-        p_transcript_id,
+        v_transcript_id,
         (v_word->>'segment_id')::UUID,
         (v_word->>'word_index')::INTEGER,
         v_word->>'word',
@@ -814,23 +833,23 @@ BEGIN
     END LOOP;
   END IF;
 
-  RETURN jsonb_build_object('success', true, 'transcript_id', p_transcript_id);
+  RETURN jsonb_build_object('success', true, 'transcript_id', v_transcript_id);
 END;
 $$;
 
 -- Lock down Execution Permissions (Principle of Least Privilege)
 REVOKE ALL ON FUNCTION public.replace_transcript_atomic(
-  UUID, UUID, UUID, UUID, TEXT, JSONB, JSONB, TEXT, TEXT, TEXT, TEXT, TEXT, NUMERIC, TEXT, TEXT, JSONB, JSONB, JSONB
+  UUID, UUID, UUID, UUID, TEXT, JSONB, JSONB, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, NUMERIC, TEXT, TEXT, JSONB, JSONB, JSONB
 ) FROM PUBLIC;
 
 REVOKE ALL ON FUNCTION public.replace_transcript_atomic(
-  UUID, UUID, UUID, UUID, TEXT, JSONB, JSONB, TEXT, TEXT, TEXT, TEXT, TEXT, NUMERIC, TEXT, TEXT, JSONB, JSONB, JSONB
+  UUID, UUID, UUID, UUID, TEXT, JSONB, JSONB, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, NUMERIC, TEXT, TEXT, JSONB, JSONB, JSONB
 ) FROM anon;
 
 REVOKE ALL ON FUNCTION public.replace_transcript_atomic(
-  UUID, UUID, UUID, UUID, TEXT, JSONB, JSONB, TEXT, TEXT, TEXT, TEXT, TEXT, NUMERIC, TEXT, TEXT, JSONB, JSONB, JSONB
+  UUID, UUID, UUID, UUID, TEXT, JSONB, JSONB, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, NUMERIC, TEXT, TEXT, JSONB, JSONB, JSONB
 ) FROM authenticated;
 
 GRANT EXECUTE ON FUNCTION public.replace_transcript_atomic(
-  UUID, UUID, UUID, UUID, TEXT, JSONB, JSONB, TEXT, TEXT, TEXT, TEXT, TEXT, NUMERIC, TEXT, TEXT, JSONB, JSONB, JSONB
+  UUID, UUID, UUID, UUID, TEXT, JSONB, JSONB, TEXT, TEXT, TEXT, TEXT, TEXT, TEXT, NUMERIC, TEXT, TEXT, JSONB, JSONB, JSONB
 ) TO service_role;

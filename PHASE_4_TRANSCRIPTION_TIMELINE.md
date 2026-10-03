@@ -222,5 +222,14 @@ A forensic security and truthfulness hardening pass was conducted and verified:
     - **Media Deletion Cascade:** `fk_transcripts_media_project` upgraded to `ON DELETE CASCADE`.
     - **Schema Parity:** Synchronized `supabase/schema.sql` and `supabase/migrations/20261003_phase_4_2_security_data_truth.sql`.
 
-12. **Phase 5 Status:**
+12. **Phase 4.3 Canonical Replacement & Schema Security Hardening:**
+    - **Canonical Transcript ID Resolution in `replace_transcript_atomic`:** Fixed parent ID mismatch on rerun (`forceRerun`). The RPC queries and resolves existing canonical transcript `v_transcript_id` for `p_project_id`. On conflict, the existing parent UUID is preserved and returned via `RETURNING id INTO v_transcript_id`. All child segments and words are deleted and re-inserted bound strictly to `v_transcript_id`, eliminating foreign key violations and orphan records.
+    - **`timing_label` Schema & Storage Persistence:** Added `p_timing_label TEXT` parameter to `replace_transcript_atomic` RPC, mapped to `transcripts.timing_label`. Updated both `SupabaseStorageAdapter` and `LocalStorageAdapter` to persist and load `timingLabel`, ensuring complete fidelity across storage layers.
+    - **Row-Level Security Lockdown on `transcription_locks`:** Enabled RLS on `public.transcription_locks`. Revoked all permissions from `PUBLIC`, `anon`, and `authenticated` roles, granting access strictly to `service_role` to secure server-only distributed lease management.
+    - **Elimination of Duplicate Persistence Authority:** Removed redundant `saveTranscript` invocation from `saveProject` in both `SupabaseStorageAdapter` and `LocalStorageAdapter`. `saveTranscript` is now the sole canonical persistence authority for relational transcript data.
+    - **Deterministic Project Status Reconciliation:** When `transcribeProjectMedia` discovers an existing matching completed transcript, it self-heals any inconsistent project state by reconciling `project.status = 'transcript_ready'` and setting `activeMediaId`.
+    - **Fail-Closed Project State Transition:** Wrapped project status updates following transcript persistence in a try/catch block to throw a strict `500 DATABASE_ERROR` if project state transition fails.
+
+13. **Phase 5 Status:**
     Phase 5 was **NOT** started.
+
