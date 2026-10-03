@@ -531,23 +531,24 @@ export class TranscriptionService {
       }
     }
 
-    // 5. Distributed Database-Backed Concurrency Protection
+    // 5. Distributed Database-Backed Concurrency Protection with Cryptographic Lease Token
     const lockKey = `${projectId}:${targetMediaId || 'none'}:deepgram:nova-2:exact_word`;
-    const lockAcquired = await storage.acquireTranscriptionLock(
+    const lockResult = await storage.acquireTranscriptionLock(
       lockKey,
       projectId,
       targetMediaId || null,
       currentUserId,
-      300
+      60
     );
 
-    if (!lockAcquired) {
+    if (!lockResult.acquired || !lockResult.leaseToken) {
       throw new ClipperError(
         'INVALID_PROJECT_STATE',
         'A transcription operation is already in progress for this media asset. Please wait for the current job to complete.',
         409
       );
     }
+    const leaseToken = lockResult.leaseToken;
 
     // 6. Transition Project Status to Transcribing (Strict Fail-Closed)
     project.status = 'transcribing';
@@ -557,6 +558,21 @@ export class TranscriptionService {
     let resolvedAudioBuffer = params.audioBuffer;
     let resolvedAudioUrl = params.audioUrl;
     let tempFilesToCleanup: string[] = [];
+
+    let lockLost = false;
+    const HEARTBEAT_INTERVAL_MS = 15000;
+    const heartbeatTimer = setInterval(async () => {
+      try {
+        const renewed = await storage.renewTranscriptionLock(lockKey, leaseToken, 60);
+        if (!renewed) {
+          lockLost = true;
+          console.warn(`[TranscriptionService] Lock renewal failed for ${lockKey}; lease lost.`);
+        }
+      } catch (renewErr) {
+        lockLost = true;
+        console.warn(`[TranscriptionService] Lock renewal error for ${lockKey}:`, renewErr);
+      }
+    }, HEARTBEAT_INTERVAL_MS);
 
     try {
       if (!resolvedAudioBuffer && !resolvedAudioUrl) {
@@ -655,6 +671,14 @@ export class TranscriptionService {
         audioUrl: resolvedAudioUrl,
         mimetype: params.mimetype || 'audio/mp3',
       });
+
+      if (lockLost) {
+        throw new ClipperError(
+          'CONCURRENT_TRANSCRIPTION',
+          'Transcription lock lease expired or was superseded during provider processing.',
+          409
+        );
+      }
 
       // 9. Validate Word Timestamps with sequence checks (Fail closed on malformed data)
       const validation = validateWordTimestamps(rawTranscript.words);
@@ -833,12 +857,22 @@ export class TranscriptionService {
       // 13. Persist Transcript Relational Child Tables and Project State
       const savedTranscript = await storage.saveTranscript(finalTranscript, projectId, currentUserId);
 
-      project.status = 'transcript_ready';
+      if (lockLost) {
+        throw new ClipperError(
+          'CONCURRENT_TRANSCRIPTION',
+          'Transcription lock lease was lost or expired prior to project state commit.',
+          409
+        );
+      }
+
+      const latestProject = await storage.getProject(projectId);
+      const projToSave = latestProject || project;
+      projToSave.status = 'transcript_ready';
       if (targetMediaId) {
-        project.activeMediaId = targetMediaId;
+        projToSave.activeMediaId = targetMediaId;
       }
       try {
-        await storage.saveProject(project);
+        await storage.saveProject(projToSave);
       } catch (saveProjErr: any) {
         console.error(`Failed to update project status to transcript_ready for ${projectId}:`, saveProjErr);
         throw new ClipperError(
@@ -887,7 +921,10 @@ export class TranscriptionService {
       }
       throw new ClipperError('TRANSCRIPTION_FAILED', `Transcription failed: ${err.message}`, 500);
     } finally {
-      await storage.releaseTranscriptionLock(lockKey).catch(() => {});
+      clearInterval(heartbeatTimer);
+      if (leaseToken) {
+        await storage.releaseTranscriptionLock(lockKey, leaseToken).catch(() => {});
+      }
       // Cleanup temporary extracted files
       for (const tempFile of tempFilesToCleanup) {
         try {

@@ -6,6 +6,16 @@ import { ClipperError } from '../errors';
 
 export const DEV_DEFAULT_USER_ID = '00000000-0000-0000-0000-000000000001';
 
+export interface LockAcquisitionResult {
+  acquired: boolean;
+  leaseToken?: string;
+}
+
+export interface CostTelemetryScope {
+  userId?: string;
+  allowAllAdmin?: boolean;
+}
+
 export interface IStorageAdapter {
   saveProject(project: Project, expectedVersion?: number): Promise<Project>;
   getProject(id: string): Promise<Project | null>;
@@ -17,11 +27,12 @@ export interface IStorageAdapter {
   updateRenderJob(id: string, updates: Partial<RenderJob>): Promise<RenderJob | null>;
   listRenderJobs(userId?: string): Promise<RenderJob[]>;
   recordCostTelemetry(telemetry: CostTelemetryRecord): Promise<void>;
-  getCostTelemetry(userId?: string): Promise<CostTelemetryRecord[]>;
+  getCostTelemetry(scope?: string | CostTelemetryScope): Promise<CostTelemetryRecord[]>;
   saveTranscript(transcript: Transcript, projectId: string, userId: string): Promise<Transcript>;
   getTranscript(projectId: string): Promise<Transcript | null>;
-  acquireTranscriptionLock(lockKey: string, projectId: string, mediaAssetId: string | null, userId: string, ttlSeconds?: number): Promise<boolean>;
-  releaseTranscriptionLock(lockKey: string): Promise<void>;
+  acquireTranscriptionLock(lockKey: string, projectId: string, mediaAssetId: string | null, userId: string, ttlSeconds?: number): Promise<LockAcquisitionResult>;
+  releaseTranscriptionLock(lockKey: string, leaseToken: string): Promise<boolean>;
+  renewTranscriptionLock(lockKey: string, leaseToken: string, ttlSeconds?: number): Promise<boolean>;
   listTranscriptWords?(transcriptId: string): Promise<NormalizedTranscriptWord[]>;
   listTranscriptSegments?(transcriptId: string): Promise<TranscriptSegment[]>;
 }
@@ -104,7 +115,7 @@ export class SupabaseStorageAdapter implements IStorageAdapter {
       source_external_id: project.sourceExternalId || null,
       title: project.title,
       description: project.description || null,
-      version: project.version,
+      version: project.version || 1,
       active_media_id: project.activeMediaId || null,
       active_version_id: project.activeVersionId || null,
       channel_name: project.channelName || null,
@@ -490,7 +501,16 @@ export class SupabaseStorageAdapter implements IStorageAdapter {
     });
   }
 
-  async getCostTelemetry(userId?: string): Promise<CostTelemetryRecord[]> {
+  async getCostTelemetry(scope?: string | CostTelemetryScope): Promise<CostTelemetryRecord[]> {
+    const userId = typeof scope === 'string' ? scope : scope?.userId;
+    const allowAllAdmin = typeof scope === 'object' ? scope?.allowAllAdmin : false;
+
+    if (!userId && !allowAllAdmin) {
+      if (process.env.NODE_ENV === 'production') {
+        throw new ClipperError('AUTH_REQUIRED', 'Tenant userId or explicit allowAllAdmin scope is required to retrieve cost telemetry.', 401);
+      }
+    }
+
     let query = supabase
       .from('cost_telemetry')
       .select('*')
@@ -519,30 +539,77 @@ export class SupabaseStorageAdapter implements IStorageAdapter {
     }));
   }
 
-  async acquireTranscriptionLock(lockKey: string, projectId: string, mediaAssetId: string | null, userId: string, ttlSeconds: number = 300): Promise<boolean> {
+  async acquireTranscriptionLock(
+    lockKey: string,
+    projectId: string,
+    mediaAssetId: string | null,
+    userId: string,
+    ttlSeconds: number = 300
+  ): Promise<LockAcquisitionResult> {
     const now = new Date();
     const expiresAt = new Date(now.getTime() + ttlSeconds * 1000).toISOString();
+    const leaseToken = crypto.randomUUID();
 
     // 1. Clean up expired lock if exists
     await supabase.from('transcription_locks').delete().eq('lock_key', lockKey).lte('expires_at', now.toISOString());
 
-    // 2. Attempt insert
-    const { error } = await supabase.from('transcription_locks').insert({
+    // 2. Attempt insert with lease_token
+    const { data, error } = await supabase.from('transcription_locks').insert({
       lock_key: lockKey,
+      lease_token: leaseToken,
       project_id: projectId,
       media_asset_id: mediaAssetId,
       user_id: userId,
+      provider: 'deepgram',
+      model: 'nova-2',
+      timing_precision: 'exact_word',
       status: 'in_progress',
       created_at: now.toISOString(),
       updated_at: now.toISOString(),
       expires_at: expiresAt,
-    });
+    }).select('lease_token').maybeSingle();
 
-    return !error;
+    if (error) {
+      return { acquired: false };
+    }
+    return { acquired: true, leaseToken: data?.lease_token || leaseToken };
   }
 
-  async releaseTranscriptionLock(lockKey: string): Promise<void> {
-    await supabase.from('transcription_locks').delete().eq('lock_key', lockKey);
+  async releaseTranscriptionLock(lockKey: string, leaseToken: string): Promise<boolean> {
+    if (!leaseToken) return false;
+    const { data, error } = await supabase
+      .from('transcription_locks')
+      .delete()
+      .eq('lock_key', lockKey)
+      .eq('lease_token', leaseToken)
+      .select('lock_key');
+
+    if (error || !data || data.length === 0) {
+      return false;
+    }
+    return true;
+  }
+
+  async renewTranscriptionLock(lockKey: string, leaseToken: string, ttlSeconds: number = 300): Promise<boolean> {
+    if (!leaseToken) return false;
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + ttlSeconds * 1000).toISOString();
+
+    const { data, error } = await supabase
+      .from('transcription_locks')
+      .update({
+        expires_at: expiresAt,
+        updated_at: now.toISOString(),
+      })
+      .eq('lock_key', lockKey)
+      .eq('lease_token', leaseToken)
+      .gt('expires_at', now.toISOString())
+      .select('lock_key');
+
+    if (error || !data || data.length === 0) {
+      return false;
+    }
+    return true;
   }
 
   async saveTranscript(transcript: Transcript, projectId: string, userId: string): Promise<Transcript> {
@@ -614,7 +681,24 @@ export class SupabaseStorageAdapter implements IStorageAdapter {
       }
     }
 
-    const segmentRows = (transcript.segments || []).map((seg, idx) => ({
+    let segmentsToPersist = transcript.segments || [];
+    if (segmentsToPersist.length === 0 && words.length > 0) {
+      const defaultSegId = ensureValidUuid();
+      const segStart = words[0]?.start ?? 0;
+      const segEnd = words[words.length - 1]?.end ?? computedDuration;
+      segmentsToPersist = [{
+        id: defaultSegId,
+        transcriptId: validTranscriptId,
+        segmentIndex: 0,
+        start: segStart,
+        end: segEnd,
+        text: transcript.text,
+      }];
+    }
+
+    const defaultSegmentId = segmentsToPersist[0] ? ensureValidUuid(segmentsToPersist[0].id) : ensureValidUuid();
+
+    const segmentRows = segmentsToPersist.map((seg, idx) => ({
       id: ensureValidUuid(seg.id),
       transcript_id: validTranscriptId,
       segment_index: seg.segmentIndex ?? idx,
@@ -629,7 +713,7 @@ export class SupabaseStorageAdapter implements IStorageAdapter {
     const wordRows = words.map((w, idx) => ({
       id: ensureValidUuid((w as any).id),
       transcript_id: validTranscriptId,
-      segment_id: (w as any).segmentId || null,
+      segment_id: (w as any).segmentId ? ensureValidUuid((w as any).segmentId) : defaultSegmentId,
       word_index: idx,
       word: w.word,
       start_time: w.start,
@@ -1052,12 +1136,21 @@ export class LocalStorageAdapter implements IStorageAdapter {
   }
 
   async recordCostTelemetry(telemetry: CostTelemetryRecord): Promise<void> {
-    const list = await this.getCostTelemetry();
+    const list = await this.getCostTelemetry({ allowAllAdmin: true });
     const updated = [{ ...telemetry, id: telemetry.id || ensureValidUuid(), userId: telemetry.userId }, ...list];
     this.writeJson(this.telemetryFile, updated);
   }
 
-  async getCostTelemetry(userId?: string): Promise<CostTelemetryRecord[]> {
+  async getCostTelemetry(scope?: string | CostTelemetryScope): Promise<CostTelemetryRecord[]> {
+    const userId = typeof scope === 'string' ? scope : scope?.userId;
+    const allowAllAdmin = typeof scope === 'object' ? scope?.allowAllAdmin : false;
+
+    if (!userId && !allowAllAdmin) {
+      if (process.env.NODE_ENV === 'production') {
+        throw new ClipperError('AUTH_REQUIRED', 'Tenant userId or explicit allowAllAdmin scope is required to retrieve cost telemetry.', 401);
+      }
+    }
+
     const all = this.readJson<CostTelemetryRecord[]>(this.telemetryFile, []);
     if (userId) {
       return all.filter((t) => t.userId === userId);
@@ -1065,30 +1158,67 @@ export class LocalStorageAdapter implements IStorageAdapter {
     return all;
   }
 
-  async acquireTranscriptionLock(lockKey: string, projectId: string, mediaAssetId: string | null, userId: string, ttlSeconds: number = 300): Promise<boolean> {
+  async acquireTranscriptionLock(
+    lockKey: string,
+    projectId: string,
+    mediaAssetId: string | null,
+    userId: string,
+    ttlSeconds: number = 300
+  ): Promise<LockAcquisitionResult> {
     const locks = this.readJson<any[]>(this.locksFile, []);
     const now = Date.now();
     const activeLocks = locks.filter((l) => new Date(l.expiresAt).getTime() > now);
     const existing = activeLocks.find((l) => l.lockKey === lockKey);
     if (existing) {
-      return false;
+      this.writeJson(this.locksFile, activeLocks);
+      return { acquired: false };
     }
+    const leaseToken = crypto.randomUUID();
     const newLock = {
       lockKey,
+      leaseToken,
       projectId,
       mediaAssetId,
       userId,
+      provider: 'deepgram',
+      model: 'nova-2',
+      timingPrecision: 'exact_word',
+      status: 'in_progress',
       createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
       expiresAt: new Date(now + ttlSeconds * 1000).toISOString(),
     };
     this.writeJson(this.locksFile, [...activeLocks, newLock]);
+    return { acquired: true, leaseToken };
+  }
+
+  async releaseTranscriptionLock(lockKey: string, leaseToken: string): Promise<boolean> {
+    if (!leaseToken) return false;
+    const locks = this.readJson<any[]>(this.locksFile, []);
+    const targetIdx = locks.findIndex((l) => l.lockKey === lockKey && l.leaseToken === leaseToken);
+    if (targetIdx === -1) {
+      return false;
+    }
+    locks.splice(targetIdx, 1);
+    this.writeJson(this.locksFile, locks);
     return true;
   }
 
-  async releaseTranscriptionLock(lockKey: string): Promise<void> {
+  async renewTranscriptionLock(lockKey: string, leaseToken: string, ttlSeconds: number = 300): Promise<boolean> {
+    if (!leaseToken) return false;
     const locks = this.readJson<any[]>(this.locksFile, []);
-    const updated = locks.filter((l) => l.lockKey !== lockKey);
-    this.writeJson(this.locksFile, updated);
+    const now = Date.now();
+    const target = locks.find((l) => l.lockKey === lockKey && l.leaseToken === leaseToken);
+    if (!target) {
+      return false;
+    }
+    if (new Date(target.expiresAt).getTime() <= now) {
+      return false; // Stale / expired
+    }
+    target.expiresAt = new Date(now + ttlSeconds * 1000).toISOString();
+    target.updatedAt = new Date().toISOString();
+    this.writeJson(this.locksFile, locks);
+    return true;
   }
 
   async saveTranscript(transcript: Transcript, projectId: string, userId: string): Promise<Transcript> {
@@ -1184,28 +1314,42 @@ export class LocalStorageAdapter implements IStorageAdapter {
       createdAt: existing ? (existing.createdAt || existing.created_at || new Date().toISOString()) : (transcript.createdAt || new Date().toISOString()),
     };
 
-    let newSegments: any[] = [];
-    if (transcript.segments && transcript.segments.length > 0) {
-      newSegments = transcript.segments.map((seg, idx) => ({
-        id: ensureValidUuid(seg.id),
+    let segmentsToPersist = transcript.segments || [];
+    if (segmentsToPersist.length === 0 && words.length > 0) {
+      const defaultSegId = ensureValidUuid();
+      const segStart = words[0]?.start ?? 0;
+      const segEnd = words[words.length - 1]?.end ?? duration;
+      segmentsToPersist = [{
+        id: defaultSegId,
         transcriptId: canonicalId,
-        segmentIndex: seg.segmentIndex ?? idx,
-        start: seg.start,
-        end: seg.end,
-        text: seg.text,
-        confidence: seg.confidence,
-        speaker: seg.speaker,
-        metadata: seg.metadata || {},
-        createdAt: new Date().toISOString(),
-      }));
+        segmentIndex: 0,
+        start: segStart,
+        end: segEnd,
+        text: transcript.text,
+      }];
     }
+
+    const defaultSegmentId = segmentsToPersist[0] ? ensureValidUuid(segmentsToPersist[0].id) : ensureValidUuid();
+
+    let newSegments: any[] = segmentsToPersist.map((seg, idx) => ({
+      id: ensureValidUuid(seg.id),
+      transcriptId: canonicalId,
+      segmentIndex: seg.segmentIndex ?? idx,
+      start: seg.start,
+      end: seg.end,
+      text: seg.text,
+      confidence: seg.confidence,
+      speaker: seg.speaker,
+      metadata: seg.metadata || {},
+      createdAt: new Date().toISOString(),
+    }));
 
     let newWords: any[] = [];
     if (words.length > 0) {
       newWords = words.map((w, idx) => ({
         id: ensureValidUuid((w as any).id),
         transcriptId: canonicalId,
-        segmentId: (w as any).segmentId || null,
+        segmentId: (w as any).segmentId ? ensureValidUuid((w as any).segmentId) : defaultSegmentId,
         wordIndex: idx,
         word: w.word,
         start: w.start,

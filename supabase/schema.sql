@@ -30,6 +30,10 @@ CREATE TABLE IF NOT EXISTS public.projects (
   workspace_id UUID REFERENCES public.workspaces(id) ON DELETE SET NULL,
   source_external_id TEXT, -- Stores YouTube Video ID (e.g. dQw4w9WgXcQ), TikTok ID, or external file ID
   title TEXT NOT NULL,
+  description TEXT,
+  version INTEGER NOT NULL DEFAULT 1,
+  active_media_id UUID,
+  active_version_id UUID,
   channel_name TEXT,
   thumbnail_url TEXT,
   workflow_type TEXT NOT NULL DEFAULT 'youtube_to_shorts' CHECK (workflow_type IN ('youtube_to_shorts', 'one_finger_reel', 'ai_documentary')),
@@ -70,6 +74,12 @@ CREATE TABLE IF NOT EXISTS public.media_assets (
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   CONSTRAINT uq_media_assets_id_project UNIQUE (id, project_id)
 );
+
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_projects_active_media') THEN
+    ALTER TABLE public.projects ADD CONSTRAINT fk_projects_active_media FOREIGN KEY (active_media_id) REFERENCES public.media_assets(id) ON DELETE SET NULL;
+  END IF;
+END $$;
 
 -- 5. Transcripts (Word-level timestamps & full text)
 CREATE TABLE IF NOT EXISTS public.transcripts (
@@ -114,7 +124,7 @@ CREATE TABLE IF NOT EXISTS public.transcript_segments (
 CREATE TABLE IF NOT EXISTS public.transcript_words (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   transcript_id UUID NOT NULL REFERENCES public.transcripts(id) ON DELETE CASCADE,
-  segment_id UUID REFERENCES public.transcript_segments(id) ON DELETE CASCADE,
+  segment_id UUID NOT NULL REFERENCES public.transcript_segments(id) ON DELETE CASCADE,
   word_index INTEGER NOT NULL,
   word TEXT NOT NULL,
   start_time NUMERIC(12, 3) NOT NULL CHECK (start_time >= 0),
@@ -238,6 +248,7 @@ CREATE INDEX IF NOT EXISTS idx_cost_telemetry_user_id ON public.cost_telemetry(u
 -- 12. Database-Backed Concurrency Protection Table
 CREATE TABLE IF NOT EXISTS public.transcription_locks (
   lock_key TEXT PRIMARY KEY,
+  lease_token UUID NOT NULL DEFAULT gen_random_uuid(),
   project_id UUID NOT NULL REFERENCES public.projects(id) ON DELETE CASCADE,
   media_asset_id UUID,
   user_id UUID NOT NULL,
@@ -252,6 +263,7 @@ CREATE TABLE IF NOT EXISTS public.transcription_locks (
 
 CREATE INDEX IF NOT EXISTS idx_transcription_locks_expires ON public.transcription_locks(expires_at);
 CREATE INDEX IF NOT EXISTS idx_transcription_locks_project ON public.transcription_locks(project_id);
+CREATE INDEX IF NOT EXISTS idx_transcription_locks_lease_token ON public.transcription_locks(lease_token);
 
 -- -------------------------------------------------------------
 -- ROW LEVEL SECURITY (RLS) POLICIES
@@ -809,6 +821,10 @@ BEGIN
   IF p_word_rows IS NOT NULL AND jsonb_array_length(p_word_rows) > 0 THEN
     FOR v_word IN SELECT * FROM jsonb_array_elements(p_word_rows)
     LOOP
+      IF (v_word->>'segment_id') IS NULL THEN
+        RAISE EXCEPTION 'Constraint violation: word % at index % has NULL segment_id', v_word->>'word', v_word->>'word_index' USING ERRCODE = '23502';
+      END IF;
+
       INSERT INTO public.transcript_words (
         id,
         transcript_id,

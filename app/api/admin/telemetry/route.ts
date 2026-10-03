@@ -16,7 +16,7 @@ export async function GET(req: NextRequest) {
     const storage = getStorage();
     const projects = await storage.listProjects();
     const renderJobs = await storage.listRenderJobs();
-    const telemetry = await storage.getCostTelemetry();
+    const telemetry = await storage.getCostTelemetry({ allowAllAdmin: true });
 
     // Compute actuals vs estimates
     const totalActualCost = telemetry

@@ -25,7 +25,8 @@ export type ClipperErrorCode =
   | 'STORAGE_ERROR'
   | 'MEDIA_REQUIRED'
   | 'RAW_AUDIO_BYPASS_FORBIDDEN'
-  | 'SSRF_VIOLATION';
+  | 'SSRF_VIOLATION'
+  | 'CONCURRENT_TRANSCRIPTION';
 
 export interface StructuredErrorResponse {
   code: ClipperErrorCode;
