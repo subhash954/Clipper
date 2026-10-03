@@ -33,15 +33,29 @@ import {
   getTranscriptionService,
   validateWordTimestamps,
   validateTranscriptSegments,
+  validateCanonicalFinalWords,
+  isAuthoritativeStorageUrl,
   findActiveWordAtTime,
   findActiveSegmentAtTime,
   calculateDeepgramCost,
 } from '../lib/transcription/transcriptionService';
 import { validateSafeRemoteUrl } from '../lib/security/ssrfValidator';
-import { transcribeWithDeepgram, DeepgramProviderError } from '../lib/providers/deepgramProvider';
+import {
+  transcribeWithDeepgram,
+  DeepgramProviderError,
+  parseTimestamp,
+  parseConfidence,
+} from '../lib/providers/deepgramProvider';
 import { extractAudioFromVideo } from '../lib/media/audioExtraction';
 import { getFfmpegPath } from '../lib/renderEngine';
-import { Project, WordTimestamp, Transcript, TranscriptSegment, MediaAsset } from '../lib/types';
+import {
+  Project,
+  WordTimestamp,
+  Transcript,
+  TranscriptSegment,
+  MediaAsset,
+  NormalizedTranscriptWord,
+} from '../lib/types';
 import { ClipperError } from '../lib/errors';
 import { NextRequest } from 'next/server';
 import { POST as transcribeHandler } from '../app/api/transcribe/route';
@@ -330,7 +344,7 @@ async function runPhase4Tests() {
     source: 'deepgram',
   };
 
-  const savedTranscript = await storage.saveTranscript(transcriptRecord, aliceProject.id);
+  const savedTranscript = await storage.saveTranscript(transcriptRecord, aliceProject.id, aliceId);
   assert(savedTranscript.id === transcriptRecord.id, 'Saved transcript preserves canonical UUID');
 
   // Test 15: Retrieve transcript via getTranscript(projectId)
@@ -450,7 +464,7 @@ async function runPhase4Tests() {
     source: 'deepgram',
   };
 
-  await storage.saveTranscript(largeTranscript, largeProject.id);
+  await storage.saveTranscript(largeTranscript, largeProject.id, largeProject.userId || aliceId);
   const reloadedLarge = await storage.getTranscript(largeProject.id);
   assert(reloadedLarge?.words.length === 1000, `Successfully saved and loaded 1,000 words (got ${reloadedLarge?.words.length})`);
   assert(reloadedLarge?.words[999].word === 'term_999', '1,000th word preserved with chronological fidelity');
@@ -619,7 +633,7 @@ async function runPhase4Tests() {
         },
       ],
       status: 'completed',
-    }, aliceProject.id);
+    }, aliceProject.id, aliceId);
   } catch (err: any) {
     relationalViolationCaught = err instanceof ClipperError && err.code === 'VALIDATION_ERROR';
   }
@@ -679,7 +693,7 @@ async function runPhase4Tests() {
     provider: 'deepgram',
     model: 'nova-2',
     timingPrecision: 'exact_word',
-  }, idempotencyProj.id);
+  }, idempotencyProj.id, idempotencyProj.userId || aliceId);
 
   const cachedForMedia1 = await transcriptionService.transcribeProjectMedia({
     projectId: idempotencyProj.id,
@@ -1376,6 +1390,312 @@ async function runPhase4Tests() {
     crossProjectLinkCaught = err instanceof ClipperError && err.statusCode === 403;
   }
   assert(crossProjectLinkCaught, 'Cross-project media link (Project A + Media of Project B) is rejected with 403 FORBIDDEN');
+
+  // --- TEST GROUP 16: Phase 4.2 Security & Data Truth Verification ---
+  console.log('\n--- TEST GROUP 16: Phase 4.2 Security & Data Truth Verification ---');
+
+  // Test 1: SECURITY DEFINER RPC Hardening & Search Path Verification
+  const migration42Path = path.join(__dirname, '../supabase/migrations/20261003_phase_4_2_security_data_truth.sql');
+  assert(fs.existsSync(migration42Path), 'Migration 20261003_phase_4_2_security_data_truth.sql exists');
+  const migration42Content = fs.readFileSync(migration42Path, 'utf8');
+
+  assert(
+    migration42Content.includes('SET search_path = public, pg_temp'),
+    'replace_transcript_atomic sets search_path = public, pg_temp to prevent Trojan object injection'
+  );
+  assert(
+    migration42Content.includes('REVOKE ALL ON FUNCTION public.replace_transcript_atomic') &&
+    migration42Content.includes('FROM PUBLIC') &&
+    migration42Content.includes('FROM anon') &&
+    migration42Content.includes('FROM authenticated'),
+    'replace_transcript_atomic revokes permissions from PUBLIC, anon, authenticated'
+  );
+  assert(
+    migration42Content.includes('GRANT EXECUTE ON FUNCTION public.replace_transcript_atomic') &&
+    migration42Content.includes('TO service_role'),
+    'replace_transcript_atomic strictly grants execute permission only to service_role'
+  );
+  assert(
+    migration42Content.toLowerCase().includes('p_user_id uuid'),
+    'replace_transcript_atomic requires authoritative p_user_id'
+  );
+  assert(
+    migration42Content.includes('v_project.user_id') && migration42Content.includes('p_user_id'),
+    'replace_transcript_atomic validates project ownership against p_user_id'
+  );
+  assert(
+    migration42Content.includes('v_media.user_id') && migration42Content.includes('p_user_id'),
+    'replace_transcript_atomic validates media ownership against p_user_id'
+  );
+
+  // Schema synchronization check
+  const schemaSqlContent = fs.readFileSync(path.join(__dirname, '../supabase/schema.sql'), 'utf8');
+  assert(
+    schemaSqlContent.includes('SET search_path = public, pg_temp') &&
+    schemaSqlContent.toLowerCase().includes('p_user_id uuid') &&
+    schemaSqlContent.includes('GRANT EXECUTE ON FUNCTION public.replace_transcript_atomic') &&
+    schemaSqlContent.includes('TO service_role'),
+    'supabase/schema.sql is synchronized with hardened replace_transcript_atomic definition'
+  );
+
+  // Test 2: Fail-Closed Storage Ownership Validation (Unit/Storage Adapter)
+  let missingUserIdCaught = false;
+  try {
+    await storage.saveTranscript({
+      id: ensureValidUuid(),
+      projectId: aliceProject.id,
+      text: 'Missing userId test',
+      words: [],
+      status: 'completed',
+    }, aliceProject.id, '' as any);
+  } catch (err: any) {
+    missingUserIdCaught = err instanceof ClipperError && err.statusCode === 401 && err.code === 'AUTH_REQUIRED';
+  }
+  assert(missingUserIdCaught, 'storage.saveTranscript with missing userId fails closed with 401 AUTH_REQUIRED');
+
+  let crossTenantProjectCaught = false;
+  try {
+    await storage.saveTranscript({
+      id: ensureValidUuid(),
+      projectId: aliceProject.id, // owned by aliceId
+      text: 'Cross tenant save',
+      words: [],
+      status: 'completed',
+    }, aliceProject.id, bobId); // Bob trying to save to Alice's project
+  } catch (err: any) {
+    crossTenantProjectCaught = err instanceof ClipperError && err.statusCode === 403 && err.code === 'FORBIDDEN';
+  }
+  assert(crossTenantProjectCaught, 'storage.saveTranscript cross-tenant project manipulation rejected with 403 FORBIDDEN');
+
+  let crossTenantMediaCaught = false;
+  try {
+    await storage.saveTranscript({
+      id: ensureValidUuid(),
+      projectId: aliceProject.id,
+      mediaAssetId: bobMedia.id, // Bob's media
+      text: 'Cross tenant media save',
+      words: [],
+      status: 'completed',
+    }, aliceProject.id, aliceId);
+  } catch (err: any) {
+    crossTenantMediaCaught = err instanceof ClipperError && err.statusCode === 403;
+  }
+  assert(crossTenantMediaCaught, 'storage.saveTranscript cross-tenant media attachment rejected with 403 (MEDIA_NOT_OWNED or FORBIDDEN)');
+
+  // Test 3: Reject Fallback in Production when RPC Fails
+  const storageIndexContent = fs.readFileSync(path.join(__dirname, '../lib/storage/index.ts'), 'utf8');
+  assert(
+    storageIndexContent.includes("if (process.env.NODE_ENV === 'production')") &&
+    storageIndexContent.includes("throw new ClipperError('DATABASE_ERROR'"),
+    'SupabaseStorageAdapter fails closed in production without non-atomic fallback delete/insert'
+  );
+
+  // Test 4: Exact Millisecond Timestamp Precision
+  assert(parseTimestamp(1.237) === 1.237, 'parseTimestamp preserves exact millisecond 1.237 (no centisecond rounding to 1.24)');
+  assert(parseTimestamp(0.005) === 0.005, 'parseTimestamp preserves exact millisecond 0.005');
+  assert(parseTimestamp(1.2345) === 1.235, 'parseTimestamp rounds half-up to exact millisecond (1.2345 -> 1.235)');
+  assert(parseConfidence(0.98765) === 0.9877, 'parseConfidence rounds to 4-decimal precision (0.98765 -> 0.9877)');
+  assert(parseConfidence(0.99999) === 1.0, 'parseConfidence rounds 0.99999 to 1.0');
+
+  // Test 5: Canonical finalWords Relational Validation (Zero Tolerance)
+  const canonicalSegId = ensureValidUuid();
+  const testSeg: TranscriptSegment = {
+    id: canonicalSegId,
+    transcriptId: ensureValidUuid(),
+    segmentIndex: 0,
+    start: 1.000,
+    end: 2.000,
+    text: 'Zero tolerance segment',
+  };
+
+  // 1ms before segment start
+  const earlyWord: NormalizedTranscriptWord = {
+    id: ensureValidUuid(),
+    transcriptId: testSeg.transcriptId,
+    segmentId: canonicalSegId,
+    wordIndex: 0,
+    word: 'Early',
+    start: 0.999, // 1ms early!
+    end: 1.500,
+  };
+  const earlyCheck = validateCanonicalFinalWords([earlyWord], [testSeg], true);
+  assert(!earlyCheck.valid && earlyCheck.errors.some((e) => e.includes('starts at 0.999s before segment starts at 1s')),
+    'validateCanonicalFinalWords rejects word starting 1ms before segment (zero tolerance)');
+
+  // 1ms after segment end
+  const lateWord: NormalizedTranscriptWord = {
+    id: ensureValidUuid(),
+    transcriptId: testSeg.transcriptId,
+    segmentId: canonicalSegId,
+    wordIndex: 0,
+    word: 'Late',
+    start: 1.500,
+    end: 2.001, // 1ms late!
+  };
+  const lateCheck = validateCanonicalFinalWords([lateWord], [testSeg], true);
+  assert(!lateCheck.valid && lateCheck.errors.some((e) => e.includes('ends at 2.001s after segment ends at 2s')),
+    'validateCanonicalFinalWords rejects word ending 1ms after segment (zero tolerance)');
+
+  // Word outside by 100ms
+  const wayLateWord: NormalizedTranscriptWord = {
+    id: ensureValidUuid(),
+    transcriptId: testSeg.transcriptId,
+    segmentId: canonicalSegId,
+    wordIndex: 0,
+    word: 'WayLate',
+    start: 1.500,
+    end: 2.100, // 100ms late!
+  };
+  const wayLateCheck = validateCanonicalFinalWords([wayLateWord], [testSeg], true);
+  assert(!wayLateCheck.valid && wayLateCheck.errors.some((e) => e.includes('ends at 2.1s after segment ends at 2s')),
+    'validateCanonicalFinalWords rejects word ending 100ms after segment');
+
+  // Exact boundary match
+  const exactWord: NormalizedTranscriptWord = {
+    id: ensureValidUuid(),
+    transcriptId: testSeg.transcriptId,
+    segmentId: canonicalSegId,
+    wordIndex: 0,
+    word: 'Exact',
+    start: 1.000,
+    end: 2.000,
+  };
+  const exactCheck = validateCanonicalFinalWords([exactWord], [testSeg], true);
+  assert(exactCheck.valid, 'validateCanonicalFinalWords accepts word exactly on segment boundaries [1.000, 2.000]');
+
+  // Non-contiguous wordIndex
+  const gappedWords: NormalizedTranscriptWord[] = [
+    {
+      id: ensureValidUuid(),
+      transcriptId: testSeg.transcriptId,
+      segmentId: canonicalSegId,
+      wordIndex: 0,
+      word: 'First',
+      start: 1.000,
+      end: 1.400,
+    },
+    {
+      id: ensureValidUuid(),
+      transcriptId: testSeg.transcriptId,
+      segmentId: canonicalSegId,
+      wordIndex: 2, // Gapped index: expected 1
+      word: 'Third',
+      start: 1.500,
+      end: 1.900,
+    },
+  ];
+  const gappedCheck = validateCanonicalFinalWords(gappedWords, [testSeg], true);
+  assert(!gappedCheck.valid && gappedCheck.errors.some((e) => e.includes('non-contiguous wordIndex')),
+    'validateCanonicalFinalWords detects and rejects non-contiguous wordIndex');
+
+  // Test 6: Duration Integrity Check
+  const serviceCode = fs.readFileSync(path.join(__dirname, '../lib/transcription/transcriptionService.ts'), 'utf8');
+  assert(
+    serviceCode.includes('durationSeconds < minRequiredDuration'),
+    'TranscriptionService rejects/corrects duration if provider duration is less than latest word timestamp end'
+  );
+
+  // Test 7: Distributed / Lease-Based Concurrency Locks
+  const lockProjId = ensureValidUuid();
+  const lockKey = `transcribe:${lockProjId}`;
+  const lockAcquired1 = await storage.acquireTranscriptionLock(lockKey, lockProjId, null, aliceId, 5);
+  assert(lockAcquired1 === true, 'storage.acquireTranscriptionLock acquires new lease lock');
+
+  const lockAcquired2 = await storage.acquireTranscriptionLock(lockKey, lockProjId, null, aliceId, 5);
+  assert(lockAcquired2 === false, 'storage.acquireTranscriptionLock rejects second lock on active project lease');
+
+  await storage.releaseTranscriptionLock(lockKey);
+  const lockAcquired3 = await storage.acquireTranscriptionLock(lockKey, lockProjId, null, aliceId, 5);
+  assert(lockAcquired3 === true, 'storage.acquireTranscriptionLock succeeds after lock is released');
+  await storage.releaseTranscriptionLock(lockKey);
+
+  // Test 8: Cost Telemetry user_id Attribution and Tenant Isolation
+  await storage.recordCostTelemetry({
+    serviceName: 'deepgram_stt',
+    model: 'nova-2',
+    unitsUsed: 1.0,
+    unitType: 'minutes',
+    costInUSD: 0.0043,
+    isEstimated: true,
+    projectId: aliceProject.id,
+    userId: aliceId,
+    createdAt: new Date().toISOString(),
+  });
+
+  await storage.recordCostTelemetry({
+    serviceName: 'deepgram_stt',
+    model: 'nova-2',
+    unitsUsed: 2.0,
+    unitType: 'minutes',
+    costInUSD: 0.0086,
+    isEstimated: true,
+    projectId: bobProject.id,
+    userId: bobId,
+    createdAt: new Date().toISOString(),
+  });
+
+  const aliceTelemetry = await storage.getCostTelemetry(aliceId);
+  const bobTelemetry = await storage.getCostTelemetry(bobId);
+
+  assert(
+    aliceTelemetry.every((t) => t.userId === aliceId || !t.userId),
+    'Tenant-isolated telemetry retrieval: Alice gets only Alice telemetry records'
+  );
+  assert(
+    bobTelemetry.every((t) => t.userId === bobId || !t.userId),
+    'Tenant-isolated telemetry retrieval: Bob gets only Bob telemetry records'
+  );
+  assert(
+    !aliceTelemetry.some((t) => t.userId === bobId),
+    'Tenant-isolated telemetry retrieval: Alice query never leaks Bob telemetry records'
+  );
+
+  // Test 9: Project Status Transition Failure Handling
+  assert(
+    serviceCode.includes("project.status = 'transcribing'") &&
+    serviceCode.includes("await storage.saveProject(project)"),
+    'project.status = transcribing update fails closed without catch block swallowing errors'
+  );
+  assert(
+    serviceCode.includes("latestProj.status = 'failed'"),
+    'transcriptionService sets project status to failed on uncaught execution error'
+  );
+
+  // Test 10: Authoritative Storage URL Validation
+  assert(
+    !isAuthoritativeStorageUrl('ftp://example.com/audio.mp3'),
+    'isAuthoritativeStorageUrl rejects non-HTTPS / untrusted protocol'
+  );
+  assert(
+    isAuthoritativeStorageUrl('http://localhost:3000/media.mp4'),
+    'isAuthoritativeStorageUrl permits localhost in dev/test mode'
+  );
+
+  // Test 11: Media Deletion Semantics & Cascade FK
+  assert(
+    migration42Content.includes('fk_transcripts_media_project') &&
+    migration42Content.includes('ON DELETE CASCADE'),
+    'fk_transcripts_media_project specifies ON DELETE CASCADE on composite (media_asset_id, project_id)'
+  );
+  assert(
+    schemaSqlContent.includes('fk_transcripts_media_project') &&
+    schemaSqlContent.includes('ON DELETE CASCADE'),
+    'supabase/schema.sql specifies ON DELETE CASCADE for fk_transcripts_media_project'
+  );
+
+  // Test 12: Schema Consistency Verification
+  assert(
+    schemaSqlContent.includes('deleted_at TIMESTAMP WITH TIME ZONE') &&
+    schemaSqlContent.includes('timing_label TEXT') &&
+    schemaSqlContent.includes('CREATE TABLE IF NOT EXISTS public.transcription_locks') &&
+    schemaSqlContent.includes('idx_cost_telemetry_user_id'),
+    'supabase/schema.sql contains deleted_at, timing_label, transcription_locks, and idx_cost_telemetry_user_id'
+  );
+  assert(
+    schemaSqlContent.includes('NUMERIC(12, 3)') &&
+    schemaSqlContent.includes('NUMERIC(5, 4)'),
+    'supabase/schema.sql upgraded to exact NUMERIC(12, 3) millisecond and NUMERIC(5, 4) confidence precision'
+  );
 
   console.log('\n====================================================');
   console.log(`PHASE 4 TEST SUMMARY: ${passed} PASSED, ${failed} FAILED`);

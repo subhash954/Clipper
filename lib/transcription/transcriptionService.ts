@@ -144,6 +144,140 @@ export function validateTranscriptSegments(segments: TranscriptSegment[]): { val
 }
 
 /**
+ * Strictly validates canonical finalWords immediately before persistence.
+ * Enforces:
+ * - Array and non-empty for completed transcripts
+ * - Valid non-empty word text
+ * - Finite start and end, start >= 0, end >= start
+ * - Confidence in [0, 1]
+ * - Chronological ordering without inversion
+ * - Contiguous wordIndex progression from 0 without gaps or duplicates
+ * - Relational consistency with segments: words must reside strictly within their segment bounds
+ *   WITHOUT ±100ms tolerance (exact relational bounds: w.start >= seg.start && w.end <= seg.end).
+ */
+export function validateCanonicalFinalWords(
+  finalWords: NormalizedTranscriptWord[],
+  segments: TranscriptSegment[] = [],
+  requireNonEmpty: boolean = true
+): { valid: boolean; errors: string[] } {
+  const errors: string[] = [];
+  if (!Array.isArray(finalWords)) {
+    return { valid: false, errors: ['finalWords must be an array'] };
+  }
+
+  if (requireNonEmpty && finalWords.length === 0) {
+    errors.push('finalWords must not be empty for completed transcript');
+    return { valid: false, errors };
+  }
+
+  const segmentMap = new Map<string, TranscriptSegment>();
+  for (const s of segments) {
+    if (s.id) {
+      segmentMap.set(s.id, s);
+    }
+  }
+
+  const seenWordIndices = new Set<number>();
+
+  for (let i = 0; i < finalWords.length; i++) {
+    const w = finalWords[i];
+
+    if (typeof w.word !== 'string' || w.word.trim() === '') {
+      errors.push(`Word at index ${i} has empty or non-string word property`);
+    }
+
+    if (typeof w.start !== 'number' || isNaN(w.start) || !isFinite(w.start) || w.start < 0) {
+      errors.push(`Word "${w.word}" at index ${i} has invalid start time (${w.start})`);
+    }
+
+    if (typeof w.end !== 'number' || isNaN(w.end) || !isFinite(w.end) || w.end < w.start) {
+      errors.push(`Word "${w.word}" at index ${i} has invalid end time (${w.end} < start ${w.start})`);
+    }
+
+    if (w.confidence !== undefined && (typeof w.confidence !== 'number' || isNaN(w.confidence) || !isFinite(w.confidence) || w.confidence < 0 || w.confidence > 1)) {
+      errors.push(`Word "${w.word}" at index ${i} has out-of-range confidence (${w.confidence})`);
+    }
+
+    if (w.speaker !== undefined && (typeof w.speaker !== 'number' || isNaN(w.speaker) || !isFinite(w.speaker) || w.speaker < 0)) {
+      errors.push(`Word "${w.word}" at index ${i} has invalid speaker (${w.speaker})`);
+    }
+
+    // Contiguous wordIndex progression from 0
+    if (w.wordIndex !== i) {
+      errors.push(`Word "${w.word}" at position ${i} has non-contiguous wordIndex (${w.wordIndex}, expected ${i})`);
+    }
+
+    if (seenWordIndices.has(w.wordIndex)) {
+      errors.push(`Duplicate wordIndex ${w.wordIndex} detected for word "${w.word}"`);
+    }
+    seenWordIndices.add(w.wordIndex);
+
+    // Chronological progression
+    if (i > 0) {
+      const prev = finalWords[i - 1];
+      if (typeof prev.start === 'number' && typeof w.start === 'number') {
+        if (w.start < prev.start) {
+          errors.push(
+            `Non-chronological word sequence: word "${w.word}" at index ${i} starts at ${w.start}s, before previous word "${prev.word}" at ${prev.start}s`
+          );
+        }
+      }
+    }
+
+    // Segment relational bounds validation (ZERO TOLERANCE: w.start >= seg.start && w.end <= seg.end)
+    if (w.segmentId) {
+      const seg = segmentMap.get(w.segmentId);
+      if (!seg) {
+        errors.push(`Word "${w.word}" references non-existent segmentId "${w.segmentId}"`);
+      } else {
+        if (w.start < seg.start) {
+          errors.push(`Word "${w.word}" starts at ${w.start}s before segment starts at ${seg.start}s`);
+        }
+        if (w.end > seg.end) {
+          errors.push(`Word "${w.word}" ends at ${w.end}s after segment ends at ${seg.end}s`);
+        }
+      }
+    }
+  }
+
+  return { valid: errors.length === 0, errors };
+}
+
+/**
+ * Validates that an audio/media URL belongs to an authoritative storage provider.
+ * In production mode, rejects arbitrary unverified domains and non-HTTPS protocols.
+ */
+export function isAuthoritativeStorageUrl(urlStr: string): boolean {
+  try {
+    const parsed = new URL(urlStr);
+    if (process.env.NODE_ENV === 'production' && parsed.protocol !== 'https:') {
+      return false;
+    }
+    const trustedHosts = new Set<string>();
+    if (process.env.BUNNY_CDN_HOSTNAME) {
+      trustedHosts.add(process.env.BUNNY_CDN_HOSTNAME.toLowerCase());
+    }
+    if (process.env.BUNNY_STORAGE_HOSTNAME) {
+      trustedHosts.add(process.env.BUNNY_STORAGE_HOSTNAME.toLowerCase());
+    }
+    if (process.env.NEXT_PUBLIC_SUPABASE_URL) {
+      try {
+        const supaHost = new URL(process.env.NEXT_PUBLIC_SUPABASE_URL).hostname.toLowerCase();
+        trustedHosts.add(supaHost);
+      } catch {}
+    }
+    // In development/test mode, allow localhost and 127.0.0.1
+    if (process.env.NODE_ENV !== 'production' && process.env.ALLOW_DEV_LOCAL_STORAGE === 'true') {
+      trustedHosts.add('localhost');
+      trustedHosts.add('127.0.0.1');
+    }
+    return trustedHosts.has(parsed.hostname.toLowerCase());
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Deterministically finds the active word given an absolute playback timecode.
  * Implements exact half-open interval [start, end) for intermediate words and
  * closed interval [start, end] for the final word to eliminate boundary ambiguity.
@@ -390,15 +524,29 @@ export class TranscriptionService {
       }
     }
 
-    // 5. Update Project Status to Transcribing
-    try {
-      project.status = 'transcribing';
-      await storage.saveProject(project);
-    } catch (e) {
-      console.warn('Status update to transcribing warning:', e);
+    // 5. Distributed Database-Backed Concurrency Protection
+    const lockKey = `${projectId}:${targetMediaId || 'none'}:deepgram:nova-2:exact_word`;
+    const lockAcquired = await storage.acquireTranscriptionLock(
+      lockKey,
+      projectId,
+      targetMediaId || null,
+      currentUserId,
+      300
+    );
+
+    if (!lockAcquired) {
+      throw new ClipperError(
+        'INVALID_PROJECT_STATE',
+        'A transcription operation is already in progress for this media asset. Please wait for the current job to complete.',
+        409
+      );
     }
 
-    // 6. Resolve Audio for Transcription (Storage Authority: Bunny in Production)
+    // 6. Transition Project Status to Transcribing (Strict Fail-Closed)
+    project.status = 'transcribing';
+    await storage.saveProject(project);
+
+    // 7. Resolve Audio for Transcription (Storage Authority: Bunny in Production)
     let resolvedAudioBuffer = params.audioBuffer;
     let resolvedAudioUrl = params.audioUrl;
     let tempFilesToCleanup: string[] = [];
@@ -439,6 +587,13 @@ export class TranscriptionService {
             tempFilesToCleanup.push(tempSourcePath);
           } catch (storageErr: any) {
             if (mediaAsset.fileUrl && mediaAsset.fileUrl.startsWith('http')) {
+              if (process.env.NODE_ENV === 'production' && !isAuthoritativeStorageUrl(mediaAsset.fileUrl)) {
+                throw new ClipperError(
+                  'STORAGE_ERROR',
+                  `Media asset URL is not from an authoritative storage provider: ${mediaAsset.fileUrl}`,
+                  400
+                );
+              }
               resolvedAudioUrl = mediaAsset.fileUrl;
             } else {
               throw new ClipperError(
@@ -464,12 +619,19 @@ export class TranscriptionService {
             );
           }
 
-        resolvedAudioBuffer = fs.readFileSync(tempAudioPath);
+          resolvedAudioBuffer = fs.readFileSync(tempAudioPath);
         }
       }
 
-      // 7. SSRF Validation at Trust Boundary (Fail closed on private/loopback/cloud metadata)
+      // 8. Authoritative Storage & SSRF Validation at Trust Boundary
       if (resolvedAudioUrl) {
+        if (process.env.NODE_ENV === 'production' && !isAuthoritativeStorageUrl(resolvedAudioUrl)) {
+          throw new ClipperError(
+            'STORAGE_ERROR',
+            `Audio URL is not from an authoritative storage provider: ${resolvedAudioUrl}`,
+            400
+          );
+        }
         const ssrfCheck = await validateSafeRemoteUrl(resolvedAudioUrl);
         if (!ssrfCheck.isValid) {
           throw new ClipperError(
@@ -607,38 +769,40 @@ export class TranscriptionService {
             502
           );
         }
-
-        // Validate words belong inside their segments within 100ms tolerance
-        for (const seg of segments) {
-          for (const w of seg.words || []) {
-            if (w.start < seg.start - 0.1 || w.end > seg.end + 0.1) {
-              throw new ClipperError(
-                'TRANSCRIPTION_FAILED',
-                `Word "${w.word}" [${w.start}s, ${w.end}s] exceeds segment bounds [${seg.start}s, ${seg.end}s] beyond 100ms tolerance`,
-                502
-              );
-            }
-          }
-        }
       }
 
-      // Validate deterministic sequential wordIndex progression without duplicates
-      const seenWordIndices = new Set<number>();
-      for (const w of finalWords) {
-        if (seenWordIndices.has(w.wordIndex)) {
-          throw new ClipperError(
-            'TRANSCRIPTION_FAILED',
-            `Duplicate wordIndex ${w.wordIndex} detected in transcript words`,
-            502
-          );
-        }
-        seenWordIndices.add(w.wordIndex);
+      // 10. Strictly Validate Canonical finalWords (Zero tolerance relational validation)
+      const finalWordsVal = validateCanonicalFinalWords(finalWords, segments, true);
+      if (!finalWordsVal.valid) {
+        throw new ClipperError(
+          'TRANSCRIPTION_FAILED',
+          `Canonical transcript validation failed: ${finalWordsVal.errors.join('; ')}`,
+          502
+        );
       }
 
-      const lastWord = finalWords.length > 0 ? finalWords[finalWords.length - 1] : undefined;
-      const durationSeconds = rawTranscript.duration || (lastWord ? lastWord.end : 0);
+      // 11. Duration Integrity Validation
+      const maxWordEnd = finalWords.reduce((max, w) => Math.max(max, w.end), 0);
+      const maxSegmentEnd = segments.reduce((max, s) => Math.max(max, s.end), 0);
+      const minRequiredDuration = Math.max(maxWordEnd, maxSegmentEnd);
 
-      // 10. Assemble Canonical Transcript Record
+      let durationSeconds = rawTranscript.duration;
+      if (
+        typeof durationSeconds !== 'number' ||
+        isNaN(durationSeconds) ||
+        !isFinite(durationSeconds) ||
+        durationSeconds <= 0
+      ) {
+        durationSeconds = minRequiredDuration;
+      } else if (durationSeconds < minRequiredDuration) {
+        throw new ClipperError(
+          'TRANSCRIPTION_FAILED',
+          `Provider duration (${durationSeconds}s) is less than latest timestamp (${minRequiredDuration}s)`,
+          502
+        );
+      }
+
+      // 12. Assemble Canonical Transcript Record
       const finalTranscript: Transcript = {
         id: transcriptId,
         projectId,
@@ -659,7 +823,7 @@ export class TranscriptionService {
         updatedAt: new Date().toISOString(),
       };
 
-      // 11. Persist Transcript Relational Child Tables and Project State
+      // 13. Persist Transcript Relational Child Tables and Project State
       await storage.saveTranscript(finalTranscript, projectId, currentUserId);
 
       project.transcript = finalTranscript;
@@ -669,7 +833,7 @@ export class TranscriptionService {
       }
       await storage.saveProject(project);
 
-      // 12. Record Cost Telemetry (Estimated Processing Cost)
+      // 14. Record Cost Telemetry (Estimated Processing Cost)
       const costUSD = calculateDeepgramCost(durationSeconds);
       await storage.recordCostTelemetry({
         projectId,
@@ -691,18 +855,24 @@ export class TranscriptionService {
         durationSeconds,
       };
     } catch (err: any) {
-      // Mark project failed if error occurs
+      // Revert project status to 'failed' on error
       try {
-        project.status = 'failed';
-        project.errorMessage = err.message || 'Transcription failed';
-        await storage.saveProject(project);
-      } catch {}
+        const latestProj = await storage.getProject(projectId);
+        if (latestProj && latestProj.status === 'transcribing') {
+          latestProj.status = 'failed';
+          latestProj.errorMessage = err.message || 'Transcription failed';
+          await storage.saveProject(latestProj);
+        }
+      } catch (statusErr) {
+        console.error('Failed to update project status to failed:', statusErr);
+      }
 
       if (err instanceof ClipperError || err instanceof DeepgramProviderError) {
         throw err;
       }
       throw new ClipperError('TRANSCRIPTION_FAILED', `Transcription failed: ${err.message}`, 500);
     } finally {
+      await storage.releaseTranscriptionLock(lockKey).catch(() => {});
       // Cleanup temporary extracted files
       for (const tempFile of tempFilesToCleanup) {
         try {

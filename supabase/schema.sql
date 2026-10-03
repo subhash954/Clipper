@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS public.projects (
   status TEXT DEFAULT 'created' CHECK (status IN ('created', 'ingesting', 'media_ready', 'transcribing', 'transcript_ready', 'analyzing', 'clips_ready', 'editing', 'render_queued', 'rendering', 'completed', 'export_ready', 'failed')),
   error_message TEXT,
   cost_usd NUMERIC DEFAULT 0,
+  deleted_at TIMESTAMP WITH TIME ZONE,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
@@ -80,16 +81,17 @@ CREATE TABLE IF NOT EXISTS public.transcripts (
   utterances JSONB DEFAULT '[]'::jsonb,
   language TEXT DEFAULT 'en',
   timing_precision TEXT DEFAULT 'exact_word' CHECK (timing_precision IN ('exact_word', 'approximate_cue')),
+  timing_label TEXT,
   source TEXT DEFAULT 'deepgram' CHECK (source IN ('deepgram', 'youtube_captions', 'user_upload')),
   provider TEXT DEFAULT 'deepgram',
   model TEXT DEFAULT 'nova-2',
-  duration NUMERIC(10, 2),
+  duration NUMERIC(12, 3),
   status TEXT DEFAULT 'completed' CHECK (status IN ('pending', 'processing', 'completed', 'failed')),
   error_message TEXT,
   metadata JSONB DEFAULT '{}'::jsonb,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-  CONSTRAINT fk_transcripts_media_project FOREIGN KEY (media_asset_id, project_id) REFERENCES public.media_assets(id, project_id) ON DELETE SET NULL
+  CONSTRAINT fk_transcripts_media_project FOREIGN KEY (media_asset_id, project_id) REFERENCES public.media_assets(id, project_id) ON DELETE CASCADE
 );
 
 -- 5a. Normalized Transcript Segments
@@ -97,10 +99,10 @@ CREATE TABLE IF NOT EXISTS public.transcript_segments (
   id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   transcript_id UUID NOT NULL REFERENCES public.transcripts(id) ON DELETE CASCADE,
   segment_index INTEGER NOT NULL,
-  start_time NUMERIC(10, 2) NOT NULL CHECK (start_time >= 0),
-  end_time NUMERIC(10, 2) NOT NULL CHECK (end_time >= start_time),
+  start_time NUMERIC(12, 3) NOT NULL CHECK (start_time >= 0),
+  end_time NUMERIC(12, 3) NOT NULL CHECK (end_time >= start_time),
   text TEXT NOT NULL,
-  confidence NUMERIC(4, 2),
+  confidence NUMERIC(5, 4),
   speaker INTEGER,
   metadata JSONB DEFAULT '{}'::jsonb,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
@@ -115,9 +117,9 @@ CREATE TABLE IF NOT EXISTS public.transcript_words (
   segment_id UUID REFERENCES public.transcript_segments(id) ON DELETE CASCADE,
   word_index INTEGER NOT NULL,
   word TEXT NOT NULL,
-  start_time NUMERIC(10, 2) NOT NULL CHECK (start_time >= 0),
-  end_time NUMERIC(10, 2) NOT NULL CHECK (end_time >= start_time),
-  confidence NUMERIC(4, 2),
+  start_time NUMERIC(12, 3) NOT NULL CHECK (start_time >= 0),
+  end_time NUMERIC(12, 3) NOT NULL CHECK (end_time >= start_time),
+  confidence NUMERIC(5, 4),
   speaker INTEGER,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   CONSTRAINT uq_transcript_words_transcript_idx UNIQUE (transcript_id, word_index),
@@ -230,6 +232,26 @@ CREATE TABLE IF NOT EXISTS public.cost_telemetry (
   is_estimated BOOLEAN DEFAULT FALSE,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
+
+CREATE INDEX IF NOT EXISTS idx_cost_telemetry_user_id ON public.cost_telemetry(user_id);
+
+-- 12. Database-Backed Concurrency Protection Table
+CREATE TABLE IF NOT EXISTS public.transcription_locks (
+  lock_key TEXT PRIMARY KEY,
+  project_id UUID NOT NULL REFERENCES public.projects(id) ON DELETE CASCADE,
+  media_asset_id UUID,
+  user_id UUID NOT NULL,
+  provider TEXT NOT NULL DEFAULT 'deepgram',
+  model TEXT NOT NULL DEFAULT 'nova-2',
+  timing_precision TEXT NOT NULL DEFAULT 'exact_word',
+  status TEXT NOT NULL DEFAULT 'in_progress',
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  expires_at TIMESTAMP WITH TIME ZONE NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_transcription_locks_expires ON public.transcription_locks(expires_at);
+CREATE INDEX IF NOT EXISTS idx_transcription_locks_project ON public.transcription_locks(project_id);
 
 -- -------------------------------------------------------------
 -- ROW LEVEL SECURITY (RLS) POLICIES
@@ -613,8 +635,9 @@ CREATE POLICY "Users can view cost telemetry of their projects"
     public.is_admin()
   );
 
--- Atomic PostgreSQL RPC function for transcript replacement
+-- Atomic PostgreSQL RPC function for transcript replacement (Hardened SECURITY DEFINER)
 CREATE OR REPLACE FUNCTION public.replace_transcript_atomic(
+  p_user_id UUID,
   p_transcript_id UUID,
   p_project_id UUID,
   p_media_asset_id UUID,
@@ -636,6 +659,7 @@ CREATE OR REPLACE FUNCTION public.replace_transcript_atomic(
 RETURNS JSONB
 LANGUAGE plpgsql
 SECURITY DEFINER
+SET search_path = public, pg_temp
 AS $$
 DECLARE
   v_project RECORD;
@@ -643,27 +667,42 @@ DECLARE
   v_seg JSONB;
   v_word JSONB;
 BEGIN
-  -- 1. Validate project existence & soft delete status
+  -- A. Authenticated User Identity Check (Fail Closed)
+  IF p_user_id IS NULL THEN
+    RAISE EXCEPTION 'Authentication required: p_user_id cannot be null' USING ERRCODE = '42501';
+  END IF;
+
+  -- B. Validate Project Existence & Ownership
   SELECT * INTO v_project FROM public.projects WHERE id = p_project_id;
   IF NOT FOUND OR v_project.deleted_at IS NOT NULL THEN
     RAISE EXCEPTION 'Project % does not exist or has been deleted', p_project_id USING ERRCODE = 'P0002';
   END IF;
 
-  -- 2. Validate media_asset if specified
+  IF v_project.user_id IS NULL OR v_project.user_id <> p_user_id THEN
+    RAISE EXCEPTION 'Access denied: user % does not own project %', p_user_id, p_project_id USING ERRCODE = '42501';
+  END IF;
+
+  -- C. Validate Media Asset Ownership & Project Association
   IF p_media_asset_id IS NOT NULL THEN
     SELECT * INTO v_media FROM public.media_assets WHERE id = p_media_asset_id;
     IF NOT FOUND THEN
       RAISE EXCEPTION 'Media asset % does not exist', p_media_asset_id USING ERRCODE = 'P0002';
     END IF;
+
+    IF v_media.user_id IS NULL OR v_media.user_id <> p_user_id THEN
+      RAISE EXCEPTION 'Access denied: user % does not own media asset %', p_user_id, p_media_asset_id USING ERRCODE = '42501';
+    END IF;
+
     IF v_media.project_id IS NOT NULL AND v_media.project_id <> p_project_id THEN
       RAISE EXCEPTION 'Media asset % belongs to project %, not project %', p_media_asset_id, v_media.project_id, p_project_id USING ERRCODE = '42501';
     END IF;
+
     IF v_media.status = 'failed' OR v_media.status = 'deleted' OR v_media.deleted_at IS NOT NULL THEN
       RAISE EXCEPTION 'Media asset % is in an invalid lifecycle state (%)', p_media_asset_id, v_media.status USING ERRCODE = '22000';
     END IF;
   END IF;
 
-  -- 3. Upsert transcript record
+  -- D. Upsert Master Transcript Record
   INSERT INTO public.transcripts (
     id,
     project_id,
@@ -715,11 +754,11 @@ BEGIN
     metadata = EXCLUDED.metadata,
     updated_at = NOW();
 
-  -- 4. Delete obsolete child rows for this transcript
+  -- E. Delete Existing Child Words & Segments
   DELETE FROM public.transcript_words WHERE transcript_id = p_transcript_id;
   DELETE FROM public.transcript_segments WHERE transcript_id = p_transcript_id;
 
-  -- 5. Insert segments if provided
+  -- F. Insert Normalized Segments
   IF p_segments IS NOT NULL AND jsonb_array_length(p_segments) > 0 THEN
     FOR v_seg IN SELECT * FROM jsonb_array_elements(p_segments)
     LOOP
@@ -737,17 +776,17 @@ BEGIN
         (v_seg->>'id')::UUID,
         p_transcript_id,
         (v_seg->>'segment_index')::INTEGER,
-        (v_seg->>'start_time')::NUMERIC,
-        (v_seg->>'end_time')::NUMERIC,
+        (v_seg->>'start_time')::NUMERIC(12, 3),
+        (v_seg->>'end_time')::NUMERIC(12, 3),
         v_seg->>'text',
-        (v_seg->>'confidence')::NUMERIC,
+        (v_seg->>'confidence')::NUMERIC(5, 4),
         (v_seg->>'speaker')::INTEGER,
         COALESCE(v_seg->'metadata', '{}'::jsonb)
       );
     END LOOP;
   END IF;
 
-  -- 6. Insert words if provided
+  -- G. Insert Normalized Words
   IF p_word_rows IS NOT NULL AND jsonb_array_length(p_word_rows) > 0 THEN
     FOR v_word IN SELECT * FROM jsonb_array_elements(p_word_rows)
     LOOP
@@ -767,9 +806,9 @@ BEGIN
         (v_word->>'segment_id')::UUID,
         (v_word->>'word_index')::INTEGER,
         v_word->>'word',
-        (v_word->>'start_time')::NUMERIC,
-        (v_word->>'end_time')::NUMERIC,
-        (v_word->>'confidence')::NUMERIC,
+        (v_word->>'start_time')::NUMERIC(12, 3),
+        (v_word->>'end_time')::NUMERIC(12, 3),
+        (v_word->>'confidence')::NUMERIC(5, 4),
         (v_word->>'speaker')::INTEGER
       );
     END LOOP;
@@ -778,3 +817,20 @@ BEGIN
   RETURN jsonb_build_object('success', true, 'transcript_id', p_transcript_id);
 END;
 $$;
+
+-- Lock down Execution Permissions (Principle of Least Privilege)
+REVOKE ALL ON FUNCTION public.replace_transcript_atomic(
+  UUID, UUID, UUID, UUID, TEXT, JSONB, JSONB, TEXT, TEXT, TEXT, TEXT, TEXT, NUMERIC, TEXT, TEXT, JSONB, JSONB, JSONB
+) FROM PUBLIC;
+
+REVOKE ALL ON FUNCTION public.replace_transcript_atomic(
+  UUID, UUID, UUID, UUID, TEXT, JSONB, JSONB, TEXT, TEXT, TEXT, TEXT, TEXT, NUMERIC, TEXT, TEXT, JSONB, JSONB, JSONB
+) FROM anon;
+
+REVOKE ALL ON FUNCTION public.replace_transcript_atomic(
+  UUID, UUID, UUID, UUID, TEXT, JSONB, JSONB, TEXT, TEXT, TEXT, TEXT, TEXT, NUMERIC, TEXT, TEXT, JSONB, JSONB, JSONB
+) FROM authenticated;
+
+GRANT EXECUTE ON FUNCTION public.replace_transcript_atomic(
+  UUID, UUID, UUID, UUID, TEXT, JSONB, JSONB, TEXT, TEXT, TEXT, TEXT, TEXT, NUMERIC, TEXT, TEXT, JSONB, JSONB, JSONB
+) TO service_role;

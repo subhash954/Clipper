@@ -17,9 +17,11 @@ export interface IStorageAdapter {
   updateRenderJob(id: string, updates: Partial<RenderJob>): Promise<RenderJob | null>;
   listRenderJobs(userId?: string): Promise<RenderJob[]>;
   recordCostTelemetry(telemetry: CostTelemetryRecord): Promise<void>;
-  getCostTelemetry(): Promise<CostTelemetryRecord[]>;
-  saveTranscript(transcript: Transcript, projectId: string, userId?: string): Promise<Transcript>;
+  getCostTelemetry(userId?: string): Promise<CostTelemetryRecord[]>;
+  saveTranscript(transcript: Transcript, projectId: string, userId: string): Promise<Transcript>;
   getTranscript(projectId: string): Promise<Transcript | null>;
+  acquireTranscriptionLock(lockKey: string, projectId: string, mediaAssetId: string | null, userId: string, ttlSeconds?: number): Promise<boolean>;
+  releaseTranscriptionLock(lockKey: string): Promise<void>;
   listTranscriptWords?(transcriptId: string): Promise<NormalizedTranscriptWord[]>;
   listTranscriptSegments?(transcriptId: string): Promise<TranscriptSegment[]>;
 }
@@ -479,6 +481,7 @@ export class SupabaseStorageAdapter implements IStorageAdapter {
 
   async recordCostTelemetry(telemetry: CostTelemetryRecord): Promise<void> {
     await supabase.from('cost_telemetry').insert({
+      user_id: telemetry.userId || null,
       project_id: telemetry.projectId || null,
       service_name: telemetry.serviceName,
       model: telemetry.model || null,
@@ -489,14 +492,24 @@ export class SupabaseStorageAdapter implements IStorageAdapter {
     });
   }
 
-  async getCostTelemetry(): Promise<CostTelemetryRecord[]> {
-    const { data } = await supabase
+  async getCostTelemetry(userId?: string): Promise<CostTelemetryRecord[]> {
+    let query = supabase
       .from('cost_telemetry')
       .select('*')
       .order('created_at', { ascending: false });
 
+    if (userId) {
+      query = query.eq('user_id', userId);
+    }
+
+    const { data, error } = await query;
+    if (error) {
+      throw new ClipperError('DATABASE_ERROR', `Failed to load cost telemetry: ${error.message}`, 500);
+    }
+
     return (data || []).map((d: any) => ({
       id: d.id,
+      userId: d.user_id,
       projectId: d.project_id,
       serviceName: d.service_name,
       model: d.model,
@@ -508,23 +521,57 @@ export class SupabaseStorageAdapter implements IStorageAdapter {
     }));
   }
 
-  async saveTranscript(transcript: Transcript, projectId: string, userId?: string): Promise<Transcript> {
+  async acquireTranscriptionLock(lockKey: string, projectId: string, mediaAssetId: string | null, userId: string, ttlSeconds: number = 300): Promise<boolean> {
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + ttlSeconds * 1000).toISOString();
+
+    // 1. Clean up expired lock if exists
+    await supabase.from('transcription_locks').delete().eq('lock_key', lockKey).lte('expires_at', now.toISOString());
+
+    // 2. Attempt insert
+    const { error } = await supabase.from('transcription_locks').insert({
+      lock_key: lockKey,
+      project_id: projectId,
+      media_asset_id: mediaAssetId,
+      user_id: userId,
+      status: 'in_progress',
+      created_at: now.toISOString(),
+      updated_at: now.toISOString(),
+      expires_at: expiresAt,
+    });
+
+    return !error;
+  }
+
+  async releaseTranscriptionLock(lockKey: string): Promise<void> {
+    await supabase.from('transcription_locks').delete().eq('lock_key', lockKey);
+  }
+
+  async saveTranscript(transcript: Transcript, projectId: string, userId: string): Promise<Transcript> {
     const validTranscriptId = ensureValidUuid(transcript.id);
     const words = transcript.words || [];
     const utterances = transcript.utterances || [];
     const lastWord = words.length > 0 ? words[words.length - 1] : undefined;
     const computedDuration = transcript.duration ?? (lastWord ? lastWord.end : 0);
 
-    // 1. Verify Project Existence and Ownership
+    // 1. Authenticated User Identity Check (Strict Fail-Closed)
+    if (!userId) {
+      throw new ClipperError('AUTH_REQUIRED', 'Authenticated user identity is required to save transcript.', 401);
+    }
+
+    // 2. Verify Project Existence and Ownership
     const project = await this.getProject(projectId);
     if (!project || project.deletedAt) {
       throw new ClipperError('NOT_FOUND', `Project ${projectId} not found.`, 404);
     }
-    if (userId && project.userId && project.userId !== userId) {
-      throw new ClipperError('FORBIDDEN', `Access denied to project ${projectId}.`, 403);
+    if (!project.userId) {
+      throw new ClipperError('FORBIDDEN', `Project ${projectId} has no owner recorded.`, 403);
+    }
+    if (project.userId !== userId) {
+      throw new ClipperError('FORBIDDEN', `Access denied: you do not own project ${projectId}.`, 403);
     }
 
-    // 2. Relational consistency check between words and segments
+    // 3. Relational consistency check between words and segments
     if (words.length > 0 && transcript.segments && transcript.segments.length > 0) {
       const validSegmentIds = new Set(transcript.segments.map((s) => s.id));
       for (const w of words) {
@@ -539,23 +586,25 @@ export class SupabaseStorageAdapter implements IStorageAdapter {
       }
     }
 
-    // 3. Verify Media Asset Ownership and Project Relationship
+    // 4. Verify Media Asset Ownership and Project Relationship
     if (transcript.mediaAssetId) {
       const media = await getMediaAssetById(transcript.mediaAssetId);
       if (!media) {
         throw new ClipperError('NOT_FOUND', `Media asset ${transcript.mediaAssetId} not found.`, 404);
       }
-      if (media.projectId && media.projectId !== projectId) {
+      if (!media.userId) {
+        throw new ClipperError('MEDIA_NOT_OWNED', `Media asset ${transcript.mediaAssetId} has no owner recorded.`, 403);
+      }
+      if (media.userId !== userId) {
+        throw new ClipperError('MEDIA_NOT_OWNED', `Media asset ${transcript.mediaAssetId} belongs to another user.`, 403);
+      }
+      if (!media.projectId) {
+        throw new ClipperError('FORBIDDEN', `Media asset ${transcript.mediaAssetId} has no project association.`, 403);
+      }
+      if (media.projectId !== projectId) {
         throw new ClipperError(
           'FORBIDDEN',
           `Cannot associate transcript with media asset ${transcript.mediaAssetId} belonging to another project.`,
-          403
-        );
-      }
-      if (userId && media.userId && media.userId !== userId) {
-        throw new ClipperError(
-          'MEDIA_NOT_OWNED',
-          `Media asset ${transcript.mediaAssetId} belongs to another user.`,
           403
         );
       }
@@ -591,10 +640,11 @@ export class SupabaseStorageAdapter implements IStorageAdapter {
       speaker: w.speaker !== undefined ? w.speaker : null,
     }));
 
-    // 4. Execute Atomic Transcript Replacement via PostgreSQL RPC
+    // 5. Execute Atomic Transcript Replacement via PostgreSQL RPC
     let rpcSucceeded = false;
     try {
       const { data: rpcData, error: rpcError } = await supabase.rpc('replace_transcript_atomic', {
+        p_user_id: userId,
         p_transcript_id: validTranscriptId,
         p_project_id: projectId,
         p_media_asset_id: transcript.mediaAssetId || null,
@@ -627,7 +677,16 @@ export class SupabaseStorageAdapter implements IStorageAdapter {
     }
 
     if (!rpcSucceeded) {
-      // Non-destructive fallback path (handles mock/test databases without the RPC)
+      // In production mode, atomic RPC failure must fail closed immediately
+      if (process.env.NODE_ENV === 'production') {
+        throw new ClipperError(
+          'DATABASE_ERROR',
+          'Atomic transcript replacement RPC is required in production and was unavailable or failed.',
+          500
+        );
+      }
+
+      // Non-destructive fallback path (handles mock/test databases without the RPC in non-production)
       const { error: delWordErr } = await supabase.from('transcript_words').delete().eq('transcript_id', validTranscriptId);
       if (delWordErr) {
         throw new ClipperError('DATABASE_ERROR', `Failed to clear existing transcript words: ${delWordErr.message}`, 500);
@@ -805,6 +864,7 @@ export class LocalStorageAdapter implements IStorageAdapter {
   private transcriptsFile = path.join(process.cwd(), 'data', 'transcripts.json');
   private segmentsFile = path.join(process.cwd(), 'data', 'transcript_segments.json');
   private wordsFile = path.join(process.cwd(), 'data', 'transcript_words.json');
+  private locksFile = path.join(process.cwd(), 'data', 'transcription_locks.json');
 
   constructor() {
     if (!fs.existsSync(this.dataDir)) {
@@ -989,31 +1049,69 @@ export class LocalStorageAdapter implements IStorageAdapter {
 
   async recordCostTelemetry(telemetry: CostTelemetryRecord): Promise<void> {
     const list = await this.getCostTelemetry();
-    const updated = [{ ...telemetry, id: `telemetry-${Date.now()}` }, ...list];
+    const updated = [{ ...telemetry, id: telemetry.id || ensureValidUuid(), userId: telemetry.userId }, ...list];
     this.writeJson(this.telemetryFile, updated);
   }
 
-  async getCostTelemetry(): Promise<CostTelemetryRecord[]> {
-    return this.readJson<CostTelemetryRecord[]>(this.telemetryFile, []);
+  async getCostTelemetry(userId?: string): Promise<CostTelemetryRecord[]> {
+    const all = this.readJson<CostTelemetryRecord[]>(this.telemetryFile, []);
+    if (userId) {
+      return all.filter((t) => t.userId === userId);
+    }
+    return all;
   }
 
-  async saveTranscript(transcript: Transcript, projectId: string, userId?: string): Promise<Transcript> {
+  async acquireTranscriptionLock(lockKey: string, projectId: string, mediaAssetId: string | null, userId: string, ttlSeconds: number = 300): Promise<boolean> {
+    const locks = this.readJson<any[]>(this.locksFile, []);
+    const now = Date.now();
+    const activeLocks = locks.filter((l) => new Date(l.expiresAt).getTime() > now);
+    const existing = activeLocks.find((l) => l.lockKey === lockKey);
+    if (existing) {
+      return false;
+    }
+    const newLock = {
+      lockKey,
+      projectId,
+      mediaAssetId,
+      userId,
+      createdAt: new Date().toISOString(),
+      expiresAt: new Date(now + ttlSeconds * 1000).toISOString(),
+    };
+    this.writeJson(this.locksFile, [...activeLocks, newLock]);
+    return true;
+  }
+
+  async releaseTranscriptionLock(lockKey: string): Promise<void> {
+    const locks = this.readJson<any[]>(this.locksFile, []);
+    const updated = locks.filter((l) => l.lockKey !== lockKey);
+    this.writeJson(this.locksFile, updated);
+  }
+
+  async saveTranscript(transcript: Transcript, projectId: string, userId: string): Promise<Transcript> {
     const validId = ensureValidUuid(transcript.id);
     const words = transcript.words || [];
     const utterances = transcript.utterances || [];
     const lastWord = words.length > 0 ? words[words.length - 1] : undefined;
     const duration = transcript.duration ?? (lastWord ? lastWord.end : 0);
 
-    // 1. Verify Project Existence and Ownership
+    // 1. Authenticated User Identity Check (Strict Fail-Closed)
+    if (!userId) {
+      throw new ClipperError('AUTH_REQUIRED', 'Authenticated user identity is required to save transcript.', 401);
+    }
+
+    // 2. Verify Project Existence and Ownership
     const project = await this.getProject(projectId);
     if (!project || project.deletedAt) {
       throw new ClipperError('NOT_FOUND', `Project ${projectId} not found.`, 404);
     }
-    if (userId && project.userId && project.userId !== userId) {
-      throw new ClipperError('FORBIDDEN', `Access denied to project ${projectId}.`, 403);
+    if (!project.userId) {
+      throw new ClipperError('FORBIDDEN', `Project ${projectId} has no owner recorded.`, 403);
+    }
+    if (project.userId !== userId) {
+      throw new ClipperError('FORBIDDEN', `Access denied: you do not own project ${projectId}.`, 403);
     }
 
-    // 2. Relational consistency check between words and segments
+    // 3. Relational consistency check between words and segments
     if (words.length > 0 && transcript.segments && transcript.segments.length > 0) {
       const validSegmentIds = new Set(transcript.segments.map((s) => s.id));
       for (const w of words) {
@@ -1028,23 +1126,29 @@ export class LocalStorageAdapter implements IStorageAdapter {
       }
     }
 
-    // 3. Verify Media Asset Ownership and Project Relationship
+    // 4. Verify Media Asset Ownership and Project Relationship
     if (transcript.mediaAssetId) {
       const media = await getMediaAssetById(transcript.mediaAssetId);
       if (!media) {
         throw new ClipperError('NOT_FOUND', `Media asset ${transcript.mediaAssetId} not found.`, 404);
       }
-      if (media.projectId && media.projectId !== projectId) {
-        throw new ClipperError(
-          'FORBIDDEN',
-          `Cannot associate transcript with media asset ${transcript.mediaAssetId} belonging to another project.`,
-          403
-        );
+      if (!media.userId) {
+        throw new ClipperError('MEDIA_NOT_OWNED', `Media asset ${transcript.mediaAssetId} has no owner recorded.`, 403);
       }
-      if (userId && media.userId && media.userId !== userId) {
+      if (media.userId !== userId) {
         throw new ClipperError(
           'MEDIA_NOT_OWNED',
           `Media asset ${transcript.mediaAssetId} belongs to another user.`,
+          403
+        );
+      }
+      if (!media.projectId) {
+        throw new ClipperError('FORBIDDEN', `Media asset ${transcript.mediaAssetId} has no project association.`, 403);
+      }
+      if (media.projectId !== projectId) {
+        throw new ClipperError(
+          'FORBIDDEN',
+          `Cannot associate transcript with media asset ${transcript.mediaAssetId} belonging to another project.`,
           403
         );
       }

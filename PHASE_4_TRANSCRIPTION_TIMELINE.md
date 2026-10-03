@@ -208,5 +208,19 @@ A forensic security and truthfulness hardening pass was conducted and verified:
 10. **Deterministic Word & Segment Boundary Matching:**
     `findActiveWordAtTime` and `findActiveSegmentAtTime` implement exact half-open intervals `[start, end)` for intermediate items and closed `[start, end]` for the final item, eliminating boundary ambiguity.
 
-11. **Phase 5 Status:**
+11. **Phase 4.2 Security & Data Truth Architecture Hardening:**
+    - **SECURITY DEFINER Search Path & Least Privilege:** Hardened `replace_transcript_atomic` with `SET search_path = public, pg_temp`, revoked all execution permissions from `PUBLIC`, `anon`, and `authenticated`, restricted execution exclusively to `service_role`, and injected required `p_user_id` to validate project ownership (`v_project.user_id = p_user_id`) and media ownership/association (`v_media.user_id = p_user_id AND v_media.project_id = p_project_id`) at the PostgreSQL transaction boundary.
+    - **Database-Level Millisecond Precision:** Upgraded `duration`, `start_time`, and `end_time` columns to `NUMERIC(12, 3)` across `transcripts`, `transcript_segments`, and `transcript_words`, and `confidence` to `NUMERIC(5, 4)`.
+    - **Provider Millisecond Timestamp Fidelity:** Eliminated centisecond truncation in `lib/providers/deepgramProvider.ts`, adopting exact millisecond parsing (`Math.round(val * 1000) / 1000`) and 4-decimal confidence parsing (`Math.round(val * 10000) / 10000`).
+    - **Fail-Closed Storage Ownership Enforcement:** `saveTranscript` strictly requires `userId`, verifying project ownership, media asset ownership, and project association before persisting, rejecting unauthorized mutations with `401 AUTH_REQUIRED` or `403 FORBIDDEN`.
+    - **Production Non-Atomic Fallback Rejection:** In production (`NODE_ENV=production`), `SupabaseStorageAdapter` fails closed with `500 DATABASE_ERROR` if the atomic RPC is unavailable, refusing to execute non-atomic fallback delete/insert sequences.
+    - **Canonical finalWords Zero-Tolerance Relational Validation:** Validates `finalWords` with zero tolerance (`w.start >= seg.start && w.end <= seg.end`), non-empty text, non-negative bounds, and contiguous zero-based `wordIndex` progression.
+    - **Duration Integrity Verification:** Rejects or derives duration when provider duration is less than the latest word or segment timestamp.
+    - **Distributed Lease-Based Concurrency Locks:** Introduced `transcription_locks` table with expiration indices, coordinating distributed leases and preventing concurrent execution conflicts.
+    - **Cost Telemetry Attribution & Tenant Isolation:** Added `user_id UUID REFERENCES public.profiles(id)` to `cost_telemetry` with `idx_cost_telemetry_user_id`, enforcing tenant-isolated cost telemetry retrieval.
+    - **Strict Project Status Lifecycle:** `project.status = 'transcribing'` fails closed if persistence fails; uncaught transcription errors reliably transition project status to `'failed'`.
+    - **Media Deletion Cascade:** `fk_transcripts_media_project` upgraded to `ON DELETE CASCADE`.
+    - **Schema Parity:** Synchronized `supabase/schema.sql` and `supabase/migrations/20261003_phase_4_2_security_data_truth.sql`.
+
+12. **Phase 5 Status:**
     Phase 5 was **NOT** started.

@@ -7,6 +7,17 @@ export class DeepgramProviderError extends Error {
   }
 }
 
+export const parseTimestamp = (val: any): number => {
+  const num = Number(val || 0);
+  return Math.round(num * 1000) / 1000;
+};
+
+export const parseConfidence = (val: any): number | undefined => {
+  if (val === undefined || val === null) return undefined;
+  const num = Number(val);
+  return Math.round(num * 10000) / 10000;
+};
+
 /**
  * Production Deepgram Nova-2 speech-to-text provider.
  * Extracts authentic word-level timestamps with confidence and speaker separation.
@@ -97,23 +108,23 @@ export async function transcribeWithDeepgram(params: {
 
       const words: WordTimestamp[] = rawWords.map((w) => ({
         word: (w.punctuated_word || w.word || '').trim(),
-        start: parseFloat(Number(w.start || 0).toFixed(2)),
-        end: parseFloat(Number(w.end || 0).toFixed(2)),
-        confidence: w.confidence !== undefined ? parseFloat(Number(w.confidence).toFixed(2)) : undefined,
+        start: parseTimestamp(w.start),
+        end: parseTimestamp(w.end),
+        confidence: parseConfidence(w.confidence),
         speaker: w.speaker !== undefined ? Number(w.speaker) : undefined,
       }));
 
       const rawUtterances: any[] = data.results?.utterances || [];
       const utterances: TranscriptUtterance[] = rawUtterances.map((u) => ({
         text: u.transcript || '',
-        start: parseFloat(Number(u.start || 0).toFixed(2)),
-        end: parseFloat(Number(u.end || 0).toFixed(2)),
+        start: parseTimestamp(u.start),
+        end: parseTimestamp(u.end),
         speaker: u.speaker !== undefined ? Number(u.speaker) : undefined,
         words: (u.words || []).map((w: any) => ({
           word: (w.punctuated_word || w.word || '').trim(),
-          start: parseFloat(Number(w.start || 0).toFixed(2)),
-          end: parseFloat(Number(w.end || 0).toFixed(2)),
-          confidence: w.confidence !== undefined ? parseFloat(Number(w.confidence).toFixed(2)) : undefined,
+          start: parseTimestamp(w.start),
+          end: parseTimestamp(w.end),
+          confidence: parseConfidence(w.confidence),
           speaker: w.speaker !== undefined ? Number(w.speaker) : undefined,
         })),
       }));
