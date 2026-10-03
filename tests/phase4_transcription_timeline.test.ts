@@ -41,7 +41,7 @@ import { validateSafeRemoteUrl } from '../lib/security/ssrfValidator';
 import { transcribeWithDeepgram, DeepgramProviderError } from '../lib/providers/deepgramProvider';
 import { extractAudioFromVideo } from '../lib/media/audioExtraction';
 import { getFfmpegPath } from '../lib/renderEngine';
-import { Project, WordTimestamp, Transcript, TranscriptSegment } from '../lib/types';
+import { Project, WordTimestamp, Transcript, TranscriptSegment, MediaAsset } from '../lib/types';
 import { ClipperError } from '../lib/errors';
 import { NextRequest } from 'next/server';
 import { POST as transcribeHandler } from '../app/api/transcribe/route';
@@ -802,6 +802,580 @@ async function runPhase4Tests() {
     global.fetch = originalFetch;
     process.env.DEEPGRAM_API_KEY = originalDgKey;
   }
+
+  // --- TEST GROUP 15: Phase 4.1 Final Integrity Hardening ---
+  console.log('\n--- TEST GROUP 15: Phase 4.1 Final Integrity Hardening ---');
+
+  const test15Project: Project = {
+    id: ensureValidUuid(),
+    userId: aliceId,
+    title: 'Test Group 15 Dedicated Project',
+    sourceType: 'upload',
+    workflowType: 'youtube_to_shorts',
+    durationSeconds: 60,
+    status: 'ready',
+    clips: [],
+    createdAt: new Date().toISOString(),
+  };
+  await storage.saveProject(test15Project);
+
+  // 15.1: Null ownership fail-closed
+  const unownedProject: Project = {
+    id: ensureValidUuid(),
+    title: 'Unowned Project',
+    sourceType: 'upload',
+    workflowType: 'youtube_to_shorts',
+    durationSeconds: 30,
+    status: 'ready',
+    clips: [],
+    createdAt: new Date().toISOString(),
+  };
+  await storage.saveProject(unownedProject);
+
+  let unownedProjectCaught = false;
+  try {
+    await transcriptionService.transcribeProjectMedia({
+      projectId: unownedProject.id,
+      userId: aliceId,
+    });
+  } catch (err: any) {
+    unownedProjectCaught = err instanceof ClipperError && err.statusCode === 403;
+  }
+  assert(unownedProjectCaught, 'Project with missing owner (null userId) fails closed with 403 FORBIDDEN');
+
+  // Media with null userId
+  const unownedMedia = {
+    id: ensureValidUuid(),
+    projectId: test15Project.id,
+    userId: '', // empty / missing owner
+    fileName: 'unowned.mp4',
+    fileUrl: '/uploads/unowned.mp4',
+    storagePath: '/uploads/unowned.mp4',
+    mimeType: 'video/mp4',
+    sizeBytes: 1024,
+    status: 'ready' as const,
+    createdAt: new Date().toISOString(),
+  };
+  saveLocalMediaAsset(unownedMedia);
+
+  let nullMediaOwnerCaught = false;
+  try {
+    await transcriptionService.transcribeProjectMedia({
+      projectId: test15Project.id,
+      mediaId: unownedMedia.id,
+      userId: aliceId,
+    });
+  } catch (err: any) {
+    nullMediaOwnerCaught = err instanceof ClipperError && err.statusCode === 403;
+  }
+  assert(nullMediaOwnerCaught, 'Media asset with missing owner fails closed with 403 MEDIA_NOT_OWNED');
+
+  // 15.2: Production Raw Audio Bypass Rejection
+  const prodValidMedia = {
+    id: ensureValidUuid(),
+    projectId: test15Project.id,
+    userId: aliceId,
+    fileName: 'prod-valid.mp4',
+    fileUrl: '/uploads/prod-valid.mp4',
+    storagePath: '/uploads/prod-valid.mp4',
+    mimeType: 'video/mp4',
+    sizeBytes: 1024,
+    status: 'ready' as const,
+    createdAt: new Date().toISOString(),
+  };
+  saveLocalMediaAsset(prodValidMedia);
+
+  const envHold = process.env.NODE_ENV;
+  const allowDevHold = process.env.ALLOW_DEV_LOCAL_STORAGE;
+  try {
+    (process.env as any).NODE_ENV = 'production';
+    delete process.env.ALLOW_DEV_LOCAL_STORAGE;
+
+    // Production + projectId + no media = rejected
+    let prodNoMediaCaught = false;
+    try {
+      await transcriptionService.transcribeProjectMedia({
+        projectId: test15Project.id,
+        userId: aliceId,
+      });
+    } catch (err: any) {
+      prodNoMediaCaught = err instanceof ClipperError && err.code === 'MEDIA_REQUIRED' && err.statusCode === 400;
+    }
+    assert(prodNoMediaCaught, 'Production transcription without a target MediaAsset is rejected with 400 MEDIA_REQUIRED');
+
+    // Production + projectId + arbitrary audioUrl = rejected
+    let prodArbitraryUrlCaught = false;
+    try {
+      await transcriptionService.transcribeProjectMedia({
+        projectId: test15Project.id,
+        mediaId: prodValidMedia.id,
+        userId: aliceId,
+        audioUrl: 'https://example.com/arbitrary.mp3',
+      });
+    } catch (err: any) {
+      prodArbitraryUrlCaught = err instanceof ClipperError && err.code === 'RAW_AUDIO_BYPASS_FORBIDDEN' && err.statusCode === 400;
+    }
+    assert(prodArbitraryUrlCaught, 'Production transcription with arbitrary audioUrl bypass is rejected');
+
+    // Production + projectId + arbitrary audioBuffer = rejected
+    let prodArbitraryBufferCaught = false;
+    try {
+      await transcriptionService.transcribeProjectMedia({
+        projectId: test15Project.id,
+        mediaId: prodValidMedia.id,
+        userId: aliceId,
+        audioBuffer: Buffer.from('arbitrary-bytes'),
+      });
+    } catch (err: any) {
+      prodArbitraryBufferCaught = err instanceof ClipperError && err.code === 'RAW_AUDIO_BYPASS_FORBIDDEN' && err.statusCode === 400;
+    }
+    assert(prodArbitraryBufferCaught, 'Production transcription with arbitrary audioBuffer bypass is rejected');
+
+    // Production + /api/transcribe multipart upload = rejected
+    const multipartReq = new NextRequest('http://localhost:3000/api/transcribe', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'multipart/form-data; boundary=----WebKitFormBoundaryXYZ',
+        'Authorization': `Bearer fake-token`,
+      },
+    });
+    const multipartRes = await transcribeHandler(multipartReq);
+    assert(multipartRes.status === 401 || multipartRes.status === 400, 'Direct multipart upload to /api/transcribe is rejected in production');
+  } finally {
+    (process.env as any).NODE_ENV = envHold;
+    if (allowDevHold) process.env.ALLOW_DEV_LOCAL_STORAGE = allowDevHold;
+  }
+
+  // 15.3: SSRF Validation at Trust Boundary (Service Level)
+  const ssrfTargets = [
+    'http://169.254.169.254/latest/meta-data',
+    'http://127.0.0.1:8080/internal',
+    'http://localhost:3000/admin',
+    'http://10.0.0.1/private-audio.mp3',
+    'http://192.168.1.100/audio.mp3',
+    'ftp://example.com/audio.mp3',
+  ];
+
+  for (const targetUrl of ssrfTargets) {
+    let ssrfCaught = false;
+    try {
+      await transcriptionService.transcribeProjectMedia({
+        projectId: test15Project.id,
+        userId: aliceId,
+        audioUrl: targetUrl,
+        forceRerun: true,
+      });
+    } catch (err: any) {
+      ssrfCaught = err instanceof ClipperError && err.code === 'SSRF_VIOLATION' && err.statusCode === 400;
+    }
+    assert(ssrfCaught, `Service-level SSRF validation rejects forbidden URL: ${targetUrl}`);
+  }
+
+  // 15.4: Media Lifecycle State Enforcement
+  const lifecycleStatuses: Array<{ status: string; deletedAt?: string; expectedCode: number }> = [
+    { status: 'uploading', expectedCode: 400 },
+    { status: 'processing', expectedCode: 409 },
+    { status: 'failed', expectedCode: 422 },
+    { status: 'deleted', expectedCode: 410 },
+    { status: 'ready', deletedAt: new Date().toISOString(), expectedCode: 410 },
+  ];
+
+  for (const lc of lifecycleStatuses) {
+    const lcMedia = {
+      id: ensureValidUuid(),
+      projectId: test15Project.id,
+      userId: aliceId,
+      fileName: `test-${lc.status}.mp4`,
+      fileUrl: `/uploads/test-${lc.status}.mp4`,
+      storagePath: `/uploads/test-${lc.status}.mp4`,
+      mimeType: 'video/mp4',
+      sizeBytes: 2048,
+      status: lc.status,
+      deletedAt: lc.deletedAt,
+      createdAt: new Date().toISOString(),
+    };
+    saveLocalMediaAsset(lcMedia);
+
+    let lcCaught = false;
+    try {
+      await transcriptionService.transcribeProjectMedia({
+        projectId: test15Project.id,
+        mediaId: lcMedia.id,
+        userId: aliceId,
+        forceRerun: true,
+      });
+    } catch (err: any) {
+      lcCaught = err instanceof ClipperError && err.statusCode === lc.expectedCode;
+    }
+    assert(lcCaught, `Media lifecycle state "${lc.status}"${lc.deletedAt ? ' (with deletedAt)' : ''} rejected with HTTP ${lc.expectedCode}`);
+  }
+
+  // 15.5: Strict Idempotency Semantics
+  const idempotencyProject: Project = {
+    id: ensureValidUuid(),
+    userId: aliceId,
+    title: 'Idempotency Test Project',
+    sourceType: 'upload',
+    workflowType: 'youtube_to_shorts',
+    durationSeconds: 60,
+    status: 'ready',
+    clips: [],
+    createdAt: new Date().toISOString(),
+  };
+  await storage.saveProject(idempotencyProject);
+
+  const readyMedia = {
+    id: ensureValidUuid(),
+    projectId: idempotencyProject.id,
+    userId: aliceId,
+    fileName: 'ready-video.mp4',
+    fileUrl: '/uploads/ready-video.mp4',
+    storagePath: '/uploads/ready-video.mp4',
+    mimeType: 'video/mp4',
+    sizeBytes: 4096,
+    status: 'ready' as const,
+    createdAt: new Date().toISOString(),
+  };
+  saveLocalMediaAsset(readyMedia);
+
+  // Save an approximate_cue transcript (e.g. YouTube captions)
+  const approxTranscript: Transcript = {
+    id: ensureValidUuid(),
+    projectId: idempotencyProject.id,
+    mediaAssetId: readyMedia.id,
+    text: 'Approximate YouTube captions text',
+    words: [{ word: 'Approximate', start: 0.0, end: 1.0, confidence: 0.8 }],
+    segments: [],
+    timingPrecision: 'approximate_cue',
+    provider: 'youtube_captions',
+    model: 'captions',
+    duration: 1.0,
+    status: 'completed',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+  await storage.saveTranscript(approxTranscript, idempotencyProject.id, aliceId);
+
+  // Exact Deepgram request should NOT be satisfied by approximate transcript
+  const mockFetchForIdempotency = async () =>
+    new Response(
+      JSON.stringify({
+        results: {
+          channels: [
+            {
+              alternatives: [
+                {
+                  transcript: 'Authentic Deepgram transcript',
+                  words: [{ word: 'Authentic', start: 0.0, end: 1.0, confidence: 0.99 }],
+                  paragraphs: { paragraphs: [] },
+                },
+              ],
+            },
+          ],
+        },
+        metadata: { duration: 1.0 },
+      }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } }
+    );
+
+  const prevFetch = global.fetch;
+  const prevDgKey = process.env.DEEPGRAM_API_KEY;
+  try {
+    global.fetch = mockFetchForIdempotency as any;
+    process.env.DEEPGRAM_API_KEY = 'test-deepgram-key';
+
+    const exactResult = await transcriptionService.transcribeProjectMedia({
+      projectId: idempotencyProject.id,
+      mediaId: readyMedia.id,
+      userId: aliceId,
+      forceRerun: false,
+      audioBuffer: Buffer.from('test-audio'),
+    });
+
+    assert(!exactResult.isCached, 'Approximate YouTube transcript (approximate_cue) does NOT satisfy exact Deepgram request (isCached: false)');
+    assert(exactResult.transcript.timingPrecision === 'exact_word', 'Result has exact_word timing precision');
+
+    // Second call with same media & provider: should be cached
+    const cachedResult = await transcriptionService.transcribeProjectMedia({
+      projectId: idempotencyProject.id,
+      mediaId: readyMedia.id,
+      userId: aliceId,
+      forceRerun: false,
+    });
+    assert(cachedResult.isCached, 'Same project + same media + same provider satisfies exact cache (isCached: true)');
+
+    // Different media asset on same project: should NOT be cached
+    const differentMedia = {
+      id: ensureValidUuid(),
+      projectId: idempotencyProject.id,
+      userId: aliceId,
+      fileName: 'different-media.mp4',
+      fileUrl: '/uploads/different-media.mp4',
+      storagePath: '/uploads/different-media.mp4',
+      mimeType: 'video/mp4',
+      sizeBytes: 4096,
+      status: 'ready' as const,
+      createdAt: new Date().toISOString(),
+    };
+    saveLocalMediaAsset(differentMedia);
+
+    const diffMediaResult = await transcriptionService.transcribeProjectMedia({
+      projectId: idempotencyProject.id,
+      mediaId: differentMedia.id,
+      userId: aliceId,
+      forceRerun: false,
+      audioBuffer: Buffer.from('test-audio-2'),
+    });
+    assert(!diffMediaResult.isCached, 'Same project + different media asset is NOT satisfied by cache');
+
+    // Force rerun: bypasses cache even when cached transcript exists
+    const forceRerunResult = await transcriptionService.transcribeProjectMedia({
+      projectId: idempotencyProject.id,
+      mediaId: readyMedia.id,
+      userId: aliceId,
+      forceRerun: true,
+      audioBuffer: Buffer.from('test-audio-3'),
+    });
+    assert(!forceRerunResult.isCached, 'forceRerun: true explicitly bypasses completed-result cache');
+  } finally {
+    global.fetch = prevFetch;
+    process.env.DEEPGRAM_API_KEY = prevDgKey;
+  }
+
+  // 15.6: In-Flight Concurrency Protection
+  let providerCallCount = 0;
+  const concurrencyFetch = async () => {
+    providerCallCount++;
+    // Simulate slight provider latency
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    return new Response(
+      JSON.stringify({
+        results: {
+          channels: [
+            {
+              alternatives: [
+                {
+                  transcript: 'Concurrent test transcript',
+                  words: [{ word: 'Concurrent', start: 0.0, end: 1.0, confidence: 0.95 }],
+                  paragraphs: { paragraphs: [] },
+                },
+              ],
+            },
+          ],
+        },
+        metadata: { duration: 1.0 },
+      }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } }
+    );
+  };
+
+  try {
+    global.fetch = concurrencyFetch as any;
+    process.env.DEEPGRAM_API_KEY = 'test-deepgram-key';
+
+    const concurrentProject: Project = {
+      id: ensureValidUuid(),
+      userId: aliceId,
+      title: 'Concurrency Test Project',
+      sourceType: 'upload',
+      workflowType: 'youtube_to_shorts',
+      durationSeconds: 10,
+      status: 'ready',
+      clips: [],
+      createdAt: new Date().toISOString(),
+    };
+    await storage.saveProject(concurrentProject);
+
+    const concurrentMedia: MediaAsset = {
+      id: ensureValidUuid(),
+      projectId: concurrentProject.id,
+      userId: aliceId,
+      fileName: 'concurrent.mp4',
+      fileUrl: '/uploads/concurrent.mp4',
+      storagePath: '/uploads/concurrent.mp4',
+      mimeType: 'video/mp4',
+      sizeBytes: 1024,
+      status: 'ready',
+      createdAt: new Date().toISOString(),
+    };
+    await saveLocalMediaAsset(concurrentMedia);
+
+    // Launch 3 simultaneous transcription requests concurrently
+    const [resA, resB, resC] = await Promise.all([
+      transcriptionService.transcribeProjectMedia({
+        projectId: concurrentProject.id,
+        mediaId: concurrentMedia.id,
+        userId: aliceId,
+        forceRerun: true,
+        audioBuffer: Buffer.from('concurrent-audio'),
+      }),
+      transcriptionService.transcribeProjectMedia({
+        projectId: concurrentProject.id,
+        mediaId: concurrentMedia.id,
+        userId: aliceId,
+        forceRerun: true,
+        audioBuffer: Buffer.from('concurrent-audio'),
+      }),
+      transcriptionService.transcribeProjectMedia({
+        projectId: concurrentProject.id,
+        mediaId: concurrentMedia.id,
+        userId: aliceId,
+        forceRerun: true,
+        audioBuffer: Buffer.from('concurrent-audio'),
+      }),
+    ]);
+
+    assert(resA.transcriptId === resB.transcriptId && resB.transcriptId === resC.transcriptId, 'Simultaneous requests coalesce into same transcript execution');
+    assert(providerCallCount === 1, `Concurrency deduplication prevented duplicate provider calls (invoked ${providerCallCount} time, expected 1)`);
+  } finally {
+    global.fetch = prevFetch;
+    process.env.DEEPGRAM_API_KEY = prevDgKey;
+  }
+
+  // 15.7: Segment Validation Truthfulness (Same Speaker vs Cross-Talk)
+  const sameSpeakerOverlappingSegments: TranscriptSegment[] = [
+    { id: ensureValidUuid(), transcriptId: ensureValidUuid(), segmentIndex: 0, start: 0.0, end: 3.0, text: 'Hello there', speaker: 0 },
+    { id: ensureValidUuid(), transcriptId: ensureValidUuid(), segmentIndex: 1, start: 2.0, end: 5.0, text: 'I am talking again', speaker: 0 }, // overlaps speaker 0!
+  ];
+  const sameSpeakerVal = validateTranscriptSegments(sameSpeakerOverlappingSegments);
+  assert(!sameSpeakerVal.valid, 'Same-speaker overlapping segment sequence is truthfully rejected');
+
+  const multiSpeakerCrossTalkSegments: TranscriptSegment[] = [
+    { id: ensureValidUuid(), transcriptId: ensureValidUuid(), segmentIndex: 0, start: 0.0, end: 3.0, text: 'Host speaking here', speaker: 0 },
+    { id: ensureValidUuid(), transcriptId: ensureValidUuid(), segmentIndex: 1, start: 2.5, end: 5.0, text: 'Guest interjecting simultaneously', speaker: 1 }, // cross-talk between different speakers
+  ];
+  const multiSpeakerVal = validateTranscriptSegments(multiSpeakerCrossTalkSegments);
+  assert(multiSpeakerVal.valid, 'Multi-speaker cross-talk diarization overlap is intentionally permitted across different speaker IDs');
+
+  // 15.8: Deterministic Active Word & Segment Boundary Lookup
+  const boundaryWords: WordTimestamp[] = [
+    { word: 'First', start: 0.0, end: 1.0 },
+    { word: 'Second', start: 1.0, end: 2.0 },
+  ];
+
+  const atWordStart = findActiveWordAtTime(boundaryWords, 0.0);
+  assert(atWordStart?.word === 'First', 'At word.start (0.0s), matches first word');
+
+  const atBoundary = findActiveWordAtTime(boundaryWords, 1.0);
+  assert(atBoundary?.word === 'Second', 'At exact word.end / next word.start (1.0s), deterministically matches second word [start, end)');
+
+  const atFinalEnd = findActiveWordAtTime(boundaryWords, 2.0);
+  assert(atFinalEnd?.word === 'Second', 'At final word.end (2.0s), matches final word [start, end]');
+
+  const inSilenceGap = findActiveWordAtTime([
+    { word: 'Alpha', start: 0.0, end: 1.0 },
+    { word: 'Beta', start: 2.0, end: 3.0 },
+  ], 1.5);
+  assert(inSilenceGap === null, 'During silence gap (1.5s), returns null');
+
+  const beforeStart = findActiveWordAtTime(boundaryWords, -0.5);
+  assert(beforeStart === null, 'Before first word (-0.5s), returns null');
+
+  const afterEnd = findActiveWordAtTime(boundaryWords, 5.0);
+  assert(afterEnd === null, 'After final word (5.0s), returns null');
+
+  // 15.9: Atomic Persistence & Previous Transcript Preservation
+  const atomicProj: Project = {
+    id: ensureValidUuid(),
+    userId: aliceId,
+    title: 'Atomic Transcript Test Project',
+    sourceType: 'upload',
+    workflowType: 'youtube_to_shorts',
+    durationSeconds: 10,
+    status: 'ready',
+    clips: [],
+    createdAt: new Date().toISOString(),
+  };
+  await storage.saveProject(atomicProj);
+
+  const initialValidTranscript: Transcript = {
+    id: ensureValidUuid(),
+    projectId: atomicProj.id,
+    text: 'Initial valid transcript that must survive failed replacement',
+    words: [{ word: 'Initial', start: 0.0, end: 1.0, confidence: 0.99 }],
+    segments: [{ id: ensureValidUuid(), transcriptId: ensureValidUuid(), segmentIndex: 0, start: 0.0, end: 1.0, text: 'Initial' }],
+    status: 'completed',
+    timingPrecision: 'exact_word',
+    provider: 'deepgram',
+    model: 'nova-2',
+    duration: 1.0,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+  await storage.saveTranscript(initialValidTranscript, atomicProj.id, aliceId);
+
+  // Attempt to save an invalid update where word references non-existent segment
+  const brokenUpdateTranscript: Transcript = {
+    id: initialValidTranscript.id,
+    projectId: atomicProj.id,
+    text: 'Corrupted update',
+    words: [{ word: 'Broken', start: 0.0, end: 1.0, segmentId: '99999999-9999-9999-9999-999999999999' } as any],
+    segments: [{ id: ensureValidUuid(), transcriptId: initialValidTranscript.id, segmentIndex: 0, start: 0.0, end: 1.0, text: 'Broken' }],
+    status: 'completed',
+    timingPrecision: 'exact_word',
+    provider: 'deepgram',
+    model: 'nova-2',
+    duration: 1.0,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+
+  let atomicFailureCaught = false;
+  try {
+    await storage.saveTranscript(brokenUpdateTranscript, atomicProj.id, aliceId);
+  } catch (err: any) {
+    atomicFailureCaught = err instanceof ClipperError && err.statusCode === 400;
+  }
+  assert(atomicFailureCaught, 'Relational consistency violation during transcript update throws 400 VALIDATION_ERROR');
+
+  const preservedTranscript = await storage.getTranscript(atomicProj.id);
+  assert(
+    preservedTranscript !== null && preservedTranscript.text === initialValidTranscript.text,
+    'Atomic Guarantee: Previous valid transcript remains intact after failed replacement attempt'
+  );
+
+  // 15.10: Database Composite Integrity (Cross-project media link)
+  const bobProject: Project = {
+    id: ensureValidUuid(),
+    userId: bobId,
+    title: "Bob's Project",
+    sourceType: 'upload',
+    workflowType: 'youtube_to_shorts',
+    durationSeconds: 15,
+    status: 'ready',
+    clips: [],
+    createdAt: new Date().toISOString(),
+  };
+  await storage.saveProject(bobProject);
+
+  const bobMedia: MediaAsset = {
+    id: ensureValidUuid(),
+    projectId: bobProject.id,
+    userId: bobId,
+    fileName: 'bob-video.mp4',
+    fileUrl: '/uploads/bob-video.mp4',
+    storagePath: '/uploads/bob-video.mp4',
+    mimeType: 'video/mp4',
+    sizeBytes: 2048,
+    status: 'ready',
+    createdAt: new Date().toISOString(),
+  };
+  await saveLocalMediaAsset(bobMedia);
+
+  let crossProjectLinkCaught = false;
+  try {
+    await storage.saveTranscript({
+      id: ensureValidUuid(),
+      projectId: aliceProject.id,
+      mediaAssetId: bobMedia.id, // Belongs to bobProject, NOT aliceProject!
+      text: 'Illegitimate cross-project linkage',
+      words: [],
+      status: 'completed',
+    }, aliceProject.id, aliceId);
+  } catch (err: any) {
+    crossProjectLinkCaught = err instanceof ClipperError && err.statusCode === 403;
+  }
+  assert(crossProjectLinkCaught, 'Cross-project media link (Project A + Media of Project B) is rejected with 403 FORBIDDEN');
 
   console.log('\n====================================================');
   console.log(`PHASE 4 TEST SUMMARY: ${passed} PASSED, ${failed} FAILED`);

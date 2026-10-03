@@ -19,6 +19,9 @@ export async function POST(req: NextRequest) {
     let audioUrl: string | undefined;
     let audioBuffer: Buffer | undefined;
 
+    const isDevLocalAllowed =
+      process.env.NODE_ENV !== 'production' && process.env.ALLOW_DEV_LOCAL_STORAGE === 'true';
+
     if (contentType.includes('application/json')) {
       const body = await req.json();
       projectId = body.projectId;
@@ -26,6 +29,16 @@ export async function POST(req: NextRequest) {
       forceRerun = Boolean(body.forceRerun);
       audioUrl = body.audioUrl;
     } else if (contentType.includes('multipart/form-data')) {
+      if (!isDevLocalAllowed) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: 'Direct multipart audio upload to /api/transcribe is forbidden in production. Upload media via /api/media/upload first.',
+          },
+          { status: 400 }
+        );
+      }
+
       const formData = await req.formData();
       projectId = (formData.get('projectId') as string) || undefined;
       mediaId = (formData.get('mediaId') as string) || undefined;
@@ -54,8 +67,6 @@ export async function POST(req: NextRequest) {
     }
 
     // Production constraint: projectId is required for authoritative state tracking
-    const isDevLocalAllowed =
-      process.env.NODE_ENV !== 'production' || process.env.ALLOW_DEV_LOCAL_STORAGE === 'true';
     if (!projectId && !isDevLocalAllowed) {
       return NextResponse.json(
         {
@@ -95,7 +106,18 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // 2. Direct Audio Input Flow (Audio URL or File Upload without project in dev)
+    // In production, direct audio bypass without project/media is forbidden
+    if (!isDevLocalAllowed) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: 'Direct audio transcription without a project and canonical media asset is forbidden in production.',
+        },
+        { status: 400 }
+      );
+    }
+
+    // 2. Direct Audio Input Flow (Development/test mode only)
     if (!audioUrl && !audioBuffer) {
       return NextResponse.json(
         { error: 'A projectId, audioUrl, or audio file upload is required for transcription.' },

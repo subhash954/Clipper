@@ -183,27 +183,30 @@ A forensic security and truthfulness hardening pass was conducted and verified:
    Local filesystem and public folder traversal are guarded behind dev-only checks. In production, media is fetched directly from Bunny `StorageService` via `getObject(storageKey)`.
 
 3. **Direct Audio Input Security & SSRF Defense:**
-   In `app/api/transcribe/route.ts`, remote `audioUrl` is validated against SSRF attacks (`validateSafeRemoteUrl`) blocking loopback (127.0.0.1), link-local/cloud metadata (169.254.169.254), and private RFC 1918 subnets. In production, `projectId` is mandatory.
+   In `app/api/transcribe/route.ts` and `lib/transcription/transcriptionService.ts`, remote `audioUrl` is validated against SSRF attacks (`validateSafeRemoteUrl`) blocking loopback (127.0.0.1), link-local/cloud metadata (169.254.169.254), and private RFC 1918 subnets. In production, `projectId` is mandatory and raw audio uploads/bypasses are rejected.
 
 4. **Word & Segment Sequence Validation:**
-   `validateWordTimestamps` and `validateTranscriptSegments` enforce finite bounds, non-negative values, confidence ranges [0, 1], and chronological sequence progression (`word[i].start >= word[i-1].start`). Malformed provider timestamps are rejected with `502 TRANSCRIPTION_FAILED`.
+   `validateWordTimestamps` and `validateTranscriptSegments` enforce finite bounds, non-negative values, confidence ranges [0, 1], and chronological sequence progression (`word[i].start >= word[i-1].start`). Same-speaker segments require non-overlapping progression (`current.start >= previous.end - 0.05`), while multi-speaker cross-talk is permitted across different speaker IDs.
 
 5. **Transcript ↔ Media Integrity:**
-   Cross-project media linkages (`mediaAsset.projectId !== projectId`) and deleted media (`deletedAt`) are rejected with `403 FORBIDDEN` and `410 MEDIA_UNAVAILABLE`.
+   Database composite constraint `fk_transcripts_media_project` on `transcripts(media_asset_id, project_id) REFERENCES media_assets(id, project_id)` enforces relationship at the PostgreSQL level. Cross-project media linkages and deleted media (`deletedAt`) are rejected with `403 FORBIDDEN` and `410 MEDIA_UNAVAILABLE`.
 
 6. **Relational Consistency & Composite Constraints:**
    - Composite unique constraint `uq_transcript_segments_id_transcript` on `transcript_segments(id, transcript_id)`.
    - Composite foreign key constraint `fk_transcript_words_segment_transcript` on `transcript_words(segment_id, transcript_id) REFERENCES transcript_segments(id, transcript_id) ON DELETE CASCADE`.
-   - Application-level relational validation rejects words referencing foreign segments with `400 VALIDATION_ERROR`.
+   - Composite foreign key constraint `fk_transcripts_media_project` on `transcripts(media_asset_id, project_id) REFERENCES media_assets(id, project_id) ON DELETE SET NULL`.
 
 7. **Row-Level Security (RLS) Hardening:**
    Added `WITH CHECK` clauses to UPDATE policies for `transcripts`, `transcript_segments`, and `transcript_words` (`supabase/migrations/20261002_phase_4_rls_hardening.sql`).
 
-8. **Idempotency & Duplicate Prevention:**
-   Idempotency cache differentiates `targetMediaId`. Previous child records are cleaned up before upserting new segments/words to prevent accumulation of duplicate rows.
+8. **Atomic Persistence & Previous Transcript Preservation:**
+   PostgreSQL RPC function `replace_transcript_atomic` (`supabase/migrations/20261003_phase_4_1_atomic_transcript.sql`) runs transcript replacement in a single atomic transaction. Any error triggers an all-or-nothing rollback that preserves the previous valid transcript. In `LocalStorageAdapter`, all staging happens in memory prior to disk writes.
 
-9. **Cost Telemetry Truthfulness:**
-   Derived Deepgram dollar costs based on audio duration are recorded with `isEstimated: true`.
+9. **In-Flight Concurrency Protection:**
+   `TranscriptionService` maintains an in-flight promise map keyed by `projectId:mediaAssetId:provider:model` to coalesce simultaneous requests and eliminate duplicate Deepgram costs and write races.
 
-10. **Phase 5 Status:**
+10. **Deterministic Word & Segment Boundary Matching:**
+    `findActiveWordAtTime` and `findActiveSegmentAtTime` implement exact half-open intervals `[start, end)` for intermediate items and closed `[start, end]` for the final item, eliminating boundary ambiguity.
+
+11. **Phase 5 Status:**
     Phase 5 was **NOT** started.

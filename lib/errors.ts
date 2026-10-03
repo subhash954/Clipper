@@ -22,7 +22,10 @@ export type ClipperErrorCode =
   | 'INVALID_PROJECT_STATE'
   | 'MEDIA_NOT_OWNED'
   | 'PROJECT_NOT_OWNED'
-  | 'STORAGE_ERROR';
+  | 'STORAGE_ERROR'
+  | 'MEDIA_REQUIRED'
+  | 'RAW_AUDIO_BYPASS_FORBIDDEN'
+  | 'SSRF_VIOLATION';
 
 export interface StructuredErrorResponse {
   code: ClipperErrorCode;

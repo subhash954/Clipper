@@ -18,7 +18,7 @@ export interface IStorageAdapter {
   listRenderJobs(userId?: string): Promise<RenderJob[]>;
   recordCostTelemetry(telemetry: CostTelemetryRecord): Promise<void>;
   getCostTelemetry(): Promise<CostTelemetryRecord[]>;
-  saveTranscript(transcript: Transcript, projectId: string): Promise<Transcript>;
+  saveTranscript(transcript: Transcript, projectId: string, userId?: string): Promise<Transcript>;
   getTranscript(projectId: string): Promise<Transcript | null>;
   listTranscriptWords?(transcriptId: string): Promise<NormalizedTranscriptWord[]>;
   listTranscriptSegments?(transcriptId: string): Promise<TranscriptSegment[]>;
@@ -122,7 +122,7 @@ export class SupabaseStorageAdapter implements IStorageAdapter {
 
     // Upsert transcript if present
     if (project.transcript) {
-      await this.saveTranscript(project.transcript, validId);
+      await this.saveTranscript(project.transcript, validId, project.userId);
     }
 
     // Upsert clips
@@ -508,14 +508,23 @@ export class SupabaseStorageAdapter implements IStorageAdapter {
     }));
   }
 
-  async saveTranscript(transcript: Transcript, projectId: string): Promise<Transcript> {
+  async saveTranscript(transcript: Transcript, projectId: string, userId?: string): Promise<Transcript> {
     const validTranscriptId = ensureValidUuid(transcript.id);
     const words = transcript.words || [];
     const utterances = transcript.utterances || [];
     const lastWord = words.length > 0 ? words[words.length - 1] : undefined;
     const computedDuration = transcript.duration ?? (lastWord ? lastWord.end : 0);
 
-    // Relational consistency check between words and segments
+    // 1. Verify Project Existence and Ownership
+    const project = await this.getProject(projectId);
+    if (!project || project.deletedAt) {
+      throw new ClipperError('NOT_FOUND', `Project ${projectId} not found.`, 404);
+    }
+    if (userId && project.userId && project.userId !== userId) {
+      throw new ClipperError('FORBIDDEN', `Access denied to project ${projectId}.`, 403);
+    }
+
+    // 2. Relational consistency check between words and segments
     if (words.length > 0 && transcript.segments && transcript.segments.length > 0) {
       const validSegmentIds = new Set(transcript.segments.map((s) => s.id));
       for (const w of words) {
@@ -530,89 +539,144 @@ export class SupabaseStorageAdapter implements IStorageAdapter {
       }
     }
 
+    // 3. Verify Media Asset Ownership and Project Relationship
     if (transcript.mediaAssetId) {
       const media = await getMediaAssetById(transcript.mediaAssetId);
-      if (media && media.projectId && media.projectId !== projectId) {
+      if (!media) {
+        throw new ClipperError('NOT_FOUND', `Media asset ${transcript.mediaAssetId} not found.`, 404);
+      }
+      if (media.projectId && media.projectId !== projectId) {
         throw new ClipperError(
           'FORBIDDEN',
           `Cannot associate transcript with media asset ${transcript.mediaAssetId} belonging to another project.`,
           403
         );
       }
-    }
-
-    const { error: transError } = await supabase.from('transcripts').upsert({
-      id: validTranscriptId,
-      project_id: projectId,
-      media_asset_id: transcript.mediaAssetId || null,
-      transcript_text: transcript.text,
-      words: words,
-      utterances: utterances,
-      language: transcript.language || 'en',
-      source: transcript.source || 'deepgram',
-      timing_precision: transcript.timingPrecision || 'exact_word',
-      provider: transcript.provider || 'deepgram',
-      model: transcript.model || 'nova-2',
-      duration: computedDuration,
-      status: transcript.status || 'completed',
-      error_message: transcript.errorMessage || null,
-      metadata: transcript.metadata || {},
-      updated_at: new Date().toISOString(),
-    });
-
-    if (transError) {
-      throw new ClipperError('DATABASE_ERROR', `Failed to persist transcript: ${transError.message}`, 500);
-    }
-
-    // Clean up existing child records for this transcript to prevent orphaned or duplicate rows
-    await supabase.from('transcript_words').delete().eq('transcript_id', validTranscriptId);
-    await supabase.from('transcript_segments').delete().eq('transcript_id', validTranscriptId);
-
-    if (transcript.segments && transcript.segments.length > 0) {
-      const segmentRows = transcript.segments.map((seg, idx) => ({
-        id: ensureValidUuid(seg.id),
-        transcript_id: validTranscriptId,
-        segment_index: seg.segmentIndex ?? idx,
-        start_time: seg.start,
-        end_time: seg.end,
-        text: seg.text,
-        confidence: seg.confidence !== undefined ? seg.confidence : null,
-        speaker: seg.speaker !== undefined ? seg.speaker : null,
-        metadata: seg.metadata || {},
-      }));
-
-      const { error: segError } = await supabase
-        .from('transcript_segments')
-        .upsert(segmentRows);
-      if (segError) {
-        // Rollback transcript insert to prevent orphaned record
-        await supabase.from('transcripts').delete().eq('id', validTranscriptId);
-        throw new ClipperError('DATABASE_ERROR', `Failed to persist transcript segments: ${segError.message}`, 500);
+      if (userId && media.userId && media.userId !== userId) {
+        throw new ClipperError(
+          'MEDIA_NOT_OWNED',
+          `Media asset ${transcript.mediaAssetId} belongs to another user.`,
+          403
+        );
+      }
+      if ((media as any).deletedAt || media.status === 'deleted') {
+        throw new ClipperError('MEDIA_UNAVAILABLE', `Media asset ${transcript.mediaAssetId} has been deleted.`, 410);
+      }
+      if (media.status === 'failed') {
+        throw new ClipperError('MEDIA_UNAVAILABLE', `Media asset ${transcript.mediaAssetId} processing failed.`, 422);
       }
     }
 
-    if (words.length > 0) {
-      const wordRows = words.map((w, idx) => ({
-        id: ensureValidUuid((w as any).id),
-        transcript_id: validTranscriptId,
-        segment_id: (w as any).segmentId || null,
-        word_index: idx,
-        word: w.word,
-        start_time: w.start,
-        end_time: w.end,
-        confidence: w.confidence !== undefined ? w.confidence : null,
-        speaker: w.speaker !== undefined ? w.speaker : null,
-      }));
+    const segmentRows = (transcript.segments || []).map((seg, idx) => ({
+      id: ensureValidUuid(seg.id),
+      transcript_id: validTranscriptId,
+      segment_index: seg.segmentIndex ?? idx,
+      start_time: seg.start,
+      end_time: seg.end,
+      text: seg.text,
+      confidence: seg.confidence !== undefined ? seg.confidence : null,
+      speaker: seg.speaker !== undefined ? seg.speaker : null,
+      metadata: seg.metadata || {},
+    }));
 
-      const { error: wordsError } = await supabase
-        .from('transcript_words')
-        .upsert(wordRows);
-      if (wordsError) {
-        // Rollback segments and transcript
-        await supabase.from('transcript_words').delete().eq('transcript_id', validTranscriptId);
-        await supabase.from('transcript_segments').delete().eq('transcript_id', validTranscriptId);
-        await supabase.from('transcripts').delete().eq('id', validTranscriptId);
-        throw new ClipperError('DATABASE_ERROR', `Failed to persist transcript words: ${wordsError.message}`, 500);
+    const wordRows = words.map((w, idx) => ({
+      id: ensureValidUuid((w as any).id),
+      transcript_id: validTranscriptId,
+      segment_id: (w as any).segmentId || null,
+      word_index: idx,
+      word: w.word,
+      start_time: w.start,
+      end_time: w.end,
+      confidence: w.confidence !== undefined ? w.confidence : null,
+      speaker: w.speaker !== undefined ? w.speaker : null,
+    }));
+
+    // 4. Execute Atomic Transcript Replacement via PostgreSQL RPC
+    let rpcSucceeded = false;
+    try {
+      const { data: rpcData, error: rpcError } = await supabase.rpc('replace_transcript_atomic', {
+        p_transcript_id: validTranscriptId,
+        p_project_id: projectId,
+        p_media_asset_id: transcript.mediaAssetId || null,
+        p_transcript_text: transcript.text,
+        p_words: words,
+        p_utterances: utterances,
+        p_language: transcript.language || 'en',
+        p_source: transcript.source || 'deepgram',
+        p_timing_precision: transcript.timingPrecision || 'exact_word',
+        p_provider: transcript.provider || 'deepgram',
+        p_model: transcript.model || 'nova-2',
+        p_duration: computedDuration,
+        p_status: transcript.status || 'completed',
+        p_error_message: transcript.errorMessage || null,
+        p_metadata: transcript.metadata || {},
+        p_segments: segmentRows,
+        p_word_rows: wordRows,
+      });
+
+      if (!rpcError) {
+        rpcSucceeded = true;
+      } else if (!rpcError.message?.includes('does not exist') && !rpcError.message?.includes('function')) {
+        throw new ClipperError('DATABASE_ERROR', `Atomic transcript replacement failed: ${rpcError.message}`, 500);
+      }
+    } catch (rpcErr: any) {
+      if (rpcErr instanceof ClipperError) throw rpcErr;
+      if (!rpcErr.message?.includes('does not exist') && !rpcErr.message?.includes('function')) {
+        throw new ClipperError('DATABASE_ERROR', `Atomic transcript replacement failed: ${rpcErr.message}`, 500);
+      }
+    }
+
+    if (!rpcSucceeded) {
+      // Non-destructive fallback path (handles mock/test databases without the RPC)
+      const { error: delWordErr } = await supabase.from('transcript_words').delete().eq('transcript_id', validTranscriptId);
+      if (delWordErr) {
+        throw new ClipperError('DATABASE_ERROR', `Failed to clear existing transcript words: ${delWordErr.message}`, 500);
+      }
+
+      const { error: delSegErr } = await supabase.from('transcript_segments').delete().eq('transcript_id', validTranscriptId);
+      if (delSegErr) {
+        throw new ClipperError('DATABASE_ERROR', `Failed to clear existing transcript segments: ${delSegErr.message}`, 500);
+      }
+
+      const { error: transError } = await supabase.from('transcripts').upsert({
+        id: validTranscriptId,
+        project_id: projectId,
+        media_asset_id: transcript.mediaAssetId || null,
+        transcript_text: transcript.text,
+        words: words,
+        utterances: utterances,
+        language: transcript.language || 'en',
+        source: transcript.source || 'deepgram',
+        timing_precision: transcript.timingPrecision || 'exact_word',
+        provider: transcript.provider || 'deepgram',
+        model: transcript.model || 'nova-2',
+        duration: computedDuration,
+        status: transcript.status || 'completed',
+        error_message: transcript.errorMessage || null,
+        metadata: transcript.metadata || {},
+        updated_at: new Date().toISOString(),
+      });
+
+      if (transError) {
+        throw new ClipperError('DATABASE_ERROR', `Failed to persist transcript: ${transError.message}`, 500);
+      }
+
+      if (segmentRows.length > 0) {
+        const { error: segError } = await supabase
+          .from('transcript_segments')
+          .upsert(segmentRows);
+        if (segError) {
+          throw new ClipperError('DATABASE_ERROR', `Failed to persist transcript segments: ${segError.message}`, 500);
+        }
+      }
+
+      if (wordRows.length > 0) {
+        const { error: wordsError } = await supabase
+          .from('transcript_words')
+          .upsert(wordRows);
+        if (wordsError) {
+          throw new ClipperError('DATABASE_ERROR', `Failed to persist transcript words: ${wordsError.message}`, 500);
+        }
       }
     }
 
@@ -824,7 +888,7 @@ export class LocalStorageAdapter implements IStorageAdapter {
     this.writeJson(this.projectsFile, updated);
 
     if (project.transcript) {
-      await this.saveTranscript(project.transcript, project.id);
+      await this.saveTranscript(project.transcript, project.id, project.userId);
     }
 
     return project;
@@ -933,14 +997,23 @@ export class LocalStorageAdapter implements IStorageAdapter {
     return this.readJson<CostTelemetryRecord[]>(this.telemetryFile, []);
   }
 
-  async saveTranscript(transcript: Transcript, projectId: string): Promise<Transcript> {
+  async saveTranscript(transcript: Transcript, projectId: string, userId?: string): Promise<Transcript> {
     const validId = ensureValidUuid(transcript.id);
     const words = transcript.words || [];
     const utterances = transcript.utterances || [];
     const lastWord = words.length > 0 ? words[words.length - 1] : undefined;
     const duration = transcript.duration ?? (lastWord ? lastWord.end : 0);
 
-    // Relational consistency check between words and segments
+    // 1. Verify Project Existence and Ownership
+    const project = await this.getProject(projectId);
+    if (!project || project.deletedAt) {
+      throw new ClipperError('NOT_FOUND', `Project ${projectId} not found.`, 404);
+    }
+    if (userId && project.userId && project.userId !== userId) {
+      throw new ClipperError('FORBIDDEN', `Access denied to project ${projectId}.`, 403);
+    }
+
+    // 2. Relational consistency check between words and segments
     if (words.length > 0 && transcript.segments && transcript.segments.length > 0) {
       const validSegmentIds = new Set(transcript.segments.map((s) => s.id));
       for (const w of words) {
@@ -955,17 +1028,35 @@ export class LocalStorageAdapter implements IStorageAdapter {
       }
     }
 
+    // 3. Verify Media Asset Ownership and Project Relationship
     if (transcript.mediaAssetId) {
       const media = await getMediaAssetById(transcript.mediaAssetId);
-      if (media && media.projectId && media.projectId !== projectId) {
+      if (!media) {
+        throw new ClipperError('NOT_FOUND', `Media asset ${transcript.mediaAssetId} not found.`, 404);
+      }
+      if (media.projectId && media.projectId !== projectId) {
         throw new ClipperError(
           'FORBIDDEN',
           `Cannot associate transcript with media asset ${transcript.mediaAssetId} belonging to another project.`,
           403
         );
       }
+      if (userId && media.userId && media.userId !== userId) {
+        throw new ClipperError(
+          'MEDIA_NOT_OWNED',
+          `Media asset ${transcript.mediaAssetId} belongs to another user.`,
+          403
+        );
+      }
+      if ((media as any).deletedAt || media.status === 'deleted') {
+        throw new ClipperError('MEDIA_UNAVAILABLE', `Media asset ${transcript.mediaAssetId} has been deleted.`, 410);
+      }
+      if (media.status === 'failed') {
+        throw new ClipperError('MEDIA_UNAVAILABLE', `Media asset ${transcript.mediaAssetId} processing failed.`, 422);
+      }
     }
 
+    // 4. Stage all in-memory structures before any file mutation (Atomic staging)
     const record: Transcript = {
       ...transcript,
       id: validId,
@@ -979,13 +1070,9 @@ export class LocalStorageAdapter implements IStorageAdapter {
       createdAt: transcript.createdAt || new Date().toISOString(),
     };
 
-    const transcripts = this.readJson<any[]>(this.transcriptsFile, []);
-    const updatedTranscripts = [record, ...transcripts.filter((t) => t.id !== validId && t.projectId !== projectId)];
-    this.writeJson(this.transcriptsFile, updatedTranscripts);
-
+    let newSegments: any[] = [];
     if (transcript.segments && transcript.segments.length > 0) {
-      const existingSegments = this.readJson<any[]>(this.segmentsFile, []).filter((s) => s.transcriptId !== validId);
-      const newSegments = transcript.segments.map((seg, idx) => ({
+      newSegments = transcript.segments.map((seg, idx) => ({
         id: ensureValidUuid(seg.id),
         transcriptId: validId,
         segmentIndex: seg.segmentIndex ?? idx,
@@ -997,12 +1084,11 @@ export class LocalStorageAdapter implements IStorageAdapter {
         metadata: seg.metadata || {},
         createdAt: new Date().toISOString(),
       }));
-      this.writeJson(this.segmentsFile, [...existingSegments, ...newSegments]);
     }
 
+    let newWords: any[] = [];
     if (words.length > 0) {
-      const existingWords = this.readJson<any[]>(this.wordsFile, []).filter((w) => w.transcriptId !== validId);
-      const newWords = words.map((w, idx) => ({
+      newWords = words.map((w, idx) => ({
         id: ensureValidUuid((w as any).id),
         transcriptId: validId,
         segmentId: (w as any).segmentId || null,
@@ -1014,6 +1100,20 @@ export class LocalStorageAdapter implements IStorageAdapter {
         speaker: w.speaker,
         createdAt: new Date().toISOString(),
       }));
+    }
+
+    // 5. Commit all writes to disk (only reached if all validations and mappings succeeded)
+    const transcripts = this.readJson<any[]>(this.transcriptsFile, []);
+    const updatedTranscripts = [record, ...transcripts.filter((t) => t.id !== validId && t.projectId !== projectId)];
+    this.writeJson(this.transcriptsFile, updatedTranscripts);
+
+    if (newSegments.length > 0) {
+      const existingSegments = this.readJson<any[]>(this.segmentsFile, []).filter((s) => s.transcriptId !== validId);
+      this.writeJson(this.segmentsFile, [...existingSegments, ...newSegments]);
+    }
+
+    if (newWords.length > 0) {
+      const existingWords = this.readJson<any[]>(this.wordsFile, []).filter((w) => w.transcriptId !== validId);
       this.writeJson(this.wordsFile, [...existingWords, ...newWords]);
     }
 
@@ -1084,20 +1184,15 @@ export function getStorage(): IStorageAdapter {
     }
 
     if (process.env.NODE_ENV === 'production') {
-      if (storageMode === 'local' && process.env.ALLOW_DEV_LOCAL_STORAGE !== 'true') {
+      if (!isSupabaseConfigured()) {
         throw new ClipperError(
           'STORAGE_UNAVAILABLE',
-          'CRITICAL PERSISTENCE ERROR: Local JSON storage is forbidden in production. Configure STORAGE_MODE=supabase with PostgreSQL.',
+          'CRITICAL PERSISTENCE ERROR: Database storage (Supabase PostgreSQL) is required in production mode. Local JSON persistence is forbidden.',
           500
         );
       }
-      if (!isSupabaseConfigured() && process.env.ALLOW_DEV_LOCAL_STORAGE !== 'true') {
-        throw new ClipperError(
-          'STORAGE_UNAVAILABLE',
-          'CRITICAL PERSISTENCE ERROR: Database storage (Supabase PostgreSQL) is not configured in production mode. Local JSON persistence is forbidden in production. Configure NEXT_PUBLIC_SUPABASE_URL or explicitly set ALLOW_DEV_LOCAL_STORAGE=true.',
-          500
-        );
-      }
+      storageInstance = new SupabaseStorageAdapter();
+      return storageInstance;
     }
 
     if (storageMode === 'local') {

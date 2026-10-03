@@ -19,6 +19,7 @@ import { transcribeWithDeepgram, DeepgramProviderError } from '../providers/deep
 import { extractAudioFromVideo } from '../media/audioExtraction';
 import { getStorage, ensureValidUuid, DEV_DEFAULT_USER_ID, getMediaAssetById } from '../storage';
 import { getStorageService } from '../storage/storageService';
+import { validateSafeRemoteUrl } from '../security/ssrfValidator';
 import { ClipperError } from '../errors';
 
 export interface TranscribeProjectParams {
@@ -88,6 +89,9 @@ export function validateWordTimestamps(words: WordTimestamp[]): { valid: boolean
 
 /**
  * Validates array of transcript segments for non-negative bounds, finite values, and chronological order.
+ * Note: Cross-talk in diarization intentionally permits start overlap across different speaker IDs.
+ * Same-speaker segments require non-overlapping chronological progression (current.start >= previous.end - 0.05).
+ * All segments must strictly satisfy start-order progression (current.start >= previous.start).
  */
 export function validateTranscriptSegments(segments: TranscriptSegment[]): { valid: boolean; errors: string[] } {
   const errors: string[] = [];
@@ -119,6 +123,19 @@ export function validateTranscriptSegments(segments: TranscriptSegment[]): { val
             `Non-chronological segment sequence: segment at index ${i} starts at ${s.start}s, before previous segment at ${prev.start}s`
           );
         }
+        // Same speaker overlap check (50ms boundary tolerance)
+        if (
+          s.speaker !== undefined &&
+          prev.speaker !== undefined &&
+          s.speaker === prev.speaker &&
+          typeof prev.end === 'number'
+        ) {
+          if (s.start < prev.end - 0.05) {
+            errors.push(
+              `Same-speaker segment overlap: segment at index ${i} starts at ${s.start}s before previous segment ended at ${prev.end}s for speaker ${s.speaker}`
+            );
+          }
+        }
       }
     }
   }
@@ -128,28 +145,79 @@ export function validateTranscriptSegments(segments: TranscriptSegment[]): { val
 
 /**
  * Deterministically finds the active word given an absolute playback timecode.
+ * Implements exact half-open interval [start, end) for intermediate words and
+ * closed interval [start, end] for the final word to eliminate boundary ambiguity.
  */
 export function findActiveWordAtTime(words: WordTimestamp[], timeInSeconds: number): WordTimestamp | null {
-  if (!words || words.length === 0 || timeInSeconds < 0) return null;
+  if (!words || words.length === 0 || typeof timeInSeconds !== 'number' || isNaN(timeInSeconds) || timeInSeconds < 0) {
+    return null;
+  }
 
-  // Exact interval check: start <= time < end
-  const match = words.find((w) => timeInSeconds >= w.start && timeInSeconds <= w.end);
-  if (match) return match;
+  const n = words.length;
 
-  // Tolerance window of 50ms before/after word boundaries for smooth playhead tracking
-  const toleranceMatch = words.find((w) => timeInSeconds >= w.start - 0.05 && timeInSeconds <= w.end + 0.05);
-  return toleranceMatch || null;
+  // 1. Exact interval check: [start, end) for intermediate words, [start, end] for final word
+  for (let i = 0; i < n; i++) {
+    const w = words[i];
+    const isLast = i === n - 1;
+    if (isLast) {
+      if (timeInSeconds >= w.start && timeInSeconds <= w.end) {
+        return w;
+      }
+    } else {
+      if (timeInSeconds >= w.start && timeInSeconds < w.end) {
+        return w;
+      }
+    }
+  }
+
+  // 2. Controlled tolerance window (50ms) for playhead snapping between tight word gaps,
+  // without overlapping the next word's start.
+  for (let i = 0; i < n; i++) {
+    const w = words[i];
+    const nextStart = i < n - 1 ? words[i + 1].start : Infinity;
+    const isLast = i === n - 1;
+
+    const prevEnd = i > 0 ? words[i - 1].end : 0;
+    const tolStart = Math.max(prevEnd, w.start - 0.05);
+    const tolEnd = isLast ? w.end + 0.05 : Math.min(nextStart, w.end + 0.05);
+
+    if (timeInSeconds >= tolStart && (isLast ? timeInSeconds <= tolEnd : timeInSeconds < tolEnd)) {
+      return w;
+    }
+  }
+
+  return null;
 }
 
 /**
  * Deterministically finds the active transcript segment given an absolute playback timecode.
+ * Implements exact half-open interval [start, end) for intermediate segments and
+ * closed interval [start, end] for the final segment.
  */
 export function findActiveSegmentAtTime(
   segments: TranscriptSegment[],
   timeInSeconds: number
 ): TranscriptSegment | null {
-  if (!segments || segments.length === 0 || timeInSeconds < 0) return null;
-  return segments.find((s) => timeInSeconds >= s.start && timeInSeconds <= s.end) || null;
+  if (!segments || segments.length === 0 || typeof timeInSeconds !== 'number' || isNaN(timeInSeconds) || timeInSeconds < 0) {
+    return null;
+  }
+
+  const n = segments.length;
+  for (let i = 0; i < n; i++) {
+    const s = segments[i];
+    const isLast = i === n - 1;
+    if (isLast) {
+      if (timeInSeconds >= s.start && timeInSeconds <= s.end) {
+        return s;
+      }
+    } else {
+      if (timeInSeconds >= s.start && timeInSeconds < s.end) {
+        return s;
+      }
+    }
+  }
+
+  return null;
 }
 
 /**
@@ -164,15 +232,37 @@ export function calculateDeepgramCost(durationSeconds: number): number {
 }
 
 export class TranscriptionService {
+  private activeTranscriptions = new Map<string, Promise<TranscribeProjectResult>>();
+
   /**
-   * Main entry point: transcribes media for a given project with tenant isolation and idempotency.
+   * Main entry point: transcribes media for a given project with tenant isolation, concurrency protection, and idempotency.
    */
   async transcribeProjectMedia(params: TranscribeProjectParams): Promise<TranscribeProjectResult> {
+    const { projectId, mediaId, forceRerun = false } = params;
+    const dedupeKey = `${projectId}:${mediaId || 'default'}:deepgram:nova-2`;
+
+    // Concurrency Protection: Coalesce simultaneous requests for the same media/project
+    const inFlight = this.activeTranscriptions.get(dedupeKey);
+    if (inFlight) {
+      return await inFlight;
+    }
+
+    const executionPromise = this.executeTranscribeProjectMedia(params);
+    this.activeTranscriptions.set(dedupeKey, executionPromise);
+
+    try {
+      return await executionPromise;
+    } finally {
+      this.activeTranscriptions.delete(dedupeKey);
+    }
+  }
+
+  private async executeTranscribeProjectMedia(params: TranscribeProjectParams): Promise<TranscribeProjectResult> {
     const { projectId, mediaId, userId, forceRerun = false } = params;
     const storage = getStorage();
 
     const isDevLocalAllowed =
-      process.env.NODE_ENV !== 'production' || process.env.ALLOW_DEV_LOCAL_STORAGE === 'true';
+      process.env.NODE_ENV !== 'production' && process.env.ALLOW_DEV_LOCAL_STORAGE === 'true';
 
     // 1. Verify Authentication (Fail-closed in production)
     let currentUserId: string;
@@ -188,13 +278,13 @@ export class TranscriptionService {
       );
     }
 
-    // 2. Verify Project Existence and Ownership
+    // 2. Verify Project Existence and Ownership (Fail-closed on null ownership)
     const project = await storage.getProject(projectId);
     if (!project || project.deletedAt) {
       throw new ClipperError('NOT_FOUND', `Project ${projectId} not found.`, 404);
     }
 
-    if (project.userId && project.userId !== currentUserId) {
+    if (!project.userId || project.userId !== currentUserId) {
       throw new ClipperError('FORBIDDEN', `Access denied: you do not own project ${projectId}.`, 403);
     }
 
@@ -207,25 +297,39 @@ export class TranscriptionService {
       if (!mediaAsset) {
         throw new ClipperError('NOT_FOUND', `Media asset ${targetMediaId} not found.`, 404);
       }
-      if (mediaAsset.userId && mediaAsset.userId !== currentUserId) {
+      if (!mediaAsset.userId || mediaAsset.userId !== currentUserId) {
         throw new ClipperError(
           'MEDIA_NOT_OWNED',
           `Access denied: media asset ${targetMediaId} belongs to another user.`,
           403
         );
       }
-      if (mediaAsset.projectId && mediaAsset.projectId !== projectId) {
+      if (!mediaAsset.projectId || mediaAsset.projectId !== projectId) {
         throw new ClipperError(
           'FORBIDDEN',
           `Media asset ${targetMediaId} belongs to project ${mediaAsset.projectId}, not project ${projectId}.`,
           403
         );
       }
-      if ((mediaAsset as any).deletedAt) {
+      if ((mediaAsset as any).deletedAt || mediaAsset.status === 'deleted') {
         throw new ClipperError(
           'MEDIA_UNAVAILABLE',
           `Media asset ${targetMediaId} has been deleted.`,
           410
+        );
+      }
+      if (mediaAsset.status === 'uploading') {
+        throw new ClipperError(
+          'MEDIA_UNAVAILABLE',
+          `Media asset ${targetMediaId} is still uploading.`,
+          400
+        );
+      }
+      if (mediaAsset.status === 'processing') {
+        throw new ClipperError(
+          'MEDIA_UNAVAILABLE',
+          `Media asset ${targetMediaId} is still processing.`,
+          409
         );
       }
       if (mediaAsset.status === 'failed') {
@@ -237,33 +341,52 @@ export class TranscriptionService {
       }
     }
 
-    // 4. Idempotency Check: Cache key distinguishes project, targetMediaId, provider, and model
+    // Production Invariant: Require canonical MediaAsset and reject raw audio bypass
+    if (!isDevLocalAllowed) {
+      if (!targetMediaId || !mediaAsset) {
+        throw new ClipperError(
+          'MEDIA_REQUIRED',
+          'Production transcription requires a valid canonical MediaAsset.',
+          400
+        );
+      }
+      if (params.audioBuffer || (params.audioUrl && params.audioUrl !== mediaAsset.fileUrl)) {
+        throw new ClipperError(
+          'RAW_AUDIO_BYPASS_FORBIDDEN',
+          'Arbitrary audioBuffer or audioUrl cannot bypass canonical MediaAsset architecture in production.',
+          400
+        );
+      }
+    }
+
+    // 4. Strict Idempotency Check: Cache key distinguishes project, targetMediaId, provider, model, and exact_word timing
     if (!forceRerun) {
       const existingTranscript = await storage.getTranscript(projectId);
-      const isMediaMatch = targetMediaId
-        ? existingTranscript?.mediaAssetId === targetMediaId
-        : true;
-      const isProviderMatch =
-        (existingTranscript?.provider || 'deepgram') === 'deepgram' &&
-        (existingTranscript?.model || 'nova-2') === 'nova-2';
-
       if (
         existingTranscript &&
         existingTranscript.status === 'completed' &&
         existingTranscript.words &&
-        existingTranscript.words.length > 0 &&
-        isMediaMatch &&
-        isProviderMatch
+        existingTranscript.words.length > 0
       ) {
-        const dur = existingTranscript.duration || (existingTranscript.words[existingTranscript.words.length - 1]?.end ?? 0);
-        return {
-          success: true,
-          transcriptId: existingTranscript.id || ensureValidUuid(),
-          transcript: existingTranscript,
-          isCached: true,
-          wordsCount: existingTranscript.words.length,
-          durationSeconds: dur,
-        };
+        const isMediaMatch = targetMediaId
+          ? existingTranscript.mediaAssetId === targetMediaId
+          : !existingTranscript.mediaAssetId;
+        const isProviderMatch =
+          existingTranscript.provider === 'deepgram' &&
+          existingTranscript.model === 'nova-2';
+        const isTimingMatch = existingTranscript.timingPrecision === 'exact_word';
+
+        if (isMediaMatch && isProviderMatch && isTimingMatch) {
+          const dur = existingTranscript.duration || (existingTranscript.words[existingTranscript.words.length - 1]?.end ?? 0);
+          return {
+            success: true,
+            transcriptId: existingTranscript.id || ensureValidUuid(),
+            transcript: existingTranscript,
+            isCached: true,
+            wordsCount: existingTranscript.words.length,
+            durationSeconds: dur,
+          };
+        }
       }
     }
 
@@ -341,18 +464,30 @@ export class TranscriptionService {
             );
           }
 
-          resolvedAudioBuffer = fs.readFileSync(tempAudioPath);
+        resolvedAudioBuffer = fs.readFileSync(tempAudioPath);
         }
       }
 
-      // 7. Invoke Deepgram Nova-2 STT
+      // 7. SSRF Validation at Trust Boundary (Fail closed on private/loopback/cloud metadata)
+      if (resolvedAudioUrl) {
+        const ssrfCheck = await validateSafeRemoteUrl(resolvedAudioUrl);
+        if (!ssrfCheck.isValid) {
+          throw new ClipperError(
+            'SSRF_VIOLATION',
+            `Invalid or unsafe audio URL: ${ssrfCheck.error || 'Blocked by security policy.'}`,
+            400
+          );
+        }
+      }
+
+      // 8. Invoke Deepgram Nova-2 STT
       const rawTranscript = await transcribeWithDeepgram({
         audioBuffer: resolvedAudioBuffer,
         audioUrl: resolvedAudioUrl,
         mimetype: params.mimetype || 'audio/mp3',
       });
 
-      // 8. Validate Word Timestamps with sequence checks (Fail closed on malformed data)
+      // 9. Validate Word Timestamps with sequence checks (Fail closed on malformed data)
       const validation = validateWordTimestamps(rawTranscript.words);
       if (!validation.valid) {
         throw new ClipperError(
@@ -472,6 +607,32 @@ export class TranscriptionService {
             502
           );
         }
+
+        // Validate words belong inside their segments within 100ms tolerance
+        for (const seg of segments) {
+          for (const w of seg.words || []) {
+            if (w.start < seg.start - 0.1 || w.end > seg.end + 0.1) {
+              throw new ClipperError(
+                'TRANSCRIPTION_FAILED',
+                `Word "${w.word}" [${w.start}s, ${w.end}s] exceeds segment bounds [${seg.start}s, ${seg.end}s] beyond 100ms tolerance`,
+                502
+              );
+            }
+          }
+        }
+      }
+
+      // Validate deterministic sequential wordIndex progression without duplicates
+      const seenWordIndices = new Set<number>();
+      for (const w of finalWords) {
+        if (seenWordIndices.has(w.wordIndex)) {
+          throw new ClipperError(
+            'TRANSCRIPTION_FAILED',
+            `Duplicate wordIndex ${w.wordIndex} detected in transcript words`,
+            502
+          );
+        }
+        seenWordIndices.add(w.wordIndex);
       }
 
       const lastWord = finalWords.length > 0 ? finalWords[finalWords.length - 1] : undefined;
@@ -499,7 +660,7 @@ export class TranscriptionService {
       };
 
       // 11. Persist Transcript Relational Child Tables and Project State
-      await storage.saveTranscript(finalTranscript, projectId);
+      await storage.saveTranscript(finalTranscript, projectId, currentUserId);
 
       project.transcript = finalTranscript;
       project.status = 'transcript_ready';

@@ -53,7 +53,7 @@ export interface Transcript {
   utterances?: TranscriptUtterance[];
   segments?: TranscriptSegment[];
   language?: string;
-  source: 'deepgram' | 'youtube_captions' | 'user_upload';
+  source?: 'deepgram' | 'youtube_captions' | 'user_upload' | string;
   timingPrecision?: TranscriptTimingPrecision;
   timingLabel?: string;
   provider?: string;
@@ -270,7 +270,8 @@ export interface MediaAsset {
   audioCodec?: string;
   fps?: number;
   frameRate?: number;
-  status?: string;
+  status?: 'uploading' | 'ready' | 'processing' | 'failed' | 'deleted' | string;
+  deletedAt?: string;
   uploadSessionId?: string;
   processingStatus?: string;
   createdAt: string;
