@@ -415,6 +415,76 @@ async function runAllTests() {
     `).trim();
     assert(singleTranscriptCount === '1', 'Exactly one canonical transcript exists for the project (no duplicates)');
 
+    // =============================================================
+    // TEST 5: PHASE 4.6 STATE-WRITE FENCING (Scenario 15 & 16)
+    // =============================================================
+    console.log('\n--- Scenario 15: Stale Worker Cannot Transition Project Status to Transcribing ---');
+    const staleTranscribeToken = ensureValidUuid();
+    // Simulate expired lock for stale worker
+    runPsql(`
+      UPDATE public.transcription_locks
+      SET expires_at = NOW() - INTERVAL '5 seconds',
+          lease_token = '${staleTranscribeToken}'
+      WHERE lock_key = '${lockKey}';
+    `);
+
+    // Stale worker attempts to transition project status to 'transcribing'
+    const staleTranscribeResult = runPsql(`
+      SELECT public.update_project_status_if_lease_held(
+        '${testProjectId}'::UUID,
+        '${lockKey}'::TEXT,
+        '${staleTranscribeToken}'::UUID,
+        'transcribing'::TEXT
+      )::TEXT;
+    `).trim();
+    assert(staleTranscribeResult === 'false', 'Database strictly rejects stale worker transition to transcribing');
+
+    const verifyStatusNotTranscribing = runPsql(`
+      SELECT status FROM public.projects WHERE id = '${testProjectId}';
+    `).trim();
+    assert(verifyStatusNotTranscribing === 'transcript_ready', 'Project status remains transcript_ready');
+
+    console.log('\n--- Scenario 16: Un-Leased / Fraudulent Worker Cannot Transition Project Status to Failed ---');
+    const fakeToken = ensureValidUuid();
+    const fakeFailResult = runPsql(`
+      SELECT public.update_project_status_if_lease_held(
+        '${testProjectId}'::UUID,
+        '${lockKey}'::TEXT,
+        '${fakeToken}'::UUID,
+        'failed'::TEXT,
+        'Fake error'::TEXT
+      )::TEXT;
+    `).trim();
+    assert(fakeFailResult === 'false', 'Database strictly rejects un-leased worker transition to failed');
+
+    const verifyStatusNotFailed = runPsql(`
+      SELECT status FROM public.projects WHERE id = '${testProjectId}';
+    `).trim();
+    assert(verifyStatusNotFailed === 'transcript_ready', 'Project status protected: remains transcript_ready');
+
+    // Valid lease holder can update status
+    const validToken = ensureValidUuid();
+    runPsql(`
+      UPDATE public.transcription_locks
+      SET expires_at = NOW() + INTERVAL '60 seconds',
+          lease_token = '${validToken}'
+      WHERE lock_key = '${lockKey}';
+    `);
+    const validUpdateResult = runPsql(`
+      SELECT public.update_project_status_if_lease_held(
+        '${testProjectId}'::UUID,
+        '${lockKey}'::TEXT,
+        '${validToken}'::UUID,
+        'completed'::TEXT
+      )::TEXT;
+    `).trim();
+    assert(validUpdateResult === 'true', 'Valid lease holder successfully updates project status');
+
+    const verifyStatusCompleted = runPsql(`
+      SELECT status FROM public.projects WHERE id = '${testProjectId}';
+    `).trim();
+    assert(verifyStatusCompleted === 'completed', 'Project status successfully transitioned to completed');
+
     // -------------------------------------------------------------
     // Cleanup Test Data Cleanly
     // -------------------------------------------------------------

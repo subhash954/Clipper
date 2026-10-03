@@ -550,9 +550,28 @@ export class TranscriptionService {
     }
     const leaseToken = lockResult.leaseToken;
 
-    // 6. Transition Project Status to Transcribing (Strict Fail-Closed)
-    project.status = 'transcribing';
-    await storage.saveProject(project);
+    // 6. Transition Project Status to Transcribing (Strict Fail-Closed with Lease Fencing)
+    if (storage.updateProjectStatusIfLeaseHeld) {
+      const transcribingSet = await storage.updateProjectStatusIfLeaseHeld(
+        projectId,
+        lockKey,
+        leaseToken,
+        'transcribing',
+        undefined,
+        lockResult.leaseGeneration
+      );
+      if (!transcribingSet) {
+        throw new ClipperError(
+          'CONCURRENT_TRANSCRIPTION',
+          'Failed to transition project to transcribing: active lease lost or expired.',
+          409
+        );
+      }
+      project.status = 'transcribing';
+    } else {
+      project.status = 'transcribing';
+      await storage.saveProject(project);
+    }
 
     // 7. Resolve Audio for Transcription (Storage Authority: Bunny in Production)
     let resolvedAudioBuffer = params.audioBuffer;
@@ -874,21 +893,11 @@ export class TranscriptionService {
         );
       }
 
-      const latestProject = await storage.getProject(projectId);
-      const projToSave = latestProject || project;
-      projToSave.status = 'transcript_ready';
+      // Project state (status = 'transcript_ready' and active_media_id) is already atomically committed
+      // inside replace_transcript_atomic (and LocalStorageAdapter.saveTranscript) under the active lease.
+      project.status = 'transcript_ready';
       if (targetMediaId) {
-        projToSave.activeMediaId = targetMediaId;
-      }
-      try {
-        await storage.saveProject(projToSave);
-      } catch (saveProjErr: any) {
-        console.error(`Failed to update project status to transcript_ready for ${projectId}:`, saveProjErr);
-        throw new ClipperError(
-          'DATABASE_ERROR',
-          `Transcript persisted successfully but failed to update project state to transcript_ready: ${saveProjErr.message}`,
-          500
-        );
+        project.activeMediaId = targetMediaId;
       }
 
       // 14. Record Cost Telemetry (Estimated Processing Cost)
@@ -913,16 +922,24 @@ export class TranscriptionService {
         durationSeconds,
       };
     } catch (err: any) {
-      // Revert project status to 'failed' on error ONLY if current worker still holds the lease
+      // Revert project status to 'failed' on error ONLY if current worker held and still holds the active lease
       try {
-        if (storage.failProjectIfLeaseHeld && leaseToken) {
-          await storage.failProjectIfLeaseHeld(projectId, lockKey, leaseToken, err.message || 'Transcription failed');
-        } else if (!lockLost) {
-          const latestProj = await storage.getProject(projectId);
-          if (latestProj && latestProj.status === 'transcribing') {
-            latestProj.status = 'failed';
-            latestProj.errorMessage = err.message || 'Transcription failed';
-            await storage.saveProject(latestProj);
+        if (leaseToken && !lockLost) {
+          if (storage.failProjectIfLeaseHeld) {
+            await storage.failProjectIfLeaseHeld(
+              projectId,
+              lockKey,
+              leaseToken,
+              err.message || 'Transcription failed',
+              lockResult?.leaseGeneration
+            );
+          } else {
+            const latestProj = await storage.getProject(projectId);
+            if (latestProj && latestProj.status === 'transcribing') {
+              latestProj.status = 'failed';
+              latestProj.errorMessage = err.message || 'Transcription failed';
+              await storage.saveProject(latestProj);
+            }
           }
         }
       } catch (statusErr) {

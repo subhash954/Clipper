@@ -249,6 +249,13 @@ A forensic security and truthfulness hardening pass was conducted and verified:
     - **Dedicated Real PostgreSQL Test Suite (`test:postgres`):** Added `npm run test:postgres` script executing `tests/phase4_postgres_integration.test.ts`. Verified against real PostgreSQL 16: Scenarios 10 (Stale Worker A vs Worker B Race), 11 (Active Lease), 12 (Wrong Token Rejection), 13 (Expired Token Rejection), and 14 (Concurrent Commit Race). All 24 assertions passed.
     - **Schema & Migration Synchronization:** Migrated changes in `supabase/migrations/20261003_phase_4_5_stale_worker_fencing.sql` and synchronized `supabase/schema.sql`.
 
-15. **Phase 5 Status:**
+15. **Phase 4.6 Final Gate — Complete State-Write Fencing & Project Lifecycle Protection:**
+    - **Fenced `transcribing` Project Transition:** Replaced un-fenced `saveProject` call at transcription start with `updateProjectStatusIfLeaseHeld(projectId, lockKey, leaseToken, 'transcribing')`. Enforces that the worker holds an active, unexpired lease token and matching generation before mutating `project.status = 'transcribing'`, failing closed with 409 `CONCURRENT_TRANSCRIPTION` if the lease expired.
+    - **Guarded Error Handling in Catch Block:** Completely eliminated the un-fenced fallback `else if (!lockLost)` in `transcriptionService.ts`. Un-leased workers (e.g. whose lock acquisition was rejected) can no longer overwrite an active worker's project status to `'failed'`. Transition to `'failed'` strictly requires `leaseToken && !lockLost` and delegates to `failProjectIfLeaseHeld`.
+    - **Elimination of Post-Persistence Redundant Un-fenced Project Overwrite:** Removed the redundant un-fenced `storage.saveProject(projToSave)` write after `saveTranscript`. Because `replace_transcript_atomic` and `LocalStorageAdapter.saveTranscript` already commit `status = 'transcript_ready'` and `active_media_id` atomically inside the transaction under the lease, removing this write closes the window where a delayed worker could overwrite newer project data.
+    - **Authoritative RPC Function `update_project_status_if_lease_held`:** Created PostgreSQL function in `supabase/migrations/20261003_phase_4_6_state_write_fencing.sql` acquiring row-level exclusive locks on `transcription_locks` before mutating `projects.status`. Synchronized in `supabase/schema.sql`.
+    - **Real PostgreSQL Scenarios 15 & 16:** Expanded `tests/phase4_postgres_integration.test.ts` to test that stale workers cannot set `transcribing` after expiration, un-leased workers cannot set `failed`, and valid lease holders can transition project status. 30/30 assertions verified against real PostgreSQL 16.
+
+16. **Phase 5 Status:**
     Phase 5 was **NOT** started.
 

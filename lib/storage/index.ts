@@ -40,7 +40,8 @@ export interface IStorageAdapter {
   acquireTranscriptionLock(lockKey: string, projectId: string, mediaAssetId: string | null, userId: string, ttlSeconds?: number): Promise<LockAcquisitionResult>;
   releaseTranscriptionLock(lockKey: string, leaseToken: string): Promise<boolean>;
   renewTranscriptionLock(lockKey: string, leaseToken: string, ttlSeconds?: number): Promise<boolean>;
-  failProjectIfLeaseHeld?(projectId: string, lockKey: string, leaseToken: string, errorMessage?: string): Promise<boolean>;
+  updateProjectStatusIfLeaseHeld?(projectId: string, lockKey: string, leaseToken: string, targetStatus: Project['status'], errorMessage?: string, leaseGeneration?: number): Promise<boolean>;
+  failProjectIfLeaseHeld?(projectId: string, lockKey: string, leaseToken: string, errorMessage?: string, leaseGeneration?: number): Promise<boolean>;
   listTranscriptWords?(transcriptId: string): Promise<NormalizedTranscriptWord[]>;
   listTranscriptSegments?(transcriptId: string): Promise<TranscriptSegment[]>;
 }
@@ -624,37 +625,82 @@ export class SupabaseStorageAdapter implements IStorageAdapter {
     return true;
   }
 
-  async failProjectIfLeaseHeld(
+  async updateProjectStatusIfLeaseHeld(
     projectId: string,
     lockKey: string,
     leaseToken: string,
-    errorMessage?: string
+    targetStatus: Project['status'],
+    errorMessage?: string,
+    leaseGeneration?: number
   ): Promise<boolean> {
     if (!leaseToken) return false;
+
+    // 1. Attempt atomic RPC execution in PostgreSQL
+    try {
+      const { data, error } = await supabase.rpc('update_project_status_if_lease_held', {
+        p_project_id: projectId,
+        p_lock_key: lockKey,
+        p_lease_token: leaseToken,
+        p_target_status: targetStatus,
+        p_error_message: errorMessage || null,
+        p_lease_generation: leaseGeneration || null,
+      });
+      if (!error && typeof data === 'boolean') {
+        return data;
+      }
+    } catch {
+      // Fallback to query
+    }
+
+    // 2. Query fallback with lease and generation check
     const now = new Date().toISOString();
-    const { data: lock } = await supabase
+    let query = supabase
       .from('transcription_locks')
       .select('lease_token')
       .eq('lock_key', lockKey)
       .eq('lease_token', leaseToken)
-      .gt('expires_at', now)
-      .maybeSingle();
+      .gt('expires_at', now);
 
+    if (leaseGeneration !== undefined) {
+      query = query.eq('lease_generation', leaseGeneration);
+    }
+
+    const { data: lock } = await query.maybeSingle();
     if (!lock) {
-      return false; // Stale worker cannot fail the project
+      return false; // Stale worker cannot modify project status
+    }
+
+    const updatePayload: any = {
+      status: targetStatus,
+      updated_at: now,
+    };
+    if (errorMessage !== undefined) {
+      updatePayload.error_message = errorMessage;
     }
 
     const { error } = await supabase
       .from('projects')
-      .update({
-        status: 'failed',
-        error_message: errorMessage || 'Transcription failed',
-        updated_at: now,
-      })
-      .eq('id', projectId)
-      .eq('status', 'transcribing');
+      .update(updatePayload)
+      .eq('id', projectId);
 
     return !error;
+  }
+
+  async failProjectIfLeaseHeld(
+    projectId: string,
+    lockKey: string,
+    leaseToken: string,
+    errorMessage?: string,
+    leaseGeneration?: number
+  ): Promise<boolean> {
+    return this.updateProjectStatusIfLeaseHeld(
+      projectId,
+      lockKey,
+      leaseToken,
+      'failed',
+      errorMessage,
+      leaseGeneration
+    );
   }
 
   async saveTranscript(
@@ -1293,29 +1339,54 @@ export class LocalStorageAdapter implements IStorageAdapter {
     return true;
   }
 
-  async failProjectIfLeaseHeld(
+  async updateProjectStatusIfLeaseHeld(
     projectId: string,
     lockKey: string,
     leaseToken: string,
-    errorMessage?: string
+    targetStatus: Project['status'],
+    errorMessage?: string,
+    leaseGeneration?: number
   ): Promise<boolean> {
     if (!leaseToken) return false;
     const locks = this.readJson<any[]>(this.locksFile, []);
     const now = Date.now();
     const lock = locks.find(
-      (l) => l.lockKey === lockKey && l.leaseToken === leaseToken && new Date(l.expiresAt).getTime() > now
+      (l) => l.lockKey === lockKey &&
+             l.leaseToken === leaseToken &&
+             (leaseGeneration === undefined || l.leaseGeneration === leaseGeneration) &&
+             new Date(l.expiresAt).getTime() > now
     );
     if (!lock) {
-      return false; // Stale worker cannot fail the project
+      return false; // Stale worker cannot modify project status
     }
     const project = await this.getProject(projectId);
-    if (project && project.status === 'transcribing') {
-      project.status = 'failed';
-      project.errorMessage = errorMessage || 'Transcription failed';
+    if (project) {
+      project.status = targetStatus;
+      if (errorMessage !== undefined) {
+        project.errorMessage = errorMessage;
+      }
+      project.updatedAt = new Date().toISOString();
       await this.saveProject(project);
       return true;
     }
     return false;
+  }
+
+  async failProjectIfLeaseHeld(
+    projectId: string,
+    lockKey: string,
+    leaseToken: string,
+    errorMessage?: string,
+    leaseGeneration?: number
+  ): Promise<boolean> {
+    return this.updateProjectStatusIfLeaseHeld(
+      projectId,
+      lockKey,
+      leaseToken,
+      'failed',
+      errorMessage,
+      leaseGeneration
+    );
   }
 
   async saveTranscript(

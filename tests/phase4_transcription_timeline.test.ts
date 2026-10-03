@@ -2384,6 +2384,92 @@ async function runPhase4Tests() {
   // Release Worker B lease
   await storage.releaseTranscriptionLock(fenceLockKey, fenceTokenB);
 
+  // =========================================================================
+  // TEST GROUP 20: Phase 4.6 State-Write Fencing & Project Status Protection
+  // =========================================================================
+  console.log('\n--- TEST GROUP 20: Phase 4.6 State-Write Fencing & Project Status Protection ---');
+  const migration46Path = path.join(process.cwd(), 'supabase', 'migrations', '20261003_phase_4_6_state_write_fencing.sql');
+  assert(fs.existsSync(migration46Path), 'Migration 20261003_phase_4_6_state_write_fencing.sql exists');
+
+  const migration46Content = fs.readFileSync(migration46Path, 'utf-8');
+  assert(
+    migration46Content.includes('CREATE OR REPLACE FUNCTION public.update_project_status_if_lease_held') &&
+    migration46Content.includes('p_lease_token UUID') &&
+    migration46Content.includes('FOR UPDATE'),
+    'Migration 4.6 adds update_project_status_if_lease_held with row-level lock and lease token check'
+  );
+
+  const schema46Content = fs.readFileSync(path.join(process.cwd(), 'supabase', 'schema.sql'), 'utf-8');
+  assert(
+    schema46Content.includes('update_project_status_if_lease_held') &&
+    schema46Content.includes('GRANT EXECUTE ON FUNCTION public.update_project_status_if_lease_held'),
+    'supabase/schema.sql synchronized with update_project_status_if_lease_held definition and service_role grant'
+  );
+
+  // Local Storage State-Write Fencing Test
+  const stateProj: Project = {
+    id: ensureValidUuid(),
+    userId: aliceId,
+    title: 'State Fencing Project',
+    workflowType: 'youtube_to_shorts',
+    sourceType: 'upload',
+    durationSeconds: 15,
+    status: 'created',
+    clips: [],
+    createdAt: new Date().toISOString(),
+  };
+  await storage.saveProject(stateProj);
+
+  const stateLockKey = `${stateProj.id}:none:deepgram:nova-2:exact_word`;
+  const stateAcqA = await storage.acquireTranscriptionLock(stateLockKey, stateProj.id, null, aliceId, 1);
+  assert(stateAcqA.acquired === true, 'Worker A acquires lease for state fencing test');
+  const stateTokenA = stateAcqA.leaseToken!;
+
+  // Worker A transitions to transcribing
+  if (storage.updateProjectStatusIfLeaseHeld) {
+    const setTranscribingA = await storage.updateProjectStatusIfLeaseHeld(stateProj.id, stateLockKey, stateTokenA, 'transcribing');
+    assert(setTranscribingA === true, 'Worker A successfully transitions project to transcribing with active lease');
+  }
+
+  // Let Worker A's lease expire
+  await new Promise((res) => setTimeout(res, 1100));
+
+  // Stale Worker A attempts to set status to 'failed' using expired lease
+  if (storage.failProjectIfLeaseHeld) {
+    const staleFailed = await storage.failProjectIfLeaseHeld(stateProj.id, stateLockKey, stateTokenA, 'Stale error');
+    assert(staleFailed === false, 'Stale Worker A rejected from transitioning project status to failed');
+  }
+
+  // Worker B acquires the lease
+  const stateAcqB = await storage.acquireTranscriptionLock(stateLockKey, stateProj.id, null, aliceId, 10);
+  assert(stateAcqB.acquired === true, 'Worker B acquires new lease after Worker A expires');
+  const stateTokenB = stateAcqB.leaseToken!;
+
+  // Stale Worker A attempts to set status to 'transcribing'
+  if (storage.updateProjectStatusIfLeaseHeld) {
+    const staleTranscribing = await storage.updateProjectStatusIfLeaseHeld(stateProj.id, stateLockKey, stateTokenA, 'transcribing');
+    assert(staleTranscribing === false, 'Stale Worker A rejected from transitioning project status to transcribing');
+  }
+
+  // Rogue Worker without lease attempts to fail project
+  const rogueToken = ensureValidUuid();
+  if (storage.failProjectIfLeaseHeld) {
+    const rogueFailed = await storage.failProjectIfLeaseHeld(stateProj.id, stateLockKey, rogueToken, 'Rogue error');
+    assert(rogueFailed === false, 'Rogue worker without lease rejected from transitioning project status to failed');
+  }
+
+  // Legitimate Worker B marks completed
+  if (storage.updateProjectStatusIfLeaseHeld) {
+    const legitComplete = await storage.updateProjectStatusIfLeaseHeld(stateProj.id, stateLockKey, stateTokenB, 'completed');
+    assert(legitComplete === true, 'Legitimate Worker B transitions project status to completed');
+  }
+
+  const finalStateProj = await storage.getProject(stateProj.id);
+  assert(finalStateProj?.status === 'completed', 'Final project status correctly reflects completed');
+
+  // Release Worker B lease
+  await storage.releaseTranscriptionLock(stateLockKey, stateTokenB);
+
   console.log('\n====================================================');
   console.log(`PHASE 4 TEST SUMMARY: ${passed} PASSED, ${failed} FAILED`);
   console.log('====================================================');
