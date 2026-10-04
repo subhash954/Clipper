@@ -56,6 +56,7 @@ export type EDLOperationType =
   | 'INSERT_ITEM'
   | 'SET_SPEED'
   | 'SET_ENABLED'
+  | 'SET_REFRAME'
   | 'UNDO'
   | 'REDO';
 

@@ -6,6 +6,7 @@
 
 import { getStorage } from '../storage';
 import { Timeline, TimelineTrack, TimelineItem, EDLOperation, EditResult } from './edlTypes';
+import { CameraPath } from '../reframe/types';
 import {
   splitItem as mathSplitItem,
   trimItem as mathTrimItem,
@@ -691,6 +692,85 @@ export class EditingService {
   }
 
   /**
+   * Non-destructively attaches an authoritative camera path / auto-reframe plan
+   * to a timeline item or all video items, incrementing timeline version and recording an EDL operation.
+   */
+  static async applyReframe(params: {
+    projectId: string;
+    userId: string;
+    cameraPath: CameraPath;
+    itemId?: string;
+    expectedVersion: number;
+  }): Promise<EditResult> {
+    const { projectId, userId, cameraPath, itemId, expectedVersion } = params;
+    const storage = getStorage();
+    const timeline = await storage.getTimeline(projectId);
+    if (!timeline) {
+      throw new ClipperError('NOT_FOUND', `Timeline for project ${projectId} not found`, 404);
+    }
+
+    if (timeline.version !== expectedVersion) {
+      throw new ClipperError(
+        'TIMELINE_VERSION_CONFLICT',
+        `Version conflict: expected ${expectedVersion}, found ${timeline.version}`,
+        409,
+        true,
+        { expectedVersion, currentVersion: timeline.version }
+      );
+    }
+
+    let foundItem = false;
+    const previousReframeMap: Record<string, any> = {};
+
+    const updatedTracks = timeline.tracks.map((track) => {
+      const isVideoTrack = track.type === 'VIDEO';
+      return {
+        ...track,
+        items: track.items.map((item) => {
+          if ((itemId && item.id === itemId) || (!itemId && isVideoTrack)) {
+            foundItem = true;
+            previousReframeMap[item.id] = item.metadata?.reframe || null;
+            return {
+              ...item,
+              metadata: {
+                ...(item.metadata || {}),
+                reframe: cameraPath,
+              },
+              updatedAt: new Date().toISOString(),
+            };
+          }
+          return item;
+        }),
+        updatedAt: new Date().toISOString(),
+      };
+    });
+
+    if (itemId && !foundItem) {
+      throw new ClipperError('NOT_FOUND', `Timeline item ${itemId} not found`, 404);
+    }
+
+    const operation: EDLOperation = {
+      id: crypto.randomUUID(),
+      timelineId: timeline.id,
+      type: 'SET_REFRAME',
+      params: { itemId, cameraPath },
+      inverseParams: { itemId, previousReframeMap },
+      version: expectedVersion + 1,
+      userId,
+      createdAt: new Date().toISOString(),
+    };
+
+    const updatedTimeline: Timeline = {
+      ...timeline,
+      tracks: updatedTracks,
+      updatedAt: new Date().toISOString(),
+    };
+
+    const saved = await storage.saveTimeline(updatedTimeline, expectedVersion, userId, operation);
+    return { timeline: saved, operation };
+  }
+
+  /**
    * Reverts the most recent EDL operation deterministically using the journal cursor
    */
   static async undo(projectId: string, userId: string, expectedVersion: number): Promise<Timeline> {
@@ -706,3 +786,4 @@ export class EditingService {
     return await storage.redoTimeline(projectId, userId, expectedVersion);
   }
 }
+

@@ -565,7 +565,34 @@ export async function generateReframeTrack(options: {
 /**
  * Builds the exact FFmpeg video crop & scale filter for a ReframeTrack
  */
-export function buildFfmpegReframeCropFilter(track: ReframeTrack): string {
+export function buildFfmpegReframeCropFilter(
+  trackOrWidth: ReframeTrack | number,
+  sourceHeightParam?: number,
+  aspectRatioParam?: AspectRatio,
+  singleKeyframe?: ReframeKeyframe
+): string {
+  let track: ReframeTrack;
+  if (typeof trackOrWidth === 'number') {
+    const sw = trackOrWidth;
+    const sh = sourceHeightParam || 1080;
+    const aspect = aspectRatioParam || '9:16';
+    const dims = calculateCropDimensions(sw, sh, aspect);
+    track = {
+      id: 'kf-filter',
+      sourceWidth: sw,
+      sourceHeight: sh,
+      targetWidth: dims.targetWidth,
+      targetHeight: dims.targetHeight,
+      aspectRatio: aspect,
+      trackingMode: singleKeyframe ? 'smart' : 'center',
+      keyframes: singleKeyframe ? [singleKeyframe] : [],
+      version: '2.0.0',
+      createdAt: new Date().toISOString(),
+    };
+  } else {
+    track = trackOrWidth;
+  }
+
   const { sourceWidth, sourceHeight, targetWidth, targetHeight, aspectRatio, trackingMode, keyframes } = track;
   const { cropWidth, cropHeight } = calculateCropDimensions(sourceWidth, sourceHeight, aspectRatio);
 

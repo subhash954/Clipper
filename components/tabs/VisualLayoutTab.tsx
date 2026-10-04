@@ -2,7 +2,7 @@
 
 import React, { useState } from 'react';
 import { VisualLayoutSettings, EditOperation } from '@/lib/types';
-import { AspectRatio, TrackingMode, ManualReframeSettings } from '@/lib/reframe/types';
+import { AspectRatio, TrackingMode, ManualReframeSettings, MultiPersonMode } from '@/lib/reframe/types';
 import {
   Crop,
   Smartphone,
@@ -44,6 +44,7 @@ export const VisualLayoutTab: React.FC<VisualLayoutTabProps> = ({
   const framingMode: TrackingMode = settings.trackingMode || 'center';
   const manualPos: ManualReframeSettings = settings.manualPosition || { x: 0.5, y: 0.5, zoom: 1.0 };
   const isLocked = Boolean(settings.lockFraming);
+  const multiMode: MultiPersonMode = settings.multiPersonMode || 'GENERAL';
 
   const [insertedBrolls, setInsertedBrolls] = useState<string[]>([]);
 
@@ -59,6 +60,11 @@ export const VisualLayoutTab: React.FC<VisualLayoutTabProps> = ({
   const handleModeSelect = (mode: TrackingMode) => {
     handleUpdate({ trackingMode: mode });
     onTriggerReframe?.(mode, selectedRatio);
+  };
+
+  const handleMultiPersonSelect = (mode: MultiPersonMode) => {
+    handleUpdate({ multiPersonMode: mode });
+    onTriggerReframe?.(framingMode, selectedRatio);
   };
 
   const handleManualChange = (partial: Partial<ManualReframeSettings>) => {
@@ -209,6 +215,40 @@ export const VisualLayoutTab: React.FC<VisualLayoutTabProps> = ({
                   )}
                 </button>
               </div>
+              {/* Multi-Person Framing Selection */}
+              <div className="pt-2 border-t border-slate-200/60 space-y-1.5">
+                <div className="flex items-center justify-between text-[11px] font-semibold text-slate-700">
+                  <span>Composition Strategy:</span>
+                  <span className="text-[10px] text-slate-500 font-mono font-normal">
+                    {multiMode === 'SINGLE' && 'Single Speaker'}
+                    {multiMode === 'DUAL' && '2-Shot Conversation'}
+                    {multiMode === 'GROUP' && 'Group / Wide'}
+                    {multiMode === 'GENERAL' && 'Auto Adaptive'}
+                  </span>
+                </div>
+                <div className="grid grid-cols-4 gap-1.5">
+                  {[
+                    { id: 'SINGLE', label: 'Single' },
+                    { id: 'DUAL', label: '2-Shot' },
+                    { id: 'GROUP', label: 'Group' },
+                    { id: 'GENERAL', label: 'Auto' },
+                  ].map((m) => (
+                    <button
+                      key={m.id}
+                      type="button"
+                      onClick={() => handleMultiPersonSelect(m.id as MultiPersonMode)}
+                      className={`px-2 py-1.5 rounded-lg text-[11px] font-medium transition-colors cursor-pointer ${
+                        multiMode === m.id
+                          ? 'bg-red-600 text-white font-bold shadow-xs'
+                          : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-100'
+                      }`}
+                    >
+                      {m.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
               <p className="text-[11px] text-slate-600 leading-normal">
                 {keyframeCount > 0
                   ? `Temporal smoothing active across ${keyframeCount} keyframes with headroom anchoring.`

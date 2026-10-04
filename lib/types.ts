@@ -382,8 +382,8 @@ export interface SubtitleStyle {
   shadowBlur?: number;
 }
 
-import { AspectRatio, TrackingMode, ManualReframeSettings, ReframeTrack } from './reframe/types';
-export type { AspectRatio, TrackingMode, ManualReframeSettings, ReframeTrack };
+import { AspectRatio, TrackingMode, ManualReframeSettings, ReframeTrack, MultiPersonMode } from './reframe/types';
+export type { AspectRatio, TrackingMode, ManualReframeSettings, ReframeTrack, MultiPersonMode };
 
 export interface VisualLayoutSettings {
   splitScreenEnabled: boolean;
@@ -399,6 +399,7 @@ export interface VisualLayoutSettings {
   backgroundBlur: boolean;
   aspectRatio?: AspectRatio;
   trackingMode?: TrackingMode;
+  multiPersonMode?: MultiPersonMode;
   manualPosition?: ManualReframeSettings;
   lockFraming?: boolean;
   reframeTrack?: ReframeTrack;

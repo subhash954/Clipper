@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { Project, RenderJob, CostTelemetryRecord, Transcript, TranscriptSegment, NormalizedTranscriptWord, WordTimestamp, MediaAsset } from '../types';
 import { Timeline, TimelineTrack, TimelineItem, EDLOperation } from '../editor/edlTypes';
+import { ReframeAnalysis, ReframeConfig } from '../reframe/types';
 import { supabase, isSupabaseConfigured } from '../supabase';
 import { ClipperError } from '../errors';
 
@@ -51,6 +52,10 @@ export interface IStorageAdapter {
   redoTimeline(projectId: string, userId?: string, expectedVersion?: number): Promise<Timeline>;
   recordTimelineOperation?(operation: EDLOperation): Promise<void>;
   listTimelineOperations?(timelineId: string): Promise<EDLOperation[]>;
+  saveReframeAnalysis?(analysis: ReframeAnalysis, userId?: string): Promise<ReframeAnalysis>;
+  getReframeAnalysis?(projectId: string, mediaAssetId?: string): Promise<ReframeAnalysis | null>;
+  saveReframeConfig?(config: ReframeConfig, userId?: string): Promise<ReframeConfig>;
+  getReframeConfig?(projectId: string, targetAspectRatio?: string): Promise<ReframeConfig | null>;
 }
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -1214,6 +1219,104 @@ export class SupabaseStorageAdapter implements IStorageAdapter {
       createdAt: d.created_at,
     }));
   }
+
+  async saveReframeAnalysis(analysis: ReframeAnalysis, userId?: string): Promise<ReframeAnalysis> {
+    const { data, error } = await supabase.rpc('save_reframe_analysis_atomic', {
+      p_project_id: analysis.projectId,
+      p_user_id: userId || null,
+      p_media_asset_id: analysis.mediaAssetId,
+      p_source_width: analysis.sourceWidth,
+      p_source_height: analysis.sourceHeight,
+      p_duration: analysis.duration,
+      p_scenes: analysis.scenes,
+      p_subject_tracks: analysis.subjectTracks,
+      p_provider: analysis.provider || 'hybrid',
+      p_version: analysis.version || '1.0.0',
+    });
+
+    if (error) {
+      if (error.code === '42501' || error.message?.includes('FORBIDDEN') || error.message?.includes('MEDIA_NOT_OWNED')) {
+        throw new ClipperError('FORBIDDEN', error.message, 403);
+      }
+      if (error.code === 'P0002' || error.message?.includes('PROJECT_NOT_FOUND')) {
+        throw new ClipperError('NOT_FOUND', error.message, 404);
+      }
+      throw new ClipperError('DATABASE_ERROR', `Failed to save reframe analysis: ${error.message}`, 500);
+    }
+
+    return data as ReframeAnalysis;
+  }
+
+  async getReframeAnalysis(projectId: string, mediaAssetId?: string): Promise<ReframeAnalysis | null> {
+    let query = supabase.from('reframe_analyses').select('*').eq('project_id', projectId);
+    if (mediaAssetId) {
+      query = query.eq('media_asset_id', mediaAssetId);
+    }
+    const { data, error } = await query.order('created_at', { ascending: false }).limit(1).maybeSingle();
+    if (error || !data) return null;
+    return {
+      id: data.id,
+      projectId: data.project_id,
+      mediaAssetId: data.media_asset_id,
+      sourceWidth: data.source_width,
+      sourceHeight: data.source_height,
+      duration: Number(data.duration),
+      scenes: data.scenes || [],
+      subjectTracks: data.subject_tracks || [],
+      provider: data.provider,
+      version: data.version,
+      createdAt: data.created_at,
+    };
+  }
+
+  async saveReframeConfig(config: ReframeConfig, userId?: string): Promise<ReframeConfig> {
+    const { data, error } = await supabase.rpc('save_reframe_config_atomic', {
+      p_project_id: config.projectId,
+      p_user_id: userId || null,
+      p_target_aspect_ratio: config.targetAspectRatio,
+      p_tracking_mode: config.trackingMode || 'smart',
+      p_multi_person_mode: config.multiPersonMode || 'GENERAL',
+      p_manual_settings: config.manualSettings || null,
+      p_smoothing_alpha: config.smoothingAlpha ?? 0.25,
+      p_dead_zone: config.deadZone ?? 0.035,
+      p_headroom: config.headroom ?? 0.35,
+    });
+
+    if (error) {
+      if (error.code === '42501' || error.message?.includes('FORBIDDEN')) {
+        throw new ClipperError('FORBIDDEN', error.message, 403);
+      }
+      if (error.code === 'P0002' || error.message?.includes('PROJECT_NOT_FOUND')) {
+        throw new ClipperError('NOT_FOUND', error.message, 404);
+      }
+      throw new ClipperError('DATABASE_ERROR', `Failed to save reframe config: ${error.message}`, 500);
+    }
+
+    return data as ReframeConfig;
+  }
+
+  async getReframeConfig(projectId: string, targetAspectRatio?: string): Promise<ReframeConfig | null> {
+    let query = supabase.from('reframe_configs').select('*').eq('project_id', projectId);
+    if (targetAspectRatio) {
+      query = query.eq('target_aspect_ratio', targetAspectRatio);
+    }
+    const { data, error } = await query.order('updated_at', { ascending: false }).limit(1).maybeSingle();
+    if (error || !data) return null;
+    return {
+      id: data.id,
+      projectId: data.project_id,
+      targetAspectRatio: data.target_aspect_ratio,
+      trackingMode: data.tracking_mode,
+      multiPersonMode: data.multi_person_mode,
+      manualSettings: data.manual_settings,
+      smoothingAlpha: Number(data.smoothing_alpha),
+      deadZone: Number(data.dead_zone),
+      headroom: Number(data.headroom),
+      version: data.version,
+      createdAt: data.created_at,
+      updatedAt: data.updated_at,
+    };
+  }
 }
 
 /**
@@ -1231,6 +1334,8 @@ export class LocalStorageAdapter implements IStorageAdapter {
   private locksFile = path.join(process.cwd(), 'data', 'transcription_locks.json');
   private timelinesFile = path.join(process.cwd(), 'data', 'timelines.json');
   private timelineOpsFile = path.join(process.cwd(), 'data', 'timeline_operations.json');
+  private reframeAnalysesFile = path.join(process.cwd(), 'data', 'reframe_analyses.json');
+  private reframeConfigsFile = path.join(process.cwd(), 'data', 'reframe_configs.json');
 
   constructor() {
     if (!fs.existsSync(this.dataDir)) {
@@ -1974,6 +2079,40 @@ export class LocalStorageAdapter implements IStorageAdapter {
   async listTimelineOperations(timelineId: string): Promise<EDLOperation[]> {
     const ops = this.readJson<EDLOperation[]>(this.timelineOpsFile, []);
     return ops.filter((op) => op.timelineId === timelineId);
+  }
+
+  async saveReframeAnalysis(analysis: ReframeAnalysis, userId?: string): Promise<ReframeAnalysis> {
+    const list = this.readJson<ReframeAnalysis[]>(this.reframeAnalysesFile, []);
+    const updated = [
+      analysis,
+      ...list.filter((a) => !(a.projectId === analysis.projectId && a.mediaAssetId === analysis.mediaAssetId)),
+    ];
+    this.writeJson(this.reframeAnalysesFile, updated);
+    return analysis;
+  }
+
+  async getReframeAnalysis(projectId: string, mediaAssetId?: string): Promise<ReframeAnalysis | null> {
+    const list = this.readJson<ReframeAnalysis[]>(this.reframeAnalysesFile, []);
+    return (
+      list.find((a) => a.projectId === projectId && (!mediaAssetId || a.mediaAssetId === mediaAssetId)) || null
+    );
+  }
+
+  async saveReframeConfig(config: ReframeConfig, userId?: string): Promise<ReframeConfig> {
+    const list = this.readJson<ReframeConfig[]>(this.reframeConfigsFile, []);
+    const updated = [
+      config,
+      ...list.filter((c) => !(c.projectId === config.projectId && c.targetAspectRatio === config.targetAspectRatio)),
+    ];
+    this.writeJson(this.reframeConfigsFile, updated);
+    return config;
+  }
+
+  async getReframeConfig(projectId: string, targetAspectRatio?: string): Promise<ReframeConfig | null> {
+    const list = this.readJson<ReframeConfig[]>(this.reframeConfigsFile, []);
+    return (
+      list.find((c) => c.projectId === projectId && (!targetAspectRatio || c.targetAspectRatio === targetAspectRatio)) || null
+    );
   }
 }
 
