@@ -1961,7 +1961,9 @@ CREATE TABLE IF NOT EXISTS public.reframe_analyses (
   scenes JSONB NOT NULL DEFAULT '[]'::jsonb,
   subject_tracks JSONB NOT NULL DEFAULT '[]'::jsonb,
   provider TEXT NOT NULL DEFAULT 'hybrid',
-  version TEXT NOT NULL DEFAULT '1.0.0',
+  version TEXT NOT NULL DEFAULT '2.0.0',
+  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+  degraded BOOLEAN NOT NULL DEFAULT false,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL,
   CONSTRAINT uq_reframe_analysis_project_media UNIQUE (project_id, media_asset_id)
@@ -2079,6 +2081,14 @@ USING (
 );
 
 -- 8. Atomic RPC: save_reframe_analysis_atomic
+-- Drop older 10-argument signature so the new parameterized function with defaults is unambiguous
+DROP FUNCTION IF EXISTS public.save_reframe_analysis_atomic(
+  UUID, UUID, UUID, INTEGER, INTEGER, NUMERIC, JSONB, JSONB, TEXT, TEXT
+);
+
+-- 2. Enhanced Atomic RPC: save_reframe_analysis_atomic with strict input bounds,
+
+-- tenant validation, media-project relationship verification, and search_path isolation
 CREATE OR REPLACE FUNCTION public.save_reframe_analysis_atomic(
   p_project_id UUID,
   p_user_id UUID,
@@ -2089,12 +2099,14 @@ CREATE OR REPLACE FUNCTION public.save_reframe_analysis_atomic(
   p_scenes JSONB,
   p_subject_tracks JSONB,
   p_provider TEXT DEFAULT 'hybrid',
-  p_version TEXT DEFAULT '1.0.0'
+  p_version TEXT DEFAULT '2.0.0',
+  p_metadata JSONB DEFAULT '{}'::jsonb,
+  p_degraded BOOLEAN DEFAULT false
 )
 RETURNS JSONB
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public, pg_catalog
+SET search_path = public, pg_catalog, pg_temp
 AS $$
 DECLARE
   v_project RECORD;
@@ -2104,6 +2116,28 @@ DECLARE
   v_analysis RECORD;
   v_result JSONB;
 BEGIN
+  -- Strict numeric & schema parameter validation
+  IF p_source_width IS NULL OR p_source_width <= 0 THEN
+    RAISE EXCEPTION 'INVALID_WIDTH: Source width must be positive' USING ERRCODE = '22003';
+  END IF;
+
+  IF p_source_height IS NULL OR p_source_height <= 0 THEN
+    RAISE EXCEPTION 'INVALID_HEIGHT: Source height must be positive' USING ERRCODE = '22003';
+  END IF;
+
+  IF p_duration IS NULL OR p_duration <= 0 THEN
+    RAISE EXCEPTION 'INVALID_DURATION: Duration must be positive' USING ERRCODE = '22003';
+  END IF;
+
+  IF p_scenes IS NOT NULL AND jsonb_typeof(p_scenes) <> 'array' THEN
+    RAISE EXCEPTION 'INVALID_SCENES: Scenes must be a json array' USING ERRCODE = '22023';
+  END IF;
+
+  IF p_subject_tracks IS NOT NULL AND jsonb_typeof(p_subject_tracks) <> 'array' THEN
+    RAISE EXCEPTION 'INVALID_TRACKS: Subject tracks must be a json array' USING ERRCODE = '22023';
+  END IF;
+
+  -- 1. Validate project existence
   SELECT id, user_id, workspace_id INTO v_project
   FROM public.projects
   WHERE id = p_project_id;
@@ -2113,6 +2147,7 @@ BEGIN
       USING ERRCODE = 'P0002';
   END IF;
 
+  -- 2. Validate authorization
   IF p_user_id IS NOT NULL THEN
     SELECT id, role INTO v_user_profile
     FROM public.profiles
@@ -2148,6 +2183,7 @@ BEGIN
     END IF;
   END IF;
 
+  -- 3. Validate media asset ownership: media must belong strictly to project
   SELECT EXISTS (
     SELECT 1 FROM public.media_assets
     WHERE id = p_media_asset_id AND project_id = p_project_id
@@ -2158,6 +2194,7 @@ BEGIN
       USING ERRCODE = '42501';
   END IF;
 
+  -- 4. Upsert analysis record
   INSERT INTO public.reframe_analyses (
     project_id,
     media_asset_id,
@@ -2168,6 +2205,8 @@ BEGIN
     subject_tracks,
     provider,
     version,
+    metadata,
+    degraded,
     updated_at
   ) VALUES (
     p_project_id,
@@ -2178,7 +2217,9 @@ BEGIN
     COALESCE(p_scenes, '[]'::jsonb),
     COALESCE(p_subject_tracks, '[]'::jsonb),
     COALESCE(p_provider, 'hybrid'),
-    COALESCE(p_version, '1.0.0'),
+    COALESCE(p_version, '2.0.0'),
+    COALESCE(p_metadata, '{}'::jsonb),
+    COALESCE(p_degraded, false),
     NOW()
   )
   ON CONFLICT (project_id, media_asset_id)
@@ -2190,9 +2231,12 @@ BEGIN
     subject_tracks = EXCLUDED.subject_tracks,
     provider = EXCLUDED.provider,
     version = EXCLUDED.version,
+    metadata = EXCLUDED.metadata,
+    degraded = EXCLUDED.degraded,
     updated_at = NOW()
   RETURNING * INTO v_analysis;
 
+  -- 5. Format JSON response
   v_result := jsonb_build_object(
     'id', v_analysis.id,
     'projectId', v_analysis.project_id,
@@ -2204,6 +2248,8 @@ BEGIN
     'subjectTracks', v_analysis.subject_tracks,
     'provider', v_analysis.provider,
     'version', v_analysis.version,
+    'metadata', v_analysis.metadata,
+    'degraded', v_analysis.degraded,
     'createdAt', v_analysis.created_at,
     'updatedAt', v_analysis.updated_at
   );
@@ -2212,7 +2258,7 @@ BEGIN
 END;
 $$;
 
--- 9. Atomic RPC: save_reframe_config_atomic
+-- 3. Enhanced Atomic RPC: save_reframe_config_atomic with strict input bounds
 CREATE OR REPLACE FUNCTION public.save_reframe_config_atomic(
   p_project_id UUID,
   p_user_id UUID,
@@ -2227,7 +2273,7 @@ CREATE OR REPLACE FUNCTION public.save_reframe_config_atomic(
 RETURNS JSONB
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public, pg_catalog
+SET search_path = public, pg_catalog, pg_temp
 AS $$
 DECLARE
   v_project RECORD;
@@ -2236,6 +2282,38 @@ DECLARE
   v_config RECORD;
   v_result JSONB;
 BEGIN
+  -- Strict configuration parameter validation
+  IF p_target_aspect_ratio NOT IN ('16:9', '9:16', '1:1', '4:5') THEN
+    RAISE EXCEPTION 'INVALID_ASPECT_RATIO: Target aspect ratio % is invalid', p_target_aspect_ratio
+      USING ERRCODE = '22023';
+  END IF;
+
+  IF p_tracking_mode IS NOT NULL AND p_tracking_mode NOT IN ('center', 'smart', 'manual') THEN
+    RAISE EXCEPTION 'INVALID_TRACKING_MODE: Tracking mode % is invalid', p_tracking_mode
+      USING ERRCODE = '22023';
+  END IF;
+
+  IF p_multi_person_mode IS NOT NULL AND p_multi_person_mode NOT IN ('SINGLE', 'DUAL', 'GROUP', 'GENERAL') THEN
+    RAISE EXCEPTION 'INVALID_MULTI_PERSON_MODE: Multi person mode % is invalid', p_multi_person_mode
+      USING ERRCODE = '22023';
+  END IF;
+
+  IF p_smoothing_alpha IS NOT NULL AND (p_smoothing_alpha <= 0 OR p_smoothing_alpha > 1.0) THEN
+    RAISE EXCEPTION 'INVALID_SMOOTHING_ALPHA: Smoothing alpha must be in (0, 1]'
+      USING ERRCODE = '22003';
+  END IF;
+
+  IF p_dead_zone IS NOT NULL AND (p_dead_zone < 0 OR p_dead_zone > 0.5) THEN
+    RAISE EXCEPTION 'INVALID_DEAD_ZONE: Dead zone must be in [0, 0.5]'
+      USING ERRCODE = '22003';
+  END IF;
+
+  IF p_headroom IS NOT NULL AND (p_headroom < 0 OR p_headroom > 1.0) THEN
+    RAISE EXCEPTION 'INVALID_HEADROOM: Headroom must be in [0, 1.0]'
+      USING ERRCODE = '22003';
+  END IF;
+
+  -- 1. Validate project existence
   SELECT id, user_id, workspace_id INTO v_project
   FROM public.projects
   WHERE id = p_project_id;
@@ -2245,6 +2323,7 @@ BEGIN
       USING ERRCODE = 'P0002';
   END IF;
 
+  -- 2. Validate authorization
   IF p_user_id IS NOT NULL THEN
     SELECT id, role INTO v_user_profile
     FROM public.profiles
@@ -2280,6 +2359,7 @@ BEGIN
     END IF;
   END IF;
 
+  -- 3. Upsert config record
   INSERT INTO public.reframe_configs (
     project_id,
     target_aspect_ratio,
@@ -2315,6 +2395,7 @@ BEGIN
     updated_at = NOW()
   RETURNING * INTO v_config;
 
+  -- 4. Format JSON response
   v_result := jsonb_build_object(
     'id', v_config.id,
     'projectId', v_config.project_id,
@@ -2334,11 +2415,8 @@ BEGIN
 END;
 $$;
 
--- 10. Enforce least privilege execution permissions
-REVOKE EXECUTE ON FUNCTION public.save_reframe_analysis_atomic FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.save_reframe_analysis_atomic TO service_role;
-
-REVOKE EXECUTE ON FUNCTION public.save_reframe_config_atomic FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.save_reframe_config_atomic TO service_role;
+-- 4. Permissions
+GRANT EXECUTE ON FUNCTION public.save_reframe_analysis_atomic TO authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.save_reframe_config_atomic TO authenticated, service_role;
 
 

@@ -439,9 +439,95 @@ async function runPhase6PostgresTests() {
     `);
     assert(opInsertResult.exitCode === 0, 'timeline_operations allows set_reframe operation');
 
+    // =============================================================
+    // SCENARIO 8: RPC Parameter Bounds Validation
+
+    // =============================================================
+    console.log('\n--- Scenario 8: RPC Parameter Bounds Validation ---');
+
+    // 1. Zero/Negative source_width rejected by RPC
+    const zeroWidthRpc = await execPsqlAsync(`
+      SELECT public.save_reframe_analysis_atomic(
+        '${projectAId}', '${ownerUserId}', '${mediaAId}',
+        0, 1080, 60.0, '[]'::jsonb, '[]'::jsonb, 'hybrid', '2.0.0'
+      );
+    `);
+    assert(zeroWidthRpc.exitCode !== 0, 'Zero source_width rejected by save_reframe_analysis_atomic');
+    assert(zeroWidthRpc.stderr.includes('INVALID_WIDTH'), 'Zero width rejected with INVALID_WIDTH error');
+
+    // 2. Zero/Negative duration rejected by RPC
+    const zeroDurRpc = await execPsqlAsync(`
+      SELECT public.save_reframe_analysis_atomic(
+        '${projectAId}', '${ownerUserId}', '${mediaAId}',
+        1920, 1080, 0.0, '[]'::jsonb, '[]'::jsonb, 'hybrid', '2.0.0'
+      );
+    `);
+    assert(zeroDurRpc.exitCode !== 0, 'Zero duration rejected by save_reframe_analysis_atomic');
+    assert(zeroDurRpc.stderr.includes('INVALID_DURATION'), 'Zero duration rejected with INVALID_DURATION error');
+
+    // 3. Invalid target aspect ratio rejected by save_reframe_config_atomic
+    const invalidAspectRpc = await execPsqlAsync(`
+      SELECT public.save_reframe_config_atomic(
+        '${projectAId}', '${ownerUserId}', '21:9', 'smart', 'GENERAL'
+      );
+    `);
+    assert(invalidAspectRpc.exitCode !== 0, 'Invalid aspect ratio 21:9 rejected by save_reframe_config_atomic');
+    assert(invalidAspectRpc.stderr.includes('INVALID_ASPECT_RATIO'), 'Invalid aspect ratio rejected with INVALID_ASPECT_RATIO error');
+
+    // 4. Invalid smoothing alpha (> 1.0) rejected by save_reframe_config_atomic
+    const invalidAlphaRpc = await execPsqlAsync(`
+      SELECT public.save_reframe_config_atomic(
+        '${projectAId}', '${ownerUserId}', '9:16', 'smart', 'GENERAL', NULL, 1.5
+      );
+    `);
+    assert(invalidAlphaRpc.exitCode !== 0, 'Smoothing alpha > 1.0 rejected by save_reframe_config_atomic');
+    assert(invalidAlphaRpc.stderr.includes('INVALID_SMOOTHING_ALPHA'), 'Smoothing alpha > 1.0 rejected with INVALID_SMOOTHING_ALPHA error');
+
+    // =============================================================
+    // SCENARIO 9: Metadata & Degraded Status Persistence
+    // =============================================================
+    console.log('\n--- Scenario 9: Metadata & Degraded Status Persistence ---');
+
+    const metaRpcResult = runPsql(`
+      SELECT public.save_reframe_analysis_atomic(
+        '${projectAId}', '${ownerUserId}', '${mediaAId}',
+        1920, 1080, 45.0, '[]'::jsonb, '[]'::jsonb, 'local-centroid', '2.0.0',
+        '{"detectorMode":"heuristic","capabilities":["spatial-luminance-centroid"]}'::jsonb,
+        true
+      );
+    `);
+    assert(metaRpcResult.includes('local-centroid'), 'RPC executed with local-centroid provider');
+
+    // Verify row directly in PostgreSQL
+    const dbRowMeta = runPsql(`
+      SELECT metadata->>'detectorMode', degraded
+      FROM public.reframe_analyses
+      WHERE project_id = '${projectAId}' AND media_asset_id = '${mediaAId}';
+    `).trim();
+    assert(dbRowMeta.includes('heuristic'), 'metadata.detectorMode recorded as heuristic in real DB');
+    assert(dbRowMeta.includes('t') || dbRowMeta.includes('true'), 'degraded boolean recorded as true in real DB');
+
+    // =============================================================
+    // SCENARIO 10: RLS Direct Access Verification
+    // =============================================================
+    console.log('\n--- Scenario 10: RLS Direct Access Verification ---');
+
+    // Direct insertion by unauthenticated user blocked by RLS
+    const rlsBlocked = await execPsqlAsync(`
+      SET ROLE anon;
+      INSERT INTO public.reframe_analyses (
+        project_id, media_asset_id, source_width, source_height, duration
+      ) VALUES (
+        '${projectAId}', '${mediaAId}', 1920, 1080, 30.0
+      );
+      RESET ROLE;
+    `);
+    assert(rlsBlocked.exitCode !== 0, 'Direct insertion by unauthenticated anon role blocked by RLS');
+
     console.log('\n====================================================');
     console.log(`📊 PHASE 6 POSTGRESQL GATE SUMMARY: ${passed} PASSED, ${failed} FAILED`);
     console.log('====================================================\n');
+
 
     if (failed > 0) {
       process.exit(1);

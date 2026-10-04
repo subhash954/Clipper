@@ -2,38 +2,53 @@ import fs from 'fs';
 import { execSync } from 'child_process';
 import { SubjectDetection } from './types';
 import { getFfmpegPath } from '../renderEngine';
+import { ClipperError } from '../errors';
 
 export interface DetectorOptions {
   framePath: string;
   timestamp: number;
 }
 
+export interface DetectorMetadata {
+  provider: string;
+  providerMode: 'ml-vision' | 'heuristic' | 'fixture' | 'hybrid';
+  capabilities: string[];
+  degraded: boolean;
+  fallbackReason?: string;
+}
+
 export interface ISubjectDetectorProvider {
   readonly name: string;
+  getMetadata(): DetectorMetadata;
   detectSubjects(options: DetectorOptions): Promise<SubjectDetection[]>;
 }
 
 /**
  * Local Spatial Centroid & Color Contrast Detector Provider
- * Computes luminance and skin tone centroids from raw RGB frames. Fully offline and deterministic.
+ * Computes luminance and skin tone centroids from raw RGB frames.
+ * NOTE: This is an explicit spatial HEURISTIC, not a true face/person ML detector.
+ * It is marked degraded: true. Detector failures yield empty results, NEVER fake manufactured persons.
  */
 export class LocalCentroidDetectorProvider implements ISubjectDetectorProvider {
   readonly name = 'local-centroid';
 
+  constructor(private fallbackReason = 'Spatial heuristic used (ML vision unavailable)') {}
+
+  getMetadata(): DetectorMetadata {
+    return {
+      provider: 'local-centroid',
+      providerMode: 'heuristic',
+      capabilities: ['spatial-luminance-centroid', 'color-contrast'],
+      degraded: true,
+      fallbackReason: this.fallbackReason,
+    };
+  }
+
   async detectSubjects(options: DetectorOptions): Promise<SubjectDetection[]> {
     const { framePath, timestamp } = options;
     if (!fs.existsSync(framePath)) {
-      return [
-        {
-          timestamp,
-          x: 0.5,
-          y: 0.4,
-          width: 0.35,
-          height: 0.5,
-          confidence: 0.5,
-          subjectType: 'fallback',
-        },
-      ];
+      // Do NOT manufacture a fake person on missing frame. Return honest empty list.
+      return [];
     }
 
     try {
@@ -87,21 +102,11 @@ export class LocalCentroidDetectorProvider implements ISubjectDetectorProvider {
         ];
       }
     } catch {
-      // Fall through to fallback
+      // Detector failure: return empty detection list instead of fake fallback
+      return [];
     }
 
-    return [
-      {
-        timestamp,
-        x: 0.5,
-        y: 0.4,
-        width: 0.35,
-        height: 0.5,
-        confidence: 0.6,
-        subjectType: 'fallback',
-        subjectId: 'subject-0',
-      },
-    ];
+    return [];
   }
 }
 
@@ -113,6 +118,15 @@ export class GeminiVisionDetectorProvider implements ISubjectDetectorProvider {
   readonly name = 'gemini-vision';
 
   constructor(private apiKey = process.env.GEMINI_API_KEY) {}
+
+  getMetadata(): DetectorMetadata {
+    return {
+      provider: 'gemini-vision',
+      providerMode: 'ml-vision',
+      capabilities: ['multimodal-bounding-boxes', 'face-and-person-labels', 'speaker-identification'],
+      degraded: false,
+    };
+  }
 
   async detectSubjects(options: DetectorOptions): Promise<SubjectDetection[]> {
     const { framePath, timestamp } = options;
@@ -201,12 +215,26 @@ Respond ONLY in valid JSON. Example: {"subjects": [{"box_2d": [100, 200, 800, 60
 
 /**
  * Fixture Subject Detector Provider
+ * Strictly gated to test environments (NODE_ENV === 'test').
  * Supplies deterministic, parameterized subject detection sequences for headless testing & verification.
  */
 export class FixtureDetectorProvider implements ISubjectDetectorProvider {
   readonly name = 'fixture';
 
-  constructor(private fixtureMap: Map<number, SubjectDetection[]> = new Map()) {}
+  constructor(private fixtureMap: Map<number, SubjectDetection[]> = new Map()) {
+    if (process.env.NODE_ENV !== 'test') {
+      throw new ClipperError('FORBIDDEN', 'FixtureDetectorProvider is strictly restricted to test environment', 403);
+    }
+  }
+
+  getMetadata(): DetectorMetadata {
+    return {
+      provider: 'fixture',
+      providerMode: 'fixture',
+      capabilities: ['deterministic-fixtures'],
+      degraded: false,
+    };
+  }
 
   setDetectionsForTimestamp(timestamp: number, detections: SubjectDetection[]) {
     this.fixtureMap.set(Math.round(timestamp * 10) / 10, detections);
@@ -236,22 +264,54 @@ export class FixtureDetectorProvider implements ISubjectDetectorProvider {
 
 /**
  * Hybrid Detector Provider
- * Tries Gemini Vision first when configured, seamlessly falling back to local centroid.
+ * Tries Gemini Vision first when configured, seamlessly falling back to local centroid heuristic.
+ * Accurately reports whether execution ran in degraded/heuristic mode.
  */
 export class HybridDetectorProvider implements ISubjectDetectorProvider {
   readonly name = 'hybrid';
   private gemini = new GeminiVisionDetectorProvider();
-  private local = new LocalCentroidDetectorProvider();
+  private local = new LocalCentroidDetectorProvider('Gemini unavailable or failed, fell back to local centroid');
+  private activeProviderName: 'gemini-vision' | 'local-centroid' = process.env.GEMINI_API_KEY ? 'gemini-vision' : 'local-centroid';
+  private fallbackReason?: string = process.env.GEMINI_API_KEY ? undefined : 'GEMINI_API_KEY not configured, using local heuristic';
+
+  getMetadata(): DetectorMetadata {
+    if (this.activeProviderName === 'gemini-vision' && !this.fallbackReason) {
+      return {
+        provider: 'gemini-vision',
+        providerMode: 'ml-vision',
+        capabilities: ['multimodal-bounding-boxes', 'face-and-person-labels'],
+        degraded: false,
+      };
+    }
+
+    return {
+      provider: 'local-centroid',
+      providerMode: 'heuristic',
+      capabilities: ['spatial-luminance-centroid', 'color-contrast'],
+      degraded: true,
+      fallbackReason: this.fallbackReason || 'Gemini Vision unavailable, fell back to local heuristic',
+    };
+  }
 
   async detectSubjects(options: DetectorOptions): Promise<SubjectDetection[]> {
     if (process.env.GEMINI_API_KEY) {
       try {
         const results = await this.gemini.detectSubjects(options);
-        if (results.length > 0) return results;
-      } catch {
+        if (results.length > 0) {
+          this.activeProviderName = 'gemini-vision';
+          this.fallbackReason = undefined;
+          return results;
+        }
+      } catch (err: any) {
         // Fall back to local centroid on network/quota failure
+        this.activeProviderName = 'local-centroid';
+        this.fallbackReason = `Gemini call failed (${err.message || 'unknown error'}), fell back to local centroid`;
       }
+    } else {
+      this.activeProviderName = 'local-centroid';
+      this.fallbackReason = 'GEMINI_API_KEY not configured, using local heuristic';
     }
+
     return await this.local.detectSubjects(options);
   }
 }

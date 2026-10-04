@@ -13,12 +13,14 @@ import {
   ASPECT_RATIO_CONFIGS,
 } from './types';
 import { getFfmpegPath } from '../renderEngine';
+import { ClipperError } from '../errors';
 
 export interface VideoMetadata {
   width: number;
   height: number;
   duration: number;
 }
+
 
 /**
  * Extracts width, height, and duration from video using FFmpeg/FFprobe
@@ -86,48 +88,101 @@ export function extractVideoMetadata(videoPath: string): VideoMetadata {
 }
 
 /**
- * Samples video frames at 1 fps into a temp folder
+ * Cleans up temporary sample frames directory safely
+ */
+export function cleanupSampleFrames(dirOrFrames: string | { framePath: string }[]): void {
+  try {
+    let dir: string;
+    if (typeof dirOrFrames === 'string') {
+      dir = dirOrFrames;
+    } else if (Array.isArray(dirOrFrames) && dirOrFrames.length > 0 && dirOrFrames[0]?.framePath) {
+      dir = path.dirname(dirOrFrames[0].framePath);
+    } else {
+      return;
+    }
+    if (fs.existsSync(dir)) {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  } catch {}
+}
+
+export type SampleFramesResult = Array<{ framePath: string; time: number }> & {
+  frames: { framePath: string; time: number }[];
+  tempDir: string;
+  cleanup: () => void;
+};
+
+/**
+ * Samples video frames into a managed temp folder with guaranteed cleanup capability
  */
 export async function sampleFrames(
   videoPath: string,
   startTime: number,
   duration: number,
   fps = 1
-): Promise<{ framePath: string; time: number }[]> {
+): Promise<SampleFramesResult> {
+  if (duration <= 0 || !Number.isFinite(duration)) {
+    throw new ClipperError('VALIDATION_ERROR', 'Duration must be positive and finite', 400);
+  }
+  const maxDuration = 7200; // 2 hours
+  if (duration > maxDuration) {
+    throw new ClipperError('MEDIA_INVALID', `Media duration (${duration}s) exceeds maximum allowed ${maxDuration}s`, 400);
+  }
+
   const ffmpeg = getFfmpegPath();
-  const tempDir = path.join(process.cwd(), 'data', 'temp_frames', `sample_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`);
+  const tempDir = path.join(
+    process.cwd(),
+    'data',
+    'temp_frames',
+    `sample_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`
+  );
   fs.mkdirSync(tempDir, { recursive: true });
 
-  const numFrames = Math.max(1, Math.min(120, Math.ceil(duration * fps)));
-  const framePattern = path.join(tempDir, 'frame_%04d.jpg');
+  const cleanup = () => {
+    cleanupSampleFrames(tempDir);
+  };
 
-  const args = [
-    '-y',
-    '-ss', startTime.toFixed(2),
-    '-t', duration.toFixed(2),
-    '-i', videoPath,
-    '-vf', `fps=${fps},scale=640:-1`,
-    '-q:v', '3',
-    framePattern,
-  ];
+  try {
+    const numFrames = Math.max(1, Math.min(300, Math.ceil(duration * fps)));
+    const framePattern = path.join(tempDir, 'frame_%04d.jpg');
 
-  await new Promise<void>((resolve, reject) => {
-    const child = spawn(/*turbopackIgnore: true*/ ffmpeg, args);
-    child.on('close', (code) => {
-      if (code === 0) resolve();
-      else reject(new Error(`Frame extraction failed with code ${code}`));
+    const args = [
+      '-y',
+      '-ss', Math.max(0, startTime).toFixed(2),
+      '-t', Math.min(duration, 300).toFixed(2),
+      '-i', videoPath,
+      '-vf', `fps=${fps},scale=640:-1`,
+      '-q:v', '3',
+      framePattern,
+    ];
+
+    await new Promise<void>((resolve, reject) => {
+      const child = spawn(/*turbopackIgnore: true*/ ffmpeg, args);
+      child.on('close', (code) => {
+        if (code === 0) resolve();
+        else reject(new ClipperError('ANALYSIS_FAILED', `Frame extraction failed with code ${code}`, 500));
+      });
+      child.on('error', reject);
     });
-    child.on('error', reject);
-  });
 
-  const files = fs.readdirSync(tempDir).filter((f) => f.endsWith('.jpg')).sort();
-  const frames: { framePath: string; time: number }[] = files.map((file, idx) => ({
-    framePath: path.join(tempDir, file),
-    time: Math.min(duration, idx / fps),
-  }));
+    const files = fs.readdirSync(tempDir).filter((f) => f.endsWith('.jpg')).sort();
+    const frames: { framePath: string; time: number }[] = files.map((file, idx) => ({
+      framePath: path.join(tempDir, file),
+      time: Math.min(duration, idx / fps),
+    }));
 
-  return frames;
+    const result = [...frames] as SampleFramesResult;
+    result.frames = frames;
+    result.tempDir = tempDir;
+    result.cleanup = cleanup;
+
+    return result;
+  } catch (err) {
+    cleanup();
+    throw err;
+  }
 }
+
 
 /**
  * Analyzes RGB pixel luminance and color centroids from a frame to detect subject position
@@ -478,40 +533,34 @@ export async function generateReframeTrack(options: {
 
   if (rawKeyframes.length === 0) {
     const samples = await sampleFrames(videoPath, startTime, duration, 1);
-    
-    for (const sample of samples) {
-      const detection = await detectSubjectInFrame(sample.framePath, sample.time);
-      
-      // Apply Headroom rule: keep face anchored around 35% from the top
-      let adjustedY = detection.y;
-      if (detection.subjectType === 'person' || detection.subjectType === 'face') {
-        adjustedY = Math.max(0.2, Math.min(0.65, detection.y - (detection.height * 0.1)));
-      }
-
-      rawKeyframes.push({
-        time: sample.time,
-        x: detection.x,
-        y: adjustedY,
-        scale: 1.0,
-        confidence: detection.confidence,
-        sourceBbox: {
-          x: Math.max(0, detection.x - detection.width / 2),
-          y: Math.max(0, detection.y - detection.height / 2),
-          width: detection.width,
-          height: detection.height,
-        },
-      });
-    }
-
-    // Clean up sample frames
     try {
-      if (samples.length > 0) {
-        const frameDir = path.dirname(samples[0].framePath);
-        fs.rmSync(frameDir, { recursive: true, force: true });
+      for (const sample of samples) {
+        const detection = await detectSubjectInFrame(sample.framePath, sample.time);
+        
+        // Apply Headroom rule: keep face anchored around 35% from the top
+        let adjustedY = detection.y;
+        if (detection.subjectType === 'person' || detection.subjectType === 'face') {
+          adjustedY = Math.max(0.2, Math.min(0.65, detection.y - (detection.height * 0.1)));
+        }
+
+        rawKeyframes.push({
+          time: sample.time,
+          x: detection.x,
+          y: adjustedY,
+          scale: 1.0,
+          confidence: detection.confidence,
+          sourceBbox: {
+            x: Math.max(0, detection.x - detection.width / 2),
+            y: Math.max(0, detection.y - detection.height / 2),
+            width: detection.width,
+            height: detection.height,
+          },
+        });
       }
-    } catch {
-      // Ignore cleanup error
+    } finally {
+      samples.cleanup();
     }
+
 
     // Cache raw detections
     try {

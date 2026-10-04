@@ -121,6 +121,22 @@ export interface ReframeConfig {
   updatedAt: string;
 }
 
+export interface ReframeAnalysisMetadata {
+  engineVersion: string;
+  analysisSchemaVersion: string;
+  detectorProvider: string;
+  detectorMode: 'ml-vision' | 'heuristic' | 'fixture' | 'hybrid';
+  capabilities?: string[];
+  degraded: boolean;
+  fallbackReason?: string;
+  sceneDetection?: {
+    status: 'normal' | 'degraded';
+    reason?: string;
+    fallback?: string;
+  };
+  configVersion?: number;
+}
+
 export interface ReframeAnalysis {
   id: string;
   projectId: string;
@@ -133,6 +149,8 @@ export interface ReframeAnalysis {
   provider: string;           // 'gemini-vision' | 'local-centroid' | 'fixture' | 'hybrid'
   version: string;
   createdAt: string;
+  metadata?: ReframeAnalysisMetadata;
+  degraded?: boolean;
 }
 
 export interface CameraPath {
@@ -145,3 +163,4 @@ export interface CameraPath {
   keyframes: ReframeKeyframe[];
   version: number;
 }
+

@@ -1231,7 +1231,9 @@ export class SupabaseStorageAdapter implements IStorageAdapter {
       p_scenes: analysis.scenes,
       p_subject_tracks: analysis.subjectTracks,
       p_provider: analysis.provider || 'hybrid',
-      p_version: analysis.version || '1.0.0',
+      p_version: analysis.version || '2.0.0',
+      p_metadata: analysis.metadata || {},
+      p_degraded: Boolean(analysis.degraded),
     });
 
     if (error) {
@@ -1265,9 +1267,12 @@ export class SupabaseStorageAdapter implements IStorageAdapter {
       subjectTracks: data.subject_tracks || [],
       provider: data.provider,
       version: data.version,
+      metadata: data.metadata || undefined,
+      degraded: data.degraded !== undefined ? Boolean(data.degraded) : undefined,
       createdAt: data.created_at,
     };
   }
+
 
   async saveReframeConfig(config: ReframeConfig, userId?: string): Promise<ReframeConfig> {
     const { data, error } = await supabase.rpc('save_reframe_config_atomic', {

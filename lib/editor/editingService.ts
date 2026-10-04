@@ -7,6 +7,8 @@
 import { getStorage } from '../storage';
 import { Timeline, TimelineTrack, TimelineItem, EDLOperation, EditResult } from './edlTypes';
 import { CameraPath } from '../reframe/types';
+import { validateCameraPath } from '../reframe/validation';
+
 import {
   splitItem as mathSplitItem,
   trimItem as mathTrimItem,
@@ -703,6 +705,13 @@ export class EditingService {
     expectedVersion: number;
   }): Promise<EditResult> {
     const { projectId, userId, cameraPath, itemId, expectedVersion } = params;
+
+    if (!Number.isFinite(expectedVersion) || !Number.isInteger(expectedVersion) || expectedVersion < 1) {
+      throw new ClipperError('VALIDATION_ERROR', 'expectedVersion must be a positive integer >= 1', 400);
+    }
+
+    const validatedCameraPath = validateCameraPath(cameraPath);
+
     const storage = getStorage();
     const timeline = await storage.getTimeline(projectId);
     if (!timeline) {
@@ -719,6 +728,34 @@ export class EditingService {
       );
     }
 
+    // Verify item ownership and ensure it belongs to a VIDEO track
+    if (itemId) {
+      let foundTrack: TimelineTrack | null = null;
+      let foundTargetItem: TimelineItem | null = null;
+
+      for (const track of timeline.tracks) {
+        const found = track.items.find((i) => i.id === itemId);
+        if (found) {
+          foundTrack = track;
+          foundTargetItem = found;
+          break;
+        }
+      }
+
+      if (!foundTrack || !foundTargetItem) {
+        throw new ClipperError('NOT_FOUND', `Timeline item ${itemId} not found in project timeline`, 404);
+      }
+
+      if (foundTrack.type !== 'VIDEO') {
+        throw new ClipperError(
+          'VALIDATION_ERROR',
+          `Reframe can only be applied to VIDEO items; track ${foundTrack.id} is type ${foundTrack.type}`,
+          400
+        );
+      }
+
+    }
+
     let foundItem = false;
     const previousReframeMap: Record<string, any> = {};
 
@@ -727,14 +764,14 @@ export class EditingService {
       return {
         ...track,
         items: track.items.map((item) => {
-          if ((itemId && item.id === itemId) || (!itemId && isVideoTrack)) {
+          if ((itemId && item.id === itemId && isVideoTrack) || (!itemId && isVideoTrack)) {
             foundItem = true;
             previousReframeMap[item.id] = item.metadata?.reframe || null;
             return {
               ...item,
               metadata: {
                 ...(item.metadata || {}),
-                reframe: cameraPath,
+                reframe: validatedCameraPath,
               },
               updatedAt: new Date().toISOString(),
             };
@@ -753,7 +790,7 @@ export class EditingService {
       id: crypto.randomUUID(),
       timelineId: timeline.id,
       type: 'SET_REFRAME',
-      params: { itemId, cameraPath },
+      params: { itemId, cameraPath: validatedCameraPath },
       inverseParams: { itemId, previousReframeMap },
       version: expectedVersion + 1,
       userId,
@@ -761,6 +798,7 @@ export class EditingService {
     };
 
     const updatedTimeline: Timeline = {
+
       ...timeline,
       tracks: updatedTracks,
       updatedAt: new Date().toISOString(),

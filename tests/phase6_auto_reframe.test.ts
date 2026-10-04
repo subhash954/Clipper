@@ -4,6 +4,8 @@
  * Covers all 15 core engine categories.
  */
 
+import fs from 'fs';
+import path from 'path';
 import {
   AspectRatio,
   MultiPersonMode,
@@ -17,6 +19,8 @@ import {
 import {
   calculateCropDimensions,
   buildFfmpegReframeCropFilter,
+  sampleFrames,
+  cleanupSampleFrames,
 } from '../lib/reframe/reframeEngine';
 import {
   computeIoU,
@@ -29,9 +33,28 @@ import {
   computeTargetFocalPoint,
   generateCameraPath,
 } from '../lib/reframe/cameraPathPlanner';
+import {
+  LocalCentroidDetectorProvider,
+  FixtureDetectorProvider,
+  HybridDetectorProvider,
+} from '../lib/reframe/detectorProvider';
+import {
+  assertSafeFilesystemPath,
+  resolveAuthorizedMediaSource,
+} from '../lib/reframe/mediaResolver';
+import {
+  validateSubjectDetection,
+  validateSceneBoundary,
+  validateSubjectTrack,
+  validateReframeKeyframe,
+  validateCameraPath,
+  validateReframeConfig,
+  validateReframeAnalysis,
+} from '../lib/reframe/validation';
 import { EditingService } from '../lib/editor/editingService';
 import { getStorage } from '../lib/storage';
 import { ClipperError } from '../lib/errors';
+
 
 async function runPhase6UnitTests() {
   console.log('====================================================');
@@ -551,9 +574,357 @@ async function runPhase6UnitTests() {
     assert(y >= 0 && y + h <= 1080, `Crop window fits vertically within 1080: y=${y}, h=${h}`);
   }
 
+  // --------------------------------------------------------------------------
+  // CATEGORY 16: Filesystem Security & Media Resolver Trust Boundary
+  // --------------------------------------------------------------------------
+  console.log('\n--- CATEGORY 16: Filesystem Security & Media Resolver ---');
+
+  // Test 1: Relative path traversal ../ rejected
+  let traversalThrew = false;
+  try {
+    assertSafeFilesystemPath('../../etc/passwd');
+  } catch (err: any) {
+    traversalThrew = true;
+    assert(err.code === 'FORBIDDEN' || err.statusCode === 403, 'Path traversal ../../etc/passwd rejected');
+  }
+  assert(traversalThrew, 'Relative path traversal blocked');
+
+  // Test 2: Encoded path traversal %2e%2e rejected
+  let encodedTraversalThrew = false;
+  try {
+    assertSafeFilesystemPath('%2e%2e/%2e%2e/etc/passwd');
+  } catch (err: any) {
+    encodedTraversalThrew = true;
+    assert(err.code === 'FORBIDDEN' || err.statusCode === 403, 'Encoded path traversal %2e%2e rejected');
+  }
+  assert(encodedTraversalThrew, 'Encoded path traversal blocked');
+
+  // Test 3: Absolute path outside allowed roots rejected
+  let outsideRootThrew = false;
+  try {
+    assertSafeFilesystemPath('/etc/passwd');
+  } catch (err: any) {
+    outsideRootThrew = true;
+    assert(err.code === 'FORBIDDEN' || err.statusCode === 403, 'Absolute path outside root rejected');
+  }
+  assert(outsideRootThrew, 'Arbitrary absolute path outside allowed media roots blocked');
+
+  // Test 4: Symlink escape pointing outside allowed root rejected
+  const tempSymlinkDir = path.join(process.cwd(), 'data', `test_symlink_${Date.now()}`);
+  fs.mkdirSync(tempSymlinkDir, { recursive: true });
+  const symlinkPath = path.join(tempSymlinkDir, 'escape_link.mp4');
+  let symlinkEscapeThrew = false;
+  try {
+    fs.symlinkSync('/etc/passwd', symlinkPath);
+    try {
+      assertSafeFilesystemPath(symlinkPath);
+    } catch (err: any) {
+      symlinkEscapeThrew = true;
+      assert(err.code === 'FORBIDDEN', 'Symlink escape detected and rejected');
+    }
+  } finally {
+    if (fs.existsSync(tempSymlinkDir)) {
+      fs.rmSync(tempSymlinkDir, { recursive: true, force: true });
+    }
+  }
+  assert(symlinkEscapeThrew, 'Symlink escaping allowed media root blocked');
+
+  // Test 5: Directory target rejected
+  let dirTargetThrew = false;
+  try {
+    assertSafeFilesystemPath(path.join(process.cwd(), 'data'));
+  } catch (err: any) {
+    dirTargetThrew = true;
+    assert(err.code === 'MEDIA_INVALID', 'Directory target rejected (not a regular file)');
+  }
+  assert(dirTargetThrew, 'Directory target instead of media file blocked');
+
+  // Test 6: Missing media file rejected
+  let missingFileThrew = false;
+  try {
+    assertSafeFilesystemPath(path.join(process.cwd(), 'data', 'non_existent_media_file.mp4'));
+  } catch (err: any) {
+    missingFileThrew = true;
+    assert(err.code === 'MEDIA_UNAVAILABLE', 'Non-existent media file rejected');
+  }
+  assert(missingFileThrew, 'Missing media file rejected');
+
+  // Test 7: Invalid media container magic bytes rejected
+  const fakeCorruptPath = path.join(process.cwd(), 'data', `corrupt_media_${Date.now()}.mp4`);
+  fs.writeFileSync(fakeCorruptPath, 'THIS_IS_NOT_A_VALID_MP4_HEADER_PAYLOAD');
+  let invalidSignatureThrew = false;
+  try {
+    assertSafeFilesystemPath(fakeCorruptPath);
+  } catch (err: any) {
+    invalidSignatureThrew = true;
+    assert(err.code === 'MEDIA_INVALID', 'Invalid media file container signature rejected');
+  } finally {
+    if (fs.existsSync(fakeCorruptPath)) fs.unlinkSync(fakeCorruptPath);
+  }
+  assert(invalidSignatureThrew, 'Spoofed or corrupted container format blocked');
+
+  // Test 8: Cross-project media attack via resolveAuthorizedMediaSource rejected
+  const projectX = 'proj-x-' + Date.now();
+  const projectY = 'proj-y-' + Date.now();
+  const mediaAssetY = 'media-y-' + Date.now();
+
+  const storageInst = getStorage();
+  await storageInst.saveProject({
+    id: projectX,
+    title: 'Project X',
+    userId: 'user-x',
+    activeMediaId: undefined,
+    version: 1,
+    sourceType: 'upload',
+    workflowType: 'youtube_to_shorts',
+    durationSeconds: 30,
+    status: 'completed',
+    clips: [],
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  });
+  await storageInst.saveProject({
+    id: projectY,
+    title: 'Project Y',
+    userId: 'user-y',
+    activeMediaId: mediaAssetY,
+    version: 1,
+    sourceType: 'upload',
+    workflowType: 'youtube_to_shorts',
+    durationSeconds: 30,
+    status: 'completed',
+    clips: [],
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  });
+  const { saveLocalMediaAsset } = await import('../lib/storage');
+  saveLocalMediaAsset({
+    id: mediaAssetY,
+    projectId: projectY,
+    userId: 'user-y',
+    fileName: 'media_y.mp4',
+    storagePath: path.join(process.cwd(), 'public', 'sample.mp4'),
+    duration: 30,
+    width: 1920,
+    height: 1080,
+  });
+
+  let crossProjectThrew = false;
+  try {
+    await resolveAuthorizedMediaSource({
+      projectId: projectX,
+      mediaAssetId: mediaAssetY,
+      userId: 'user-x',
+    });
+  } catch (err: any) {
+    crossProjectThrew = true;
+    assert(err.code === 'MEDIA_NOT_OWNED', 'Cross-project media resolution rejected with MEDIA_NOT_OWNED');
+  }
+  assert(crossProjectThrew, 'Cross-project media attack blocked');
+
+  // --------------------------------------------------------------------------
+  // CATEGORY 17: Detector Integrity & Honest Failure Policy
+  // --------------------------------------------------------------------------
+  console.log('\n--- CATEGORY 17: Detector Integrity & Honest Failure Policy ---');
+
+  const localDetector = new LocalCentroidDetectorProvider();
+  const metaLocal = localDetector.getMetadata();
+  assert(metaLocal.provider === 'local-centroid', 'Provider name is local-centroid');
+  assert(metaLocal.providerMode === 'heuristic', 'Provider mode is explicitly heuristic');
+  assert(metaLocal.degraded === true, 'Local centroid is explicitly marked degraded: true');
+  assert(Boolean(metaLocal.fallbackReason), 'Local centroid contains fallback reason');
+
+  // When frame does not exist, detector returns [] (NO fake manufactured person!)
+  const emptyDets = await localDetector.detectSubjects({
+    framePath: path.join(process.cwd(), 'data', 'does_not_exist_frame.jpg'),
+    timestamp: 0.5,
+  });
+  assert(Array.isArray(emptyDets), 'Detector returns array');
+  assert(emptyDets.length === 0, 'Detector failure returns [] instead of fake fallback person');
+
+  // Fixture detector restricted to test environment
+  const origNodeEnv = process.env.NODE_ENV;
+  try {
+    (process.env as any).NODE_ENV = 'production';
+    let fixtureInProdThrew = false;
+    try {
+      new FixtureDetectorProvider();
+    } catch (err: any) {
+      fixtureInProdThrew = true;
+      assert(err.code === 'FORBIDDEN', 'FixtureDetectorProvider strictly blocked in production');
+    }
+    assert(fixtureInProdThrew, 'Fixture detector prohibited in production');
+  } finally {
+    (process.env as any).NODE_ENV = origNodeEnv;
+  }
+
+  // Hybrid detector metadata reflects degraded status when falling back
+  const hybridDetector = new HybridDetectorProvider();
+  const metaHybrid = hybridDetector.getMetadata();
+  assert(typeof metaHybrid.degraded === 'boolean', 'Hybrid detector reports typed degraded boolean');
+  assert(Boolean(metaHybrid.provider), 'Hybrid detector reports active provider name');
+
+  // --------------------------------------------------------------------------
+  // CATEGORY 18: Strict Runtime Data Validation
+  // --------------------------------------------------------------------------
+  console.log('\n--- CATEGORY 18: Strict Runtime Data Validation ---');
+
+  // Reject NaN coordinates
+  let nanXThrew = false;
+  try {
+    validateSubjectDetection({ timestamp: 0, x: NaN, y: 0.5, width: 0.2, height: 0.3, confidence: 0.9 });
+  } catch (err: any) {
+    nanXThrew = true;
+  }
+  assert(nanXThrew, 'NaN x-coordinate rejected');
+
+  // Reject Infinity
+  let infThrew = false;
+  try {
+    validateSubjectDetection({ timestamp: 0, x: 0.5, y: Infinity, width: 0.2, height: 0.3, confidence: 0.9 });
+  } catch (err: any) {
+    infThrew = true;
+  }
+  assert(infThrew, 'Infinity coordinate rejected');
+
+  // Reject coordinates outside [0, 1]
+  let outOfBoundsThrew = false;
+  try {
+    validateSubjectDetection({ timestamp: 0, x: 1.5, y: 0.5, width: 0.2, height: 0.3, confidence: 0.9 });
+  } catch (err: any) {
+    outOfBoundsThrew = true;
+  }
+  assert(outOfBoundsThrew, 'Out of bounds coordinate (> 1.0) rejected');
+
+  // Reject invalid aspect ratio enum
+  let invalidAspectThrew = false;
+  try {
+    validateReframeConfig({ targetAspectRatio: '21:9' as any });
+  } catch (err: any) {
+    invalidAspectThrew = true;
+  }
+  assert(invalidAspectThrew, 'Invalid aspect ratio enum 21:9 rejected');
+
+  // Reject non-monotonic keyframe timestamps in CameraPath
+  let nonMonotonicThrew = false;
+  try {
+    validateCameraPath({
+      targetAspectRatio: '9:16',
+      cropWidth: 608,
+      cropHeight: 1080,
+      targetWidth: 1080,
+      targetHeight: 1920,
+      multiPersonMode: 'GENERAL',
+      keyframes: [
+        { time: 2.0, x: 0.5, y: 0.5, scale: 1.0, confidence: 1.0 },
+        { time: 1.0, x: 0.5, y: 0.5, scale: 1.0, confidence: 1.0 },
+      ],
+    });
+  } catch (err: any) {
+    nonMonotonicThrew = true;
+  }
+  assert(nonMonotonicThrew, 'CameraPath non-monotonic timestamps rejected');
+
+  // --------------------------------------------------------------------------
+  // CATEGORY 19: EDL Item Ownership & Track Type Security
+  // --------------------------------------------------------------------------
+  console.log('\n--- CATEGORY 19: EDL Item Ownership & Track Type Security ---');
+
+  // Create timeline with VIDEO and AUDIO tracks
+  const edlTestProj = 'proj-edl-' + Date.now();
+  await storageInst.saveProject({
+    id: edlTestProj,
+    title: 'EDL Sec Test',
+    userId: testUserId,
+    version: 1,
+    sourceType: 'upload',
+    workflowType: 'youtube_to_shorts',
+    durationSeconds: 30,
+    status: 'completed',
+    clips: [],
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  });
+  const edlTimeline = await EditingService.getOrCreateTimeline(edlTestProj, testUserId);
+
+  // Cross-project itemId rejected
+  let crossProjItemThrew = false;
+  try {
+    await EditingService.applyReframe({
+      projectId: edlTestProj,
+      userId: testUserId,
+      cameraPath: plan1,
+      itemId: 'non-existent-or-foreign-item-id',
+      expectedVersion: edlTimeline.version,
+    });
+  } catch (err: any) {
+    crossProjItemThrew = true;
+    assert(err.code === 'NOT_FOUND', 'Cross-project / foreign itemId rejected with NOT_FOUND');
+  }
+  assert(crossProjItemThrew, 'Foreign timeline itemId rejected');
+
+  // Non-video track item (e.g. audio item) rejected
+  const audioTrack = edlTimeline.tracks.find((t) => t.type === 'AUDIO');
+  if (audioTrack && audioTrack.items.length > 0) {
+    const audioItem = audioTrack.items[0];
+    let audioItemReframeThrew = false;
+    try {
+      await EditingService.applyReframe({
+        projectId: edlTestProj,
+        userId: testUserId,
+        cameraPath: plan1,
+        itemId: audioItem.id,
+        expectedVersion: edlTimeline.version,
+      });
+    } catch (err: any) {
+      audioItemReframeThrew = true;
+      assert(err.code === 'VALIDATION_ERROR', 'Reframe on AUDIO track item rejected with VALIDATION_ERROR');
+    }
+    assert(audioItemReframeThrew, 'Applying reframe to AUDIO track item blocked');
+  }
+
+  // --------------------------------------------------------------------------
+  // CATEGORY 20: Guaranteed Temporary Frame Cleanup
+  // --------------------------------------------------------------------------
+  console.log('\n--- CATEGORY 20: Guaranteed Temporary Frame Cleanup ---');
+
+  const samplePath = path.join(process.cwd(), 'public', 'sample.mp4');
+  if (fs.existsSync(samplePath)) {
+    // Test 20.1: Normal extraction cleanup
+    const sampleResult = await sampleFrames(samplePath, 0, 2, 1);
+    const tempDir = sampleResult.tempDir;
+    assert(fs.existsSync(tempDir), 'Temporary frames directory created during extraction');
+    sampleResult.cleanup();
+    assert(!fs.existsSync(tempDir), 'cleanup() deleted temporary frames directory cleanly');
+
+    // Test 20.2: Guaranteed cleanup when detection throws
+    const sampleResult2 = await sampleFrames(samplePath, 0, 2, 1);
+    const tempDir2 = sampleResult2.tempDir;
+    assert(fs.existsSync(tempDir2), 'Temporary frames directory 2 created');
+    let intentionallyThrown = false;
+    try {
+      try {
+        throw new Error('Simulated crash during frame detection');
+      } finally {
+        sampleResult2.cleanup();
+      }
+    } catch (e) {
+      intentionallyThrown = true;
+    }
+    assert(intentionallyThrown, 'Exception simulated during processing');
+    assert(!fs.existsSync(tempDir2), 'try-finally guaranteed cleanup executed even after error');
+  } else {
+    const dummyTemp = path.join(process.cwd(), 'data', 'temp_frames', `dummy_${Date.now()}`);
+    fs.mkdirSync(dummyTemp, { recursive: true });
+    assert(fs.existsSync(dummyTemp), 'Dummy temp dir created');
+    cleanupSampleFrames(dummyTemp);
+    assert(!fs.existsSync(dummyTemp), 'cleanupSampleFrames successfully removed directory');
+  }
+
   console.log('\n====================================================');
   console.log(`📊 PHASE 6 UNIT TEST SUMMARY: ${passed} PASSED, ${failed} FAILED`);
   console.log('====================================================\n');
+
 
   if (failed > 0) {
     process.exit(1);
