@@ -7,6 +7,8 @@
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
+import { spawnSync } from 'child_process';
+import { getFfmpegPath } from '../lib/renderEngine';
 import {
   AspectRatio,
   MultiPersonMode,
@@ -1588,6 +1590,148 @@ async function runPhase6UnitTests() {
   // Test 26.5: Verify no synthetic fallback subjectType exists across pipeline
   const testEmptyDetResult = await detectSubjectInFrame(path.join(process.cwd(), 'data', 'does_not_exist_99.jpg'), 1.0);
   assert(testEmptyDetResult === null, 'Detector failure produces null rather than subjectType: fallback');
+
+  // --------------------------------------------------------------------------
+  // CATEGORY 27: Scene Truthfulness Hardening (Phase 6.1.4)
+  // --------------------------------------------------------------------------
+  console.log('\n--- CATEGORY 27: Scene Truthfulness Hardening ---');
+
+  const ffmpegBin = getFfmpegPath();
+  const sceneTestVideoCut = path.join(os.tmpdir(), 'clipper_scene_truth_cut.mp4');
+  const sceneTestVideoSingle = path.join(os.tmpdir(), 'clipper_scene_truth_single.mp4');
+
+  // Generate 2s video with cut at 1.0s (1s black, 1s white)
+  spawnSync(ffmpegBin, [
+    '-y',
+    '-f', 'lavfi', '-i', 'color=c=black:s=320x240:d=1',
+    '-f', 'lavfi', '-i', 'color=c=white:s=320x240:d=1',
+    '-filter_complex', '[0:v][1:v]concat=n=2:v=1[v]',
+    '-map', '[v]',
+    sceneTestVideoCut,
+  ]);
+
+  // Generate 1.5s video without cuts (single continuous scene)
+  spawnSync(ffmpegBin, [
+    '-y',
+    '-f', 'lavfi', '-i', 'color=c=blue:s=320x240:d=1.5',
+    sceneTestVideoSingle,
+  ]);
+
+  // Test 27.1: Supplied valid duration is preserved authoritatively
+  const scenesWithDuration = await detectVideoScenes({
+    filePath: sceneTestVideoCut,
+    projectId: 'test-proj-scene-truth',
+    totalDurationSeconds: 2.0,
+  });
+  assert(scenesWithDuration.length === 2, 'Supplied valid duration preserved: detected 2 scenes');
+  assert(scenesWithDuration[0].start === 0 && scenesWithDuration[0].end === 1.0, 'Scene 0 bounded strictly at [0, 1.0]');
+  assert(scenesWithDuration[1].start === 1.0 && scenesWithDuration[1].end === 2.0, 'Scene 1 bounded strictly at [1.0, 2.0]');
+  assert(scenesWithDuration[1].end <= 2.0, 'Final scene end does not exceed authoritative duration');
+
+  // Test 27.2: Missing duration probes authoritative metadata (no 60s, no +5s fallback)
+  const scenesProbed = await detectVideoScenes({
+    filePath: sceneTestVideoCut,
+    projectId: 'test-proj-scene-truth',
+  });
+  assert(scenesProbed.length === 2, 'Missing duration triggers authoritative probing (2 scenes)');
+  assert(scenesProbed[scenesProbed.length - 1].end <= 2.05, 'Probed scene end does not exceed true video duration (~2.0s)');
+  assert(scenesProbed[scenesProbed.length - 1].end !== 60, 'Probed scene end does not use 60s fallback');
+  assert(scenesProbed[scenesProbed.length - 1].end !== 6, 'Probed scene end does not use +5s fallback');
+
+  // Test 27.3: Missing duration with unprobeable media throws ClipperError(MEDIA_INVALID)
+  const corruptFile = path.join(os.tmpdir(), 'clipper_corrupt_video.mp4');
+  fs.writeFileSync(corruptFile, 'not-a-valid-mp4-stream');
+  let unprobeableThrew = false;
+  let unprobeableCode = '';
+  try {
+    await detectVideoScenes({ filePath: corruptFile, projectId: 'test-proj' });
+  } catch (err: any) {
+    unprobeableThrew = true;
+    unprobeableCode = err.code;
+  }
+  assert(unprobeableThrew && unprobeableCode === 'MEDIA_INVALID', 'Unprobeable media throws ClipperError with MEDIA_INVALID');
+
+  // Test 27.4: Invalid durations rejected with VALIDATION_ERROR (0, negative, NaN, Infinity)
+  const invalidDurations = [0, -2, NaN, Infinity, -Infinity];
+  for (const invD of invalidDurations) {
+    let invThrew = false;
+    let invCode = '';
+    try {
+      await detectVideoScenes({
+        filePath: sceneTestVideoCut,
+        projectId: 'test-proj',
+        totalDurationSeconds: invD,
+      });
+    } catch (err: any) {
+      invThrew = true;
+      invCode = err.code;
+    }
+    assert(invThrew && invCode === 'VALIDATION_ERROR', `Invalid duration (${invD}) rejected with VALIDATION_ERROR`);
+  }
+
+  // Test 27.5: Cut timestamp beyond authoritative duration is clamped/rejected (never fabricates new duration)
+  const clampedScenes = await detectVideoScenes({
+    filePath: sceneTestVideoCut,
+    projectId: 'test-proj',
+    totalDurationSeconds: 0.8, // Cut at 1.0s is beyond 0.8s
+  });
+  assert(clampedScenes.length === 1, 'Cut beyond duration rejected: exactly 1 continuous scene emitted');
+  assert(clampedScenes[0].start === 0 && clampedScenes[0].end === 0.8, 'Scene bounded strictly at [0, 0.8]');
+  assert(clampedScenes[0].end <= 0.8, 'Scene end does not exceed clamped duration 0.8s');
+
+  // Test 27.6: Confidence truth: no hard-coded fake confidence (0.92, 0.95)
+  for (const sc of scenesWithDuration) {
+    assert(sc.confidence === undefined, 'Scene confidence is undefined (no uncalibrated 0.92/0.95)');
+  }
+  for (const sc of clampedScenes) {
+    assert(sc.confidence === undefined, 'Continuous scene confidence is undefined (no fake 0.95)');
+  }
+
+  // Test 27.7: Cut intensity truth: Scene 0 has no cut score; cut scene has real FFmpeg score (no 0.35/0.45/0.1)
+  assert(scenesWithDuration[0].cutIntensityScore === undefined, 'Scene 0 has undefined cutIntensityScore (no cut at t=0)');
+  assert(
+    typeof scenesWithDuration[1].cutIntensityScore === 'number' &&
+      scenesWithDuration[1].cutIntensityScore >= 0 &&
+      scenesWithDuration[1].cutIntensityScore <= 1,
+    'Scene 1 has real measured FFmpeg cutIntensityScore in [0, 1]'
+  );
+  assert(scenesWithDuration[1].cutIntensityScore !== 0.35, 'Scene 1 does not use synthetic 0.35 fallback');
+  assert(scenesWithDuration[1].cutIntensityScore !== 0.45, 'Scene 1 does not use synthetic 0.45 fallback');
+  assert(clampedScenes[0].cutIntensityScore === undefined, 'Continuous scene has undefined cutIntensityScore (no fake 0.1)');
+
+  // Test 27.8: Evidence truth: scene_start, ffmpeg_scene_change, continuous_sequence
+  assert(scenesWithDuration[0].evidence === 'scene_start', 'Scene 0 evidence is "scene_start" (no cut claimed at t=0)');
+  assert(scenesWithDuration[1].evidence === 'ffmpeg_scene_change', 'Scene 1 evidence is "ffmpeg_scene_change"');
+  assert(clampedScenes[0].evidence === 'continuous_sequence', 'Continuous scene evidence is "continuous_sequence"');
+
+  const continuousBlueScenes = await detectVideoScenes({
+    filePath: sceneTestVideoSingle,
+    projectId: 'test-proj',
+    totalDurationSeconds: 1.5,
+  });
+  assert(continuousBlueScenes.length === 1, 'Uncut video produces 1 continuous scene');
+  assert(continuousBlueScenes[0].evidence === 'continuous_sequence', 'Uncut video evidence is "continuous_sequence"');
+  assert(continuousBlueScenes[0].cutIntensityScore === undefined, 'Uncut video has undefined cutIntensityScore');
+  assert(continuousBlueScenes[0].confidence === undefined, 'Uncut video has undefined confidence');
+
+  // Test 27.9: Scene bounds & monotonicity
+  for (const scList of [scenesWithDuration, scenesProbed, clampedScenes, continuousBlueScenes]) {
+    for (let i = 0; i < scList.length; i++) {
+      const cur = scList[i];
+      assert(cur.start >= 0, `Scene ${i} start >= 0`);
+      assert(cur.end > cur.start, `Scene ${i} end > start`);
+      if (i > 0) {
+        assert(cur.start >= scList[i - 1].end - 0.01, `Monotonic scene transition at index ${i}`);
+      }
+    }
+  }
+
+  // Cleanup temp test files
+  try {
+    if (fs.existsSync(sceneTestVideoCut)) fs.unlinkSync(sceneTestVideoCut);
+    if (fs.existsSync(sceneTestVideoSingle)) fs.unlinkSync(sceneTestVideoSingle);
+    if (fs.existsSync(corruptFile)) fs.unlinkSync(corruptFile);
+  } catch {}
 
   console.log('\n====================================================');
   console.log(`📊 PHASE 6 UNIT TEST SUMMARY: ${passed} PASSED, ${failed} FAILED`);

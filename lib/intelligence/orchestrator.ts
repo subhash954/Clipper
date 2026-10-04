@@ -98,7 +98,7 @@ export async function analyzeVideoMultimodal(input: MultimodalAnalysisInput): Pr
           totalDurationSeconds: durationSeconds,
         });
       }
-      // Synthetic fallback scene if physical media file path not directly local
+      // Fallback single continuous scene if physical media file path not directly local
       return [
         {
           id: `scene-1-${Date.now()}`,
@@ -106,15 +106,13 @@ export async function analyzeVideoMultimodal(input: MultimodalAnalysisInput): Pr
           source: 'video',
           start: 0,
           end: durationSeconds,
-          confidence: 0.95,
-          sceneType: 'talking_head',
+          sceneType: 'environment_change',
           visualSummary: `Continuous sequence (${durationSeconds}s)`,
-          dominantObjects: ['speaker'],
-          dominantFacesCount: 1,
-          dominantColors: ['#1A1A1A', '#F4F5F7'],
+          dominantObjects: [],
+          dominantFacesCount: 0,
+          dominantColors: [],
           motionLevel: 'low',
-          cutIntensityScore: 0.1,
-          evidence: 'Single continuous visual sequence',
+          evidence: 'continuous_sequence',
           createdAt: new Date().toISOString(),
         },
       ];

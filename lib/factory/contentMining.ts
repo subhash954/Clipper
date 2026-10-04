@@ -191,7 +191,7 @@ export function mineOpportunitiesFromIntelligence(
             payoff: segment.text,
             audience: options.audience || 'Target Audience',
             score: Math.min(95, segment.importance + 5),
-            confidence: segment.confidence,
+            confidence: segment.confidence ?? 0.85,
             evidence: {
               start: segment.start,
               end: segment.end,

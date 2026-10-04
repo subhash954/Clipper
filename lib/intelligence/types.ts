@@ -9,7 +9,7 @@ export interface IntelligenceItemMetadata {
   source: 'audio' | 'video' | 'transcript' | 'multimodal' | 'ai_editorial';
   start: number;
   end: number;
-  confidence: number; // 0.0 - 1.0
+  confidence?: number; // 0.0 - 1.0 (optional when uncalibrated)
   evidence?: string;
   createdAt: string;
   providerMetadata?: {
@@ -110,7 +110,7 @@ export interface Scene extends IntelligenceItemMetadata {
   dominantFacesCount: number;
   dominantColors: string[];
   motionLevel: MotionLevel;
-  cutIntensityScore: number; // 0.0 - 1.0 (from FFmpeg scene score)
+  cutIntensityScore?: number; // 0.0 - 1.0 (from FFmpeg scene score when available)
 }
 
 export type VisualEventType =
