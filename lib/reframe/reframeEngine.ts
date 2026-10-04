@@ -12,6 +12,7 @@ import {
   ReframeTrack,
   ASPECT_RATIO_CONFIGS,
 } from './types';
+import { HybridDetectorProvider } from './detectorProvider';
 import { getFfmpegPath } from '../renderEngine';
 import { ClipperError } from '../errors';
 
@@ -23,24 +24,37 @@ export interface VideoMetadata {
 
 
 /**
- * Extracts width, height, and duration from video using FFmpeg/FFprobe
+ * Extracts width, height, and duration from video using FFmpeg/FFprobe.
+ * Never fabricates default dimensions or durations. Throws ClipperError if probing fails.
  */
 export function extractVideoMetadata(videoPath: string): VideoMetadata {
+  if (!fs.existsSync(videoPath)) {
+    throw new ClipperError('MEDIA_UNAVAILABLE', 'Video file not found or inaccessible for probing', 404);
+  }
+
   const ffmpeg = getFfmpegPath();
   const ffprobeCandidate = ffmpeg.replace(/ffmpeg(\.exe)?$/i, 'ffprobe$1');
   
   if (fs.existsSync(ffprobeCandidate)) {
     try {
-      const probeCmd = `"${ffprobeCandidate}" -v error -select_streams v:0 -show_entries stream=width,height,duration -of json "${videoPath}"`;
+      const probeCmd = `"${ffprobeCandidate}" -v error -select_streams v:0 -show_entries stream=width,height,duration:format=duration -of json "${videoPath}"`;
       const out = execSync(probeCmd, { encoding: 'utf-8', timeout: 10000 });
       const parsed = JSON.parse(out);
       const stream = parsed.streams?.[0];
-      if (stream && stream.width && stream.height) {
-        return {
-          width: parseInt(stream.width, 10),
-          height: parseInt(stream.height, 10),
-          duration: parseFloat(stream.duration || '30'),
-        };
+      const width = stream?.width ? parseInt(stream.width, 10) : NaN;
+      const height = stream?.height ? parseInt(stream.height, 10) : NaN;
+      const streamDuration = stream?.duration ? parseFloat(stream.duration) : NaN;
+      const formatDuration = parsed.format?.duration ? parseFloat(parsed.format.duration) : NaN;
+      const duration = Number.isFinite(streamDuration) && streamDuration > 0
+        ? streamDuration
+        : formatDuration;
+
+      if (
+        Number.isFinite(width) && width > 0 &&
+        Number.isFinite(height) && height > 0 &&
+        Number.isFinite(duration) && duration > 0
+      ) {
+        return { width, height, duration };
       }
     } catch {
       // Fallback to ffmpeg -i probe below
@@ -50,19 +64,24 @@ export function extractVideoMetadata(videoPath: string): VideoMetadata {
   // Fallback: run ffmpeg -i and parse stderr
   try {
     const probeCmd = `"${ffmpeg}" -i "${videoPath}" 2>&1`;
-    const out = execSync(probeCmd, { encoding: 'utf-8', timeout: 10000 });
-    
-    let width = 1920;
-    let height = 1080;
-    let duration = 30;
+    let output = '';
+    try {
+      output = execSync(probeCmd, { encoding: 'utf-8', timeout: 10000 });
+    } catch (err: any) {
+      output = (err.stdout || '') + (err.stderr || '');
+    }
 
-    const resMatch = out.match(/Stream.*Video:.*,\s*(\d{2,5})x(\d{2,5})/);
+    let width = NaN;
+    let height = NaN;
+    let duration = NaN;
+
+    const resMatch = output.match(/Stream.*Video:.*,\s*(\d{2,5})x(\d{2,5})/);
     if (resMatch) {
       width = parseInt(resMatch[1], 10);
       height = parseInt(resMatch[2], 10);
     }
 
-    const durMatch = out.match(/Duration:\s*(\d{2}):(\d{2}):(\d{2}\.\d{2})/);
+    const durMatch = output.match(/Duration:\s*(\d{2}):(\d{2}):(\d{2}(?:\.\d+)?)/);
     if (durMatch) {
       duration =
         parseInt(durMatch[1], 10) * 3600 +
@@ -70,21 +89,18 @@ export function extractVideoMetadata(videoPath: string): VideoMetadata {
         parseFloat(durMatch[3]);
     }
 
-    return { width, height, duration };
-  } catch (err: any) {
-    // If ffmpeg exits with code 1 after printing info, inspect err.stdout/stderr
-    const output = (err.stdout || '') + (err.stderr || '');
-    const resMatch = output.match(/Stream.*Video:.*,\s*(\d{2,5})x(\d{2,5})/);
-    if (resMatch) {
-      return {
-        width: parseInt(resMatch[1], 10),
-        height: parseInt(resMatch[2], 10),
-        duration: 30,
-      };
+    if (
+      Number.isFinite(width) && width > 0 &&
+      Number.isFinite(height) && height > 0 &&
+      Number.isFinite(duration) && duration > 0
+    ) {
+      return { width, height, duration };
     }
-    // Default standard HD landscape if unreadable
-    return { width: 1920, height: 1080, duration: 30 };
+  } catch {
+    // Both probes failed
   }
+
+  throw new ClipperError('MEDIA_INVALID', 'Failed to probe valid video dimensions and duration from media source', 400);
 }
 
 /**
@@ -185,9 +201,15 @@ export async function sampleFrames(
 
 
 /**
- * Analyzes RGB pixel luminance and color centroids from a frame to detect subject position
+ * @deprecated Legacy local spatial centroid analyzer. Retained for backward-compatibility.
+ * Production pipelines MUST use HybridDetectorProvider instead.
+ * Never returns a fake fallback subject on failure; returns null.
  */
-export function detectSubjectLocally(framePath: string): DetectedSubject {
+export function detectSubjectLocally(framePath: string): DetectedSubject | null {
+  if (!fs.existsSync(framePath)) {
+    return null;
+  }
+
   try {
     const ffmpeg = getFfmpegPath();
     // Downscale to 64x36 raw RGB24 to compute spatial center of activity/contrast
@@ -239,99 +261,49 @@ export function detectSubjectLocally(framePath: string): DetectedSubject {
         subjectType: 'centroid',
       };
     }
-  } catch (err) {
-    // If local pixel analysis fails, default to centered subject
+  } catch {
+    // If local pixel analysis fails, return null - NEVER fabricate a fallback subject
+    return null;
   }
 
-  return {
-    time: 0,
-    x: 0.5,
-    y: 0.4,
-    width: 0.35,
-    height: 0.5,
-    confidence: 0.6,
-    subjectType: 'fallback',
-  };
+  return null;
 }
 
 /**
- * Detects primary human/speaker subject in a frame using Gemini Vision if available,
- * with fallback to local spatial centroid analysis.
+ * @deprecated Legacy subject detector. Delegates to canonical HybridDetectorProvider.
+ * Removed direct Gemini API calls and raw buffer reads.
+ * Never manufactures a fallback subject on failure; returns null.
  */
 export async function detectSubjectInFrame(
   framePath: string,
-  time: number
-): Promise<DetectedSubject> {
-  const geminiKey = process.env.GEMINI_API_KEY;
+  time: number,
+  detector?: HybridDetectorProvider
+): Promise<DetectedSubject | null> {
+  const activeDetector = detector || new HybridDetectorProvider();
+  try {
+    const subjects = await activeDetector.detectSubjects({
+      framePath,
+      timestamp: time,
+    });
 
-  if (geminiKey) {
-    try {
-      const imageBytes = fs.readFileSync(framePath);
-      const base64Image = imageBytes.toString('base64');
-
-      const prompt = `Analyze this video frame and return the normalized 2D bounding box [ymin, xmin, ymax, xmax] (values between 0 and 1000) of the primary human speaker or main visual subject. Respond ONLY in valid JSON format: {"box_2d": [ymin, xmin, ymax, xmax], "confidence": 0.95}`;
-
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiKey}`;
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [
-            {
-              parts: [
-                { text: prompt },
-                {
-                  inline_data: {
-                    mime_type: 'image/jpeg',
-                    data: base64Image,
-                  },
-                },
-              ],
-            },
-          ],
-          generationConfig: {
-            response_mime_type: 'application/json',
-            temperature: 0.1,
-          },
-        }),
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-        if (text) {
-          const parsed = JSON.parse(text);
-          const box = parsed.box_2d;
-          if (Array.isArray(box) && box.length === 4) {
-            const [ymin, xmin, ymax, xmax] = box.map((v: number) => v / 1000);
-            const centerX = (xmin + xmax) / 2;
-            const centerY = (ymin + ymax) / 2;
-            const w = xmax - xmin;
-            const h = ymax - ymin;
-
-            return {
-              time,
-              x: Math.max(0.05, Math.min(0.95, centerX)),
-              y: Math.max(0.1, Math.min(0.9, centerY)),
-              width: w,
-              height: h,
-              confidence: parsed.confidence || 0.9,
-              subjectType: 'person',
-            };
-          }
-        }
-      }
-    } catch {
-      // Gemini detection failed or timed out; fall through to local detector
+    if (Array.isArray(subjects) && subjects.length > 0) {
+      const primary = subjects[0];
+      return {
+        time,
+        x: primary.x,
+        y: primary.y,
+        width: primary.width,
+        height: primary.height,
+        confidence: primary.confidence,
+        subjectType: primary.subjectType === 'face' ? 'face' : primary.subjectType === 'person' ? 'person' : 'centroid',
+      };
     }
+  } catch {
+    // Return null on detector failure - NEVER invent a fake subject
+    return null;
   }
 
-  // Local spatial centroid detection
-  const localResult = detectSubjectLocally(framePath);
-  return {
-    ...localResult,
-    time,
-  };
+  return null;
 }
 
 /**
@@ -532,42 +504,64 @@ export async function generateReframeTrack(options: {
   }
 
   if (rawKeyframes.length === 0) {
+    const detector = new HybridDetectorProvider();
     const samples = await sampleFrames(videoPath, startTime, duration, 1);
     try {
       for (const sample of samples) {
-        const detection = await detectSubjectInFrame(sample.framePath, sample.time);
-        
-        // Apply Headroom rule: keep face anchored around 35% from the top
-        let adjustedY = detection.y;
-        if (detection.subjectType === 'person' || detection.subjectType === 'face') {
-          adjustedY = Math.max(0.2, Math.min(0.65, detection.y - (detection.height * 0.1)));
-        }
+        const detection = await detectSubjectInFrame(sample.framePath, sample.time, detector);
+        if (detection) {
+          // Apply Headroom rule: keep face anchored around 35% from the top
+          let adjustedY = detection.y;
+          if (detection.subjectType === 'person' || detection.subjectType === 'face') {
+            adjustedY = Math.max(0.2, Math.min(0.65, detection.y - (detection.height * 0.1)));
+          }
 
-        rawKeyframes.push({
-          time: sample.time,
-          x: detection.x,
-          y: adjustedY,
-          scale: 1.0,
-          confidence: detection.confidence,
-          sourceBbox: {
-            x: Math.max(0, detection.x - detection.width / 2),
-            y: Math.max(0, detection.y - detection.height / 2),
-            width: detection.width,
-            height: detection.height,
-          },
-        });
+          rawKeyframes.push({
+            time: sample.time,
+            x: detection.x,
+            y: adjustedY,
+            scale: 1.0,
+            confidence: detection.confidence,
+            sourceBbox: {
+              x: Math.max(0, detection.x - detection.width / 2),
+              y: Math.max(0, detection.y - detection.height / 2),
+              width: detection.width,
+              height: detection.height,
+            },
+          });
+        }
       }
     } finally {
       samples.cleanup();
     }
 
-
-    // Cache raw detections
-    try {
-      fs.writeFileSync(cachePath, JSON.stringify(rawKeyframes), 'utf-8');
-    } catch {
-      // Ignore cache write error
+    // Cache raw detections if any were found
+    if (rawKeyframes.length > 0) {
+      try {
+        fs.writeFileSync(cachePath, JSON.stringify(rawKeyframes), 'utf-8');
+      } catch {
+        // Ignore cache write error
+      }
     }
+  }
+
+  // If no subjects detected in any frame, fall back to center crop keyframes (without inventing fake subjects)
+  if (rawKeyframes.length === 0) {
+    return {
+      id: trackId,
+      sourceWidth: meta.width,
+      sourceHeight: meta.height,
+      targetWidth,
+      targetHeight,
+      aspectRatio,
+      trackingMode: 'smart',
+      keyframes: [
+        { time: 0, x: 0.5, y: 0.5, scale: 1.0, confidence: 0.5 },
+        { time: duration, x: 0.5, y: 0.5, scale: 1.0, confidence: 0.5 },
+      ],
+      version: '2.0.0',
+      createdAt: now,
+    };
   }
 
   // If locked framing is requested, lock to the median subject position

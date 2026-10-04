@@ -8,7 +8,7 @@ import { HybridDetectorProvider } from '@/lib/reframe/detectorProvider';
 import { resolveAuthorizedMediaSource } from '@/lib/reframe/mediaResolver';
 import { isFiniteNumber, isPositiveInteger, validateReframeAnalysis } from '@/lib/reframe/validation';
 import { buildSubjectTracks } from '@/lib/reframe/trackingEngine';
-import { detectVideoScenes } from '@/lib/intelligence/engines/sceneEngine';
+import { detectVideoScenes, sanitizeSceneFailureReason } from '@/lib/intelligence/engines/sceneEngine';
 import { ReframeAnalysis, SceneBoundary, SubjectDetection } from '@/lib/reframe/types';
 
 export async function GET(req: NextRequest) {
@@ -115,12 +115,12 @@ export async function POST(req: NextRequest) {
         }));
       } else {
         sceneDetectionDegraded = true;
-        sceneDetectionReason = 'Scene detector produced 0 cuts; fell back to single scene';
+        sceneDetectionReason = 'SCENE_DETECTOR_ZERO_CUTS';
         detectedScenes = [{ sceneIndex: 0, start: 0, end: meta.duration, cutConfidence: 0.0 }];
       }
     } catch (sceneErr: any) {
       sceneDetectionDegraded = true;
-      sceneDetectionReason = `Scene detection failed (${sceneErr.message || 'unknown'}); fell back to single scene`;
+      sceneDetectionReason = sanitizeSceneFailureReason(sceneErr);
       detectedScenes = [{ sceneIndex: 0, start: 0, end: meta.duration, cutConfidence: 0.0 }];
     }
 

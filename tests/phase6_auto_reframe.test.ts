@@ -22,7 +22,15 @@ import {
   buildFfmpegReframeCropFilter,
   sampleFrames,
   cleanupSampleFrames,
+  extractVideoMetadata,
+  detectSubjectLocally,
+  detectSubjectInFrame,
+  generateReframeTrack,
 } from '../lib/reframe/reframeEngine';
+import {
+  detectVideoScenes,
+  sanitizeSceneFailureReason,
+} from '../lib/intelligence/engines/sceneEngine';
 import {
   computeIoU,
   computeCenterDistance,
@@ -1397,6 +1405,189 @@ async function runPhase6UnitTests() {
     assert(!sanitized.includes('XXXXX'), 'Sanitized reason contains no response bodies');
   }
   assert(true, 'All malicious provider errors safely classified and sanitized');
+
+  // --------------------------------------------------------------------------
+  // CATEGORY 24: Authoritative Video Probing & No-Default Fallback Gate (Phase 6.1.3)
+  // --------------------------------------------------------------------------
+  console.log('\n--- CATEGORY 24: Authoritative Video Probing & No-Default Fallback Gate ---');
+
+  // Test 24.1: Probing valid real video returns authentic dimensions & duration
+  const candidateTestVideo = path.join(
+    process.cwd(),
+    'data',
+    'storage_mock',
+    'users',
+    'render-user',
+    'projects',
+    'render-proj',
+    'media',
+    'render-media',
+    'source',
+    'original.mp4'
+  );
+
+  if (fs.existsSync(candidateTestVideo)) {
+    const probed = extractVideoMetadata(candidateTestVideo);
+    assert(Number.isFinite(probed.width) && probed.width > 0, 'Probed video width is positive finite integer');
+    assert(Number.isFinite(probed.height) && probed.height > 0, 'Probed video height is positive finite integer');
+    assert(Number.isFinite(probed.duration) && probed.duration > 0, 'Probed video duration is positive finite float');
+    assert(probed.width === 1280, 'Probed video width matches real video (1280px)');
+    assert(probed.height === 720, 'Probed video height matches real video (720px)');
+  }
+
+  // Test 24.2: Missing file throws MEDIA_UNAVAILABLE without returning 1920x1080/30
+  let missingProbeFileThrew = false;
+  try {
+    extractVideoMetadata(path.join(process.cwd(), 'data', 'does_not_exist_probe.mp4'));
+  } catch (err: any) {
+    missingProbeFileThrew = true;
+    assert(err instanceof ClipperError, 'Missing video probe throws typed ClipperError');
+    assert(err.code === 'MEDIA_UNAVAILABLE', 'Missing video throws MEDIA_UNAVAILABLE');
+    assertNoPathLeaked(err.message, 'missing video probe');
+  }
+  assert(missingProbeFileThrew, 'Nonexistent video probing must throw and never return defaults');
+
+  // Test 24.3: Corrupt non-video file throws MEDIA_INVALID without returning 1920x1080/30
+  const corruptProbeFile = path.join(process.cwd(), 'data', `corrupt_probe_${Date.now()}.mp4`);
+  fs.writeFileSync(corruptProbeFile, 'GARBAGE_HEADER_DATA_12345');
+  let corruptFileThrew = false;
+  try {
+    try {
+      extractVideoMetadata(corruptProbeFile);
+    } catch (err: any) {
+      corruptFileThrew = true;
+      assert(err instanceof ClipperError, 'Corrupt video probe throws typed ClipperError');
+      assert(err.code === 'MEDIA_INVALID', 'Corrupt video throws MEDIA_INVALID');
+      assert(!err.message.includes('1920'), 'Error message does not mention fabricated 1920');
+    }
+  } finally {
+    if (fs.existsSync(corruptProbeFile)) {
+      fs.unlinkSync(corruptProbeFile);
+    }
+  }
+  assert(corruptFileThrew, 'Corrupted video probing must throw MEDIA_INVALID and never return defaults');
+
+  // --------------------------------------------------------------------------
+  // CATEGORY 25: Scene Detection Truthfulness & Semantic Error Gate (Phase 6.1.3)
+  // --------------------------------------------------------------------------
+  console.log('\n--- CATEGORY 25: Scene Detection Truthfulness & Semantic Error Gate ---');
+
+  // Test 25.1: sanitizeSceneFailureReason deterministic classifications
+  const adversarialSceneErrors = [
+    { err: new Error('Operation timed out after 30000ms'), expected: 'SCENE_DETECTOR_TIMEOUT' },
+    { err: new Error('connect ETIMEDOUT 10.0.0.1:8080'), expected: 'SCENE_DETECTOR_TIMEOUT' },
+    { err: new Error('Cannot perform scene detection: video file does not exist'), expected: 'SCENE_DETECTOR_UNAVAILABLE' },
+    { err: new Error('ENOENT /Users/subhash/Downloads/video.mp4'), expected: 'SCENE_DETECTOR_UNAVAILABLE' },
+    { err: new Error('spawn ffmpeg ENOENT'), expected: 'SCENE_DETECTOR_UNAVAILABLE' },
+    { err: new Error('moov atom not found / invalid media stream'), expected: 'SCENE_DETECTOR_INVALID_MEDIA' },
+    { err: new Error('Invalid data found when processing input'), expected: 'SCENE_DETECTOR_INVALID_MEDIA' },
+    { err: new Error('Corrupt mp4 container'), expected: 'SCENE_DETECTOR_INVALID_MEDIA' },
+    { err: new Error('Command failed: ffmpeg -i /private/var/tmp/vid.mp4 with exit code 1'), expected: 'SCENE_DETECTOR_FAILED' },
+    { err: new Error('https://secret-bucket.s3.amazonaws.com/?AWSAccessKeyId=AKIAIOSFODNN7EXAMPLE'), expected: 'SCENE_DETECTOR_FAILED' },
+  ];
+
+  const approvedSceneReasons = new Set([
+    'SCENE_DETECTOR_TIMEOUT',
+    'SCENE_DETECTOR_UNAVAILABLE',
+    'SCENE_DETECTOR_INVALID_MEDIA',
+    'SCENE_DETECTOR_FAILED',
+    'SCENE_DETECTOR_ZERO_CUTS',
+  ]);
+
+  for (const { err, expected } of adversarialSceneErrors) {
+    const sanitized = sanitizeSceneFailureReason(err);
+    assert(approvedSceneReasons.has(sanitized), `Sanitized scene reason "${sanitized}" in approved set`);
+    assert(sanitized === expected, `Sanitized reason matches expected classification "${expected}"`);
+    assert(sanitized.length <= 50, 'Sanitized scene reason length is <= 50 chars');
+    assert(!sanitized.includes('/Users/'), 'Sanitized scene reason contains no /Users/');
+    assert(!sanitized.includes('/private/'), 'Sanitized scene reason contains no /private/');
+    assert(!sanitized.includes('http://') && !sanitized.includes('https://'), 'Sanitized scene reason contains no URLs');
+    assert(!sanitized.includes('ffmpeg'), 'Sanitized scene reason contains no command lines');
+  }
+
+  // Test 25.2: detectVideoScenes returns truthful metadata (no fabricated objects/faces)
+  if (fs.existsSync(candidateTestVideo)) {
+    const scenes = await detectVideoScenes({
+      filePath: candidateTestVideo,
+      projectId: 'test-proj-scene-truth',
+      totalDurationSeconds: 3,
+    });
+    assert(Array.isArray(scenes) && scenes.length > 0, 'detectVideoScenes returned scene array');
+    for (const sc of scenes) {
+      assert(Array.isArray(sc.dominantObjects) && sc.dominantObjects.length === 0, 'dominantObjects is empty array (truthful)');
+      assert(sc.dominantFacesCount === 0, 'dominantFacesCount is 0 (truthful)');
+      assert(Array.isArray(sc.dominantColors) && sc.dominantColors.length === 0, 'dominantColors is empty array (truthful)');
+      assert(sc.sceneType === 'hard_cut' || sc.sceneType === 'environment_change', `sceneType "${sc.sceneType}" is cut-derived (truthful)`);
+    }
+  }
+
+  // --------------------------------------------------------------------------
+  // CATEGORY 26: Legacy Detector Decommission & Fake-Subject Prevention (Phase 6.1.3)
+  // --------------------------------------------------------------------------
+  console.log('\n--- CATEGORY 26: Legacy Detector Decommission & Fake-Subject Prevention ---');
+
+  // Test 26.1: detectSubjectLocally returns null on missing frame (NEVER fake fallback)
+  const localMissing = detectSubjectLocally(path.join(process.cwd(), 'data', 'does_not_exist_frame.jpg'));
+  assert(localMissing === null, 'detectSubjectLocally returns null on nonexistent frame');
+
+  // Test 26.2: detectSubjectInFrame returns null on missing frame (NEVER fake fallback)
+  const frameMissing = await detectSubjectInFrame(path.join(process.cwd(), 'data', 'does_not_exist_frame.jpg'), 0);
+  assert(frameMissing === null, 'detectSubjectInFrame returns null on nonexistent frame');
+
+  // Test 26.3: detectSubjectInFrame delegates to canonical HybridDetectorProvider
+  let mockHybridCalled = false;
+  const mockSubjectDetector: ISubjectDetectorProvider = {
+    name: 'mock-provider',
+    getMetadata: () => ({
+      provider: 'mock-provider',
+      providerMode: 'heuristic',
+      capabilities: [],
+      degraded: false,
+    }),
+    async detectSubjects() {
+      mockHybridCalled = true;
+      return [
+        {
+          timestamp: 0.5,
+          x: 0.42,
+          y: 0.38,
+          width: 0.3,
+          height: 0.4,
+          confidence: 0.88,
+          subjectType: 'person',
+          subjectId: 'person-test',
+        },
+      ];
+    },
+  };
+  const mockHybrid = new HybridDetectorProvider(mockSubjectDetector, mockSubjectDetector);
+  const delegatedResult = await detectSubjectInFrame('any_frame.jpg', 0.5, mockHybrid);
+  assert(mockHybridCalled, 'detectSubjectInFrame delegated to HybridDetectorProvider instance');
+  assert(delegatedResult !== null, 'Delegated detection returned subject result');
+  assert(delegatedResult?.x === 0.42 && delegatedResult?.y === 0.38, 'Delegated subject coordinates match detector output');
+  assert(delegatedResult?.subjectType === 'person', 'Delegated subjectType matches detector output');
+
+  // Test 26.4: generateReframeTrack smart mode with valid video yields valid keyframes
+  if (fs.existsSync(candidateTestVideo)) {
+    const track = await generateReframeTrack({
+      videoPath: candidateTestVideo,
+      startTime: 0,
+      duration: 3,
+      aspectRatio: '9:16',
+      trackingMode: 'smart',
+    });
+    assert(track.trackingMode === 'smart', 'Track trackingMode is smart');
+    assert(track.keyframes.length > 0, 'Keyframes generated');
+    for (const kf of track.keyframes) {
+      assert(kf.x >= 0 && kf.x <= 1, 'Keyframe x coordinate in [0, 1]');
+      assert(kf.y >= 0 && kf.y <= 1, 'Keyframe y coordinate in [0, 1]');
+      assert(kf.scale >= 1.0, 'Keyframe scale >= 1.0');
+    }
+  }
+
+  // Test 26.5: Verify no synthetic fallback subjectType exists across pipeline
+  const testEmptyDetResult = await detectSubjectInFrame(path.join(process.cwd(), 'data', 'does_not_exist_99.jpg'), 1.0);
+  assert(testEmptyDetResult === null, 'Detector failure produces null rather than subjectType: fallback');
 
   console.log('\n====================================================');
   console.log(`📊 PHASE 6 UNIT TEST SUMMARY: ${passed} PASSED, ${failed} FAILED`);

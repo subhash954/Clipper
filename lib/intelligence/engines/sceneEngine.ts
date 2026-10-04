@@ -18,7 +18,7 @@ export async function detectVideoScenes(options: SceneDetectionOptions): Promise
   const { filePath, projectId, threshold = 0.28, totalDurationSeconds = 0 } = options;
 
   if (!fs.existsSync(/*turbopackIgnore: true*/ filePath)) {
-    throw new Error(`Cannot perform scene detection: video file does not exist at ${filePath}`);
+    throw new Error('Cannot perform scene detection: video file does not exist');
   }
 
   const ffmpegPath = getFfmpegPath();
@@ -93,14 +93,7 @@ export async function detectVideoScenes(options: SceneDetectionOptions): Promise
           motionLevel = 'high';
         }
 
-        let sceneType: SceneType = 'talking_head';
-        if (duration < 1.0) {
-          sceneType = 'hard_cut';
-        } else if (i % 3 === 1) {
-          sceneType = 'presentation_slide';
-        } else if (i % 4 === 2) {
-          sceneType = 'screen_share';
-        }
+        const sceneType: SceneType = duration < 1.0 ? 'hard_cut' : 'environment_change';
 
         scenes.push({
           id: `scene-${i + 1}-${Date.now()}`,
@@ -111,9 +104,9 @@ export async function detectVideoScenes(options: SceneDetectionOptions): Promise
           confidence: 0.92,
           sceneType,
           visualSummary: `Visual segment from ${start.toFixed(1)}s to ${end.toFixed(1)}s (${motionLevel} motion)`,
-          dominantObjects: ['speaker', 'microphone', 'display'],
-          dominantFacesCount: 1,
-          dominantColors: ['#1E1E24', '#DC2626', '#FFFFFF'],
+          dominantObjects: [],
+          dominantFacesCount: 0,
+          dominantColors: [],
           motionLevel,
           cutIntensityScore: i < sceneScores.length ? sceneScores[i] : 0.35,
           evidence: `FFmpeg scene change cut detected at ${start.toFixed(2)}s boundary`,
@@ -134,11 +127,11 @@ export async function detectVideoScenes(options: SceneDetectionOptions): Promise
           start: 0,
           end: Number(videoDuration.toFixed(2)),
           confidence: 0.95,
-          sceneType: 'talking_head',
+          sceneType: 'environment_change',
           visualSummary: `Continuous uninterrupted scene (${videoDuration.toFixed(1)}s)`,
-          dominantObjects: ['speaker'],
-          dominantFacesCount: 1,
-          dominantColors: ['#1A1A1A', '#F4F5F7'],
+          dominantObjects: [],
+          dominantFacesCount: 0,
+          dominantColors: [],
           motionLevel: 'low',
           cutIntensityScore: 0.1,
           evidence: 'Single continuous visual sequence without hard cuts',
@@ -153,4 +146,38 @@ export async function detectVideoScenes(options: SceneDetectionOptions): Promise
       resolve(scenes);
     });
   });
+}
+
+/**
+ * Deterministically sanitizes scene detector failure reasons into bounded semantic codes.
+ * Ensures zero filesystem paths, command lines, stack traces, or raw error messages are leaked.
+ */
+export function sanitizeSceneFailureReason(error: unknown): string {
+  if (!error) return 'SCENE_DETECTOR_FAILED';
+  const msg = (error instanceof Error ? error.message : String(error)).toLowerCase();
+  if (msg.includes('timeout') || msg.includes('timed out') || msg.includes('etimedout')) {
+    return 'SCENE_DETECTOR_TIMEOUT';
+  }
+  if (
+    msg.includes('invalid') ||
+    msg.includes('corrupt') ||
+    msg.includes('format') ||
+    msg.includes('moov atom') ||
+    msg.includes('no streams') ||
+    msg.includes('unsupported')
+  ) {
+    return 'SCENE_DETECTOR_INVALID_MEDIA';
+  }
+  if (
+    msg.includes('not exist') ||
+    msg.includes('enoent') ||
+    msg.includes('not found') ||
+    msg.includes('unavailable') ||
+    msg.includes('unreadable') ||
+    msg.includes('eacces') ||
+    msg.includes('permission')
+  ) {
+    return 'SCENE_DETECTOR_UNAVAILABLE';
+  }
+  return 'SCENE_DETECTOR_FAILED';
 }
