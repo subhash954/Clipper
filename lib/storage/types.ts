@@ -94,6 +94,11 @@ export interface IStorageProvider {
   moveObject(sourceKey: string, destinationKey: string): Promise<void>;
   getSignedDownloadUrl(key: string, options?: SignedUrlOptions): Promise<string>;
   getSignedUploadUrl(key: string, options?: SignedUrlOptions): Promise<string>;
+  downloadToFile?(
+    key: string,
+    destinationPath: string,
+    options?: { maxSizeBytes?: number }
+  ): Promise<{ sizeBytes: number }>;
 }
 
 /**
@@ -136,4 +141,9 @@ export interface IStorageService {
   exists?(key: string): Promise<boolean>;
   getDownloadUrl?(key: string, options?: SignedUrlOptions): Promise<{ downloadUrl: string }>;
   getObjectStream?(key: string): Promise<any>;
+  downloadObjectToFile?(
+    key: string,
+    destinationPath: string,
+    options?: { maxSizeBytes?: number }
+  ): Promise<{ sizeBytes: number }>;
 }

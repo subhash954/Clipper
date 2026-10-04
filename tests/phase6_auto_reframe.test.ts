@@ -6,6 +6,7 @@
 
 import fs from 'fs';
 import path from 'path';
+import os from 'os';
 import {
   AspectRatio,
   MultiPersonMode,
@@ -37,6 +38,7 @@ import {
   LocalCentroidDetectorProvider,
   FixtureDetectorProvider,
   HybridDetectorProvider,
+  ISubjectDetectorProvider,
 } from '../lib/reframe/detectorProvider';
 import {
   assertSafeFilesystemPath,
@@ -53,6 +55,7 @@ import {
 } from '../lib/reframe/validation';
 import { EditingService } from '../lib/editor/editingService';
 import { getStorage } from '../lib/storage';
+import { getStorageService } from '../lib/storage/storageService';
 import { ClipperError } from '../lib/errors';
 
 
@@ -920,6 +923,348 @@ async function runPhase6UnitTests() {
     cleanupSampleFrames(dummyTemp);
     assert(!fs.existsSync(dummyTemp), 'cleanupSampleFrames successfully removed directory');
   }
+
+  // --------------------------------------------------------------------------
+  // CATEGORY 21: Client Error Safety & Path Leakage Gate (Phase 6.1.1)
+  // --------------------------------------------------------------------------
+  console.log('\n--- CATEGORY 21: Client Error Safety & Path Leakage Gate ---');
+
+  const FORBIDDEN_PATH_SUBSTRINGS = [
+    '/Users/',
+    '/home/',
+    '/tmp/',
+    '/var/',
+    '/etc/',
+    'node_modules',
+    'data/uploads',
+    'clipper_reframe_',
+  ];
+
+  function assertNoPathLeaked(message: string, context: string) {
+    for (const sub of FORBIDDEN_PATH_SUBSTRINGS) {
+      assert(
+        !message.includes(sub),
+        `Error message must not leak '${sub}' (${context}): ${message}`
+      );
+    }
+  }
+
+  // 21.1: Nonexistent media error does not leak path
+  try {
+    assertSafeFilesystemPath(path.join(process.cwd(), 'data', 'does_not_exist_file.mp4'));
+  } catch (err: any) {
+    assert(err.code === 'MEDIA_UNAVAILABLE', 'Nonexistent media throws MEDIA_UNAVAILABLE');
+    assertNoPathLeaked(err.message, 'nonexistent media');
+  }
+
+  // 21.2: Traversal attempt does not leak path
+  try {
+    assertSafeFilesystemPath('../../etc/passwd');
+  } catch (err: any) {
+    assert(err.code === 'FORBIDDEN', 'Traversal throws FORBIDDEN');
+    assertNoPathLeaked(err.message, 'traversal attempt');
+  }
+
+  // 21.3: Symlink escape does not leak path
+  const symlinkLeakTestDir = path.join(process.cwd(), 'data', `test_sym_leak_${Date.now()}`);
+  fs.mkdirSync(symlinkLeakTestDir, { recursive: true });
+  const leakLinkPath = path.join(symlinkLeakTestDir, 'leak_link.mp4');
+  try {
+    fs.symlinkSync('/etc/passwd', leakLinkPath);
+    try {
+      assertSafeFilesystemPath(leakLinkPath);
+    } catch (err: any) {
+      assert(err.code === 'FORBIDDEN', 'Symlink escape throws FORBIDDEN');
+      assertNoPathLeaked(err.message, 'symlink escape');
+    }
+  } finally {
+    if (fs.existsSync(symlinkLeakTestDir)) {
+      fs.rmSync(symlinkLeakTestDir, { recursive: true, force: true });
+    }
+  }
+
+  // 21.4: Invalid container signature does not leak path
+  const corruptFileLeakPath = path.join(process.cwd(), 'data', `corrupt_${Date.now()}.mp4`);
+  fs.writeFileSync(corruptFileLeakPath, 'NOT_A_VALID_HEADER');
+  try {
+    try {
+      assertSafeFilesystemPath(corruptFileLeakPath);
+    } catch (err: any) {
+      assert(err.code === 'MEDIA_INVALID', 'Corrupt file throws MEDIA_INVALID');
+      assertNoPathLeaked(err.message, 'invalid container');
+    }
+  } finally {
+    if (fs.existsSync(corruptFileLeakPath)) fs.unlinkSync(corruptFileLeakPath);
+  }
+
+  // 21.5: Directory target does not leak path
+  try {
+    assertSafeFilesystemPath(path.join(process.cwd(), 'data'));
+  } catch (err: any) {
+    assert(err.code === 'MEDIA_INVALID', 'Directory throws MEDIA_INVALID');
+    assertNoPathLeaked(err.message, 'directory target');
+  }
+
+  // 21.6: Failed cloud download does not leak path or internal system errors
+  const mockStorageService = getStorageService();
+  const fakeAssetId = 'fake-asset-' + Date.now();
+  const projForLeak = 'proj-leak-' + Date.now();
+  await storageInst.saveProject({
+    id: projForLeak,
+    title: 'Leak Test Proj',
+    userId: 'user-leak',
+    version: 1,
+    sourceType: 'upload',
+    workflowType: 'youtube_to_shorts',
+    durationSeconds: 30,
+    status: 'completed',
+    clips: [],
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  });
+  const storageMod = await import('../lib/storage');
+  storageMod.saveLocalMediaAsset({
+    id: fakeAssetId,
+    projectId: projForLeak,
+    userId: 'user-leak',
+    fileName: 'nonexistent_cloud.mp4',
+    storageKey: 'nonexistent/cloud/path.mp4',
+    duration: 30,
+    width: 1920,
+    height: 1080,
+  });
+  try {
+    await resolveAuthorizedMediaSource({
+      projectId: projForLeak,
+      mediaAssetId: fakeAssetId,
+      userId: 'user-leak',
+    });
+  } catch (err: any) {
+    assert(err.code === 'MEDIA_UNAVAILABLE', 'Failed cloud download throws MEDIA_UNAVAILABLE');
+    assertNoPathLeaked(err.message, 'failed cloud download');
+  }
+
+  // --------------------------------------------------------------------------
+  // CATEGORY 22: Cloud Media Streaming & Memory Safety Gate (Phase 6.1.1)
+  // --------------------------------------------------------------------------
+  console.log('\n--- CATEGORY 22: Cloud Media Streaming & Memory Safety Gate ---');
+
+  // Test 22.1: Proving downloadObjectToFile is called and does NOT call getObject() into RAM
+  const streamCallStats = {
+    getObjectCalled: false,
+    downloadToFileCalled: false,
+  };
+  const mockStreamingProvider: any = {
+    providerType: 'local',
+    storageZoneOrBucket: 'test',
+    async getObject() {
+      streamCallStats.getObjectCalled = true;
+      return Buffer.from('FAKE_GET_OBJECT_PAYLOAD');
+    },
+    async downloadToFile(key: string, dest: string, opts?: any) {
+      streamCallStats.downloadToFileCalled = true;
+      fs.writeFileSync(dest, 'STREAMED_DATA');
+      return { sizeBytes: 13 };
+    },
+    async objectExists() { return true; },
+    async getObjectMetadata() { return null; },
+    async upload() { return { key: '', publicUrl: '', sizeBytes: 0 }; },
+    async deleteObject() {},
+    async deletePrefix() { return 0; },
+    async copyObject() {},
+    async moveObject() {},
+    async getSignedDownloadUrl() { return ''; },
+    async getSignedUploadUrl() { return ''; },
+  };
+
+  const origProvider = mockStorageService.getProvider();
+  mockStorageService.setProvider(mockStreamingProvider);
+  const streamTempDest = path.join(os.tmpdir(), `test_stream_dest_${Date.now()}.mp4`);
+  try {
+    await mockStorageService.downloadObjectToFile('test/key.mp4', streamTempDest);
+    assert(streamCallStats.downloadToFileCalled === true, 'downloadObjectToFile dispatched to streaming provider method');
+    assert(streamCallStats.getObjectCalled === false, 'getObject() was NOT invoked; RAM-materializing buffer avoided');
+  } finally {
+    if (fs.existsSync(streamTempDest)) fs.unlinkSync(streamTempDest);
+    mockStorageService.setProvider(origProvider);
+  }
+
+  // Test 22.2: LocalStorageProvider streaming download
+  const testKey = 'stream_test_video.mp4';
+  const testPayload = Buffer.from('STREAM_PAYLOAD_CHUNK_DATA');
+  await mockStorageService.upload(testKey, testPayload);
+  const localDestFile = path.join(os.tmpdir(), `test_local_download_${Date.now()}.mp4`);
+  try {
+    const res = await mockStorageService.downloadObjectToFile(testKey, localDestFile);
+    assert(res.sizeBytes === testPayload.length, 'Streamed download matches exact source length');
+    assert(fs.existsSync(localDestFile), 'Streamed file written to disk');
+    const readBack = fs.readFileSync(localDestFile);
+    assert(readBack.equals(testPayload), 'Downloaded content matches byte-for-byte');
+  } finally {
+    if (fs.existsSync(localDestFile)) fs.unlinkSync(localDestFile);
+    await mockStorageService.deleteObject(testKey);
+  }
+
+  // Test 22.3: Zero-byte stream result throws and cleans up
+  const emptyKey = 'empty_test_file.mp4';
+  await mockStorageService.upload(emptyKey, Buffer.alloc(0));
+  const emptyDestFile = path.join(os.tmpdir(), `test_empty_download_${Date.now()}.mp4`);
+  let emptyStreamThrew = false;
+  try {
+    await mockStorageService.downloadObjectToFile(emptyKey, emptyDestFile);
+  } catch (err: any) {
+    emptyStreamThrew = true;
+    assert(err.code === 'MEDIA_INVALID', 'Zero-byte download rejected with MEDIA_INVALID');
+  } finally {
+    assert(!fs.existsSync(emptyDestFile), 'Empty target file not left on disk');
+    assert(!fs.existsSync(`${emptyDestFile}.partial`), 'Empty partial file cleaned up');
+    await mockStorageService.deleteObject(emptyKey);
+  }
+  assert(emptyStreamThrew, 'Zero-byte stream rejected');
+
+  // Test 22.4: Oversized result exceeding maxSizeBytes rejected and cleaned up
+  const bigKey = 'big_test_file.mp4';
+  const bigPayload = Buffer.alloc(1024 * 1024); // 1 MB
+  await mockStorageService.upload(bigKey, bigPayload);
+  const bigDestFile = path.join(os.tmpdir(), `test_big_download_${Date.now()}.mp4`);
+  let oversizedThrew = false;
+  try {
+    // Limit to 500 KB
+    await mockStorageService.downloadObjectToFile(bigKey, bigDestFile, { maxSizeBytes: 500 * 1024 });
+  } catch (err: any) {
+    oversizedThrew = true;
+    assert(err.code === 'MEDIA_INVALID', 'Oversized download rejected with MEDIA_INVALID');
+  } finally {
+    assert(!fs.existsSync(bigDestFile), 'Oversized target file not created');
+    assert(!fs.existsSync(`${bigDestFile}.partial`), 'Oversized partial file cleaned up');
+    await mockStorageService.deleteObject(bigKey);
+  }
+  assert(oversizedThrew, 'Oversized stream rejected without memory exhaustion');
+
+  // --------------------------------------------------------------------------
+  // CATEGORY 23: Complete Detector Provider Provenance Gate (Phase 6.1.1)
+  // --------------------------------------------------------------------------
+  console.log('\n--- CATEGORY 23: Complete Detector Provider Provenance Gate ---');
+
+  // Test 23.1: Gemini success for all frames
+  const mockGeminiSuccess: ISubjectDetectorProvider = {
+    name: 'gemini-vision',
+    getMetadata: () => ({
+      provider: 'gemini-vision',
+      providerMode: 'ml-vision',
+      capabilities: ['multimodal-bounding-boxes'],
+      degraded: false,
+      providersUsed: ['gemini-vision'],
+      fallbackEvents: [],
+    }),
+    async detectSubjects(options) {
+      return [{ timestamp: options.timestamp, x: 0.5, y: 0.5, width: 0.3, height: 0.4, confidence: 0.95 }];
+    },
+  };
+  const hybridGeminiSuccess = new HybridDetectorProvider(mockGeminiSuccess);
+  await hybridGeminiSuccess.detectSubjects({ framePath: 'dummy', timestamp: 0.0 });
+  await hybridGeminiSuccess.detectSubjects({ framePath: 'dummy', timestamp: 1.0 });
+  const metaGeminiSuccess = hybridGeminiSuccess.getMetadata();
+  assert(metaGeminiSuccess.provider === 'gemini-vision', 'Successful Gemini reports provider gemini-vision');
+  assert(metaGeminiSuccess.providerMode === 'ml-vision', 'Successful Gemini reports providerMode ml-vision');
+  assert(metaGeminiSuccess.degraded === false, 'Successful Gemini is degraded: false');
+  assert(
+    JSON.stringify(metaGeminiSuccess.providersUsed) === JSON.stringify(['gemini-vision']),
+    'providersUsed contains only gemini-vision'
+  );
+  assert(metaGeminiSuccess.fallbackEvents?.length === 0, 'No fallback events recorded on success');
+
+  // Test 23.2: Gemini unavailable (local centroid from start)
+  const hybridLocalOnly = new HybridDetectorProvider(undefined, new LocalCentroidDetectorProvider());
+  const origKey = process.env.GEMINI_API_KEY;
+  delete process.env.GEMINI_API_KEY;
+  try {
+    const metaLocalOnly = hybridLocalOnly.getMetadata();
+    assert(metaLocalOnly.provider === 'local-centroid', 'Unavailable Gemini reports provider local-centroid');
+    assert(metaLocalOnly.providerMode === 'heuristic', 'Unavailable Gemini reports providerMode heuristic');
+    assert(metaLocalOnly.degraded === true, 'Unavailable Gemini is degraded: true');
+    assert(
+      JSON.stringify(metaLocalOnly.providersUsed) === JSON.stringify(['local-centroid']),
+      'providersUsed contains local-centroid'
+    );
+  } finally {
+    if (origKey) process.env.GEMINI_API_KEY = origKey;
+  }
+
+  // Test 23.3: Gemini succeeds initially then fails
+  let callCount = 0;
+  const mockGeminiFlaky: ISubjectDetectorProvider = {
+    name: 'gemini-vision',
+    getMetadata: () => ({
+      provider: 'gemini-vision',
+      providerMode: 'ml-vision',
+      capabilities: ['multimodal-bounding-boxes'],
+      degraded: false,
+    }),
+    async detectSubjects(options) {
+      callCount++;
+      if (callCount === 1) {
+        return [{ timestamp: options.timestamp, x: 0.5, y: 0.5, width: 0.3, height: 0.4, confidence: 0.95 }];
+      }
+      throw new Error('Quota exceeded 429');
+    },
+  };
+  const hybridFlaky = new HybridDetectorProvider(mockGeminiFlaky);
+  // Frame 1 succeeds
+  await hybridFlaky.detectSubjects({ framePath: 'dummy', timestamp: 0.0 });
+  // Frame 2 fails -> falls back to local centroid
+  await hybridFlaky.detectSubjects({ framePath: 'dummy', timestamp: 1.0 });
+
+  const metaFlaky = hybridFlaky.getMetadata();
+  assert(metaFlaky.provider === 'hybrid', 'Mixed execution reports provider: hybrid');
+  assert(metaFlaky.providerMode === 'hybrid', 'Mixed execution reports providerMode: hybrid');
+  assert(metaFlaky.degraded === true, 'Mixed execution reports degraded: true');
+  assert(
+    Boolean(metaFlaky.providersUsed?.includes('gemini-vision') && metaFlaky.providersUsed?.includes('local-centroid')),
+    'providersUsed contains both gemini-vision and local-centroid'
+  );
+  assert(
+    Boolean(metaFlaky.fallbackEvents && metaFlaky.fallbackEvents.length === 1),
+    'Fallback event recorded on Gemini failure'
+  );
+  assert(
+    metaFlaky.fallbackEvents![0].fromProvider === 'gemini-vision' &&
+    metaFlaky.fallbackEvents![0].toProvider === 'local-centroid',
+    'Fallback event transition is from gemini-vision to local-centroid'
+  );
+
+  // Test 23.4: Multiple Gemini failures keep providersUsed deduplicated
+  await hybridFlaky.detectSubjects({ framePath: 'dummy', timestamp: 2.0 });
+  await hybridFlaky.detectSubjects({ framePath: 'dummy', timestamp: 3.0 });
+  const metaMultiFail = hybridFlaky.getMetadata();
+  const geminiCountInList = metaMultiFail.providersUsed?.filter((p) => p === 'gemini-vision').length;
+  const localCountInList = metaMultiFail.providersUsed?.filter((p) => p === 'local-centroid').length;
+  assert(geminiCountInList === 1, 'gemini-vision appears exactly once in providersUsed (deduplicated)');
+  assert(localCountInList === 1, 'local-centroid appears exactly once in providersUsed (deduplicated)');
+
+  // Test 23.5: Gemini legitimate empty detections do NOT trigger fallback
+  const mockGeminiEmpty: ISubjectDetectorProvider = {
+    name: 'gemini-vision',
+    getMetadata: () => ({
+      provider: 'gemini-vision',
+      providerMode: 'ml-vision',
+      capabilities: ['multimodal-bounding-boxes'],
+      degraded: false,
+    }),
+    async detectSubjects() {
+      return []; // Legitimate empty result
+    },
+  };
+  const hybridEmpty = new HybridDetectorProvider(mockGeminiEmpty);
+  const emptyDetections = await hybridEmpty.detectSubjects({ framePath: 'dummy', timestamp: 0.5 });
+  assert(Array.isArray(emptyDetections) && emptyDetections.length === 0, 'Returns empty detections array');
+  const metaEmpty = hybridEmpty.getMetadata();
+  assert(metaEmpty.provider === 'gemini-vision', 'Empty detection does not falsely trigger local centroid fallback');
+  assert(metaEmpty.degraded === false, 'Legitimate empty detection is degraded: false');
+  assert(
+    JSON.stringify(metaEmpty.providersUsed) === JSON.stringify(['gemini-vision']),
+    'providersUsed remains strictly gemini-vision'
+  );
 
   console.log('\n====================================================');
   console.log(`📊 PHASE 6 UNIT TEST SUMMARY: ${passed} PASSED, ${failed} FAILED`);

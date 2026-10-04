@@ -7,6 +7,7 @@
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
+import crypto from 'crypto';
 import { getMediaAssetById, getStorage } from '../storage';
 import { MediaAsset } from '../types';
 import { getStorageService } from '../storage/storageService';
@@ -73,15 +74,17 @@ export function assertSafeFilesystemPath(candidatePath: string): string {
   );
 
   if (!isWithinAllowedRootPrecheck) {
+    console.error('[MediaResolver] Path outside allowed roots:', absoluteCandidate);
     throw new ClipperError(
       'FORBIDDEN',
-      `Path ${absoluteCandidate} is outside allowed media roots`,
+      'Media source path is outside authorized storage locations',
       403
     );
   }
 
   if (!fs.existsSync(absoluteCandidate)) {
-    throw new ClipperError('MEDIA_UNAVAILABLE', `Media file does not exist at ${absoluteCandidate}`, 404);
+    console.error('[MediaResolver] Media file does not exist:', absoluteCandidate);
+    throw new ClipperError('MEDIA_UNAVAILABLE', 'Media source file does not exist or is unavailable', 404);
   }
 
   // Resolve symlinks to physical target
@@ -89,7 +92,8 @@ export function assertSafeFilesystemPath(candidatePath: string): string {
   try {
     realPath = fs.realpathSync(absoluteCandidate);
   } catch (err: any) {
-    throw new ClipperError('FORBIDDEN', `Failed to resolve real path: ${err.message}`, 403);
+    console.error('[MediaResolver] Failed to resolve real path for candidate:', err);
+    throw new ClipperError('FORBIDDEN', 'Failed to resolve canonical media filesystem path', 403);
   }
 
   // Verify real physical target is also inside an allowed root (anti-symlink escape)
@@ -98,26 +102,28 @@ export function assertSafeFilesystemPath(candidatePath: string): string {
   );
 
   if (!isWithinAllowedRootPostReal) {
-    throw new ClipperError('FORBIDDEN', 'Symlink escape detected: real path is outside allowed media roots', 403);
+    console.error('[MediaResolver] Symlink escape detected real path:', realPath);
+    throw new ClipperError('FORBIDDEN', 'Symlink escape detected: real path references an unauthorized location', 403);
   }
-
 
   // Ensure target is a regular file, not a directory or special device
   const stat = fs.statSync(realPath);
   if (!stat.isFile()) {
-    throw new ClipperError('MEDIA_INVALID', `Path is not a regular file: ${realPath}`, 400);
+    console.error('[MediaResolver] Target is not a regular file:', realPath);
+    throw new ClipperError('MEDIA_INVALID', 'Media source target is not a regular file', 400);
   }
 
   if (stat.size === 0) {
-    throw new ClipperError('MEDIA_INVALID', `Media file is empty (0 bytes): ${realPath}`, 400);
+    throw new ClipperError('MEDIA_INVALID', 'Media file is empty (0 bytes)', 400);
   }
 
   // Verify magic bytes signature
   const sig = validateMediaFileSignature(realPath);
   if (!sig.isValid) {
+    console.error('[MediaResolver] Invalid container signature for:', realPath);
     throw new ClipperError(
       'MEDIA_INVALID',
-      `Invalid media file container signature: ${realPath}`,
+      'Invalid media file container signature',
       400
     );
   }
@@ -197,23 +203,36 @@ export async function resolveAuthorizedMediaSource(
     }
   }
 
-  // 5. Cloud Storage Resolution: Download from Bunny Storage to temporary file
+  // 5. Cloud Storage Resolution: Download from object storage using bounded streaming to temporary file
+  let tempDir: string | null = null;
   try {
     const storageService = getStorageService();
     const storageKey = mediaAsset.storageKey || mediaAsset.storagePath || `uploads/${mediaAsset.id}.mp4`;
-    const buffer = await storageService.getObject(storageKey);
 
-    const tempDir = path.join(os.tmpdir(), `clipper_reframe_${Date.now()}`);
+    const randomSuffix = crypto.randomBytes(4).toString('hex');
+    tempDir = path.join(os.tmpdir(), `clipper_reframe_${Date.now()}_${randomSuffix}`);
     fs.mkdirSync(tempDir, { recursive: true });
     const tempFile = path.join(tempDir, `${mediaAsset.id}.mp4`);
-    fs.writeFileSync(tempFile, buffer);
+
+    if (typeof storageService.downloadObjectToFile === 'function') {
+      await storageService.downloadObjectToFile(storageKey, tempFile, {
+        maxSizeBytes: 500 * 1024 * 1024,
+      });
+    } else {
+      const buffer = await storageService.getObject(storageKey);
+      if (buffer.length > 500 * 1024 * 1024) {
+        throw new ClipperError('MEDIA_INVALID', 'Media object exceeds maximum allowed size of 500 MB', 400);
+      }
+      fs.writeFileSync(tempFile, buffer);
+    }
 
     const safeTempPath = assertSafeFilesystemPath(tempFile);
 
+    const capturedTempDir = tempDir;
     const cleanup = async () => {
       try {
-        if (fs.existsSync(tempDir)) {
-          fs.rmSync(tempDir, { recursive: true, force: true });
+        if (capturedTempDir && fs.existsSync(capturedTempDir)) {
+          fs.rmSync(capturedTempDir, { recursive: true, force: true });
         }
       } catch {}
     };
@@ -225,10 +244,22 @@ export async function resolveAuthorizedMediaSource(
       cleanup,
     };
   } catch (storageErr: any) {
-    if (storageErr instanceof ClipperError) throw storageErr;
+    if (tempDir && fs.existsSync(tempDir)) {
+      try {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+      } catch {}
+    }
+    if (storageErr instanceof ClipperError && storageErr.code === 'MEDIA_INVALID') {
+      throw storageErr;
+    }
+    console.error('[MediaResolver] Cloud media download failed:', {
+      mediaAssetId: mediaAsset.id,
+      projectId,
+      error: storageErr?.message,
+    });
     throw new ClipperError(
       'MEDIA_UNAVAILABLE',
-      `Failed to locate or retrieve physical video stream for media asset ${mediaAsset.id}: ${storageErr.message}`,
+      `Failed to locate or retrieve physical video stream for media asset ${mediaAsset.id}`,
       422
     );
   }

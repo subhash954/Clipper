@@ -491,20 +491,22 @@ async function runPhase6PostgresTests() {
     const metaRpcResult = runPsql(`
       SELECT public.save_reframe_analysis_atomic(
         '${projectAId}', '${ownerUserId}', '${mediaAId}',
-        1920, 1080, 45.0, '[]'::jsonb, '[]'::jsonb, 'local-centroid', '2.0.0',
-        '{"detectorMode":"heuristic","capabilities":["spatial-luminance-centroid"]}'::jsonb,
+        1920, 1080, 45.0, '[]'::jsonb, '[]'::jsonb, 'hybrid', '2.0.0',
+        '{"detectorMode":"hybrid","capabilities":["multimodal-bounding-boxes","spatial-luminance-centroid"],"providersUsed":["gemini-vision","local-centroid"],"fallbackEvents":[{"fromProvider":"gemini-vision","toProvider":"local-centroid","reason":"429 quota"}]}'::jsonb,
         true
       );
     `);
-    assert(metaRpcResult.includes('local-centroid'), 'RPC executed with local-centroid provider');
+    assert(metaRpcResult.includes('hybrid'), 'RPC executed with hybrid provider and complete provenance');
 
     // Verify row directly in PostgreSQL
     const dbRowMeta = runPsql(`
-      SELECT metadata->>'detectorMode', degraded
+      SELECT metadata->>'detectorMode', metadata->'providersUsed', metadata->'fallbackEvents', degraded
       FROM public.reframe_analyses
       WHERE project_id = '${projectAId}' AND media_asset_id = '${mediaAId}';
     `).trim();
-    assert(dbRowMeta.includes('heuristic'), 'metadata.detectorMode recorded as heuristic in real DB');
+    assert(dbRowMeta.includes('hybrid'), 'metadata.detectorMode recorded as hybrid in real DB');
+    assert(dbRowMeta.includes('gemini-vision') && dbRowMeta.includes('local-centroid'), 'metadata.providersUsed recorded in real DB');
+    assert(dbRowMeta.includes('429 quota'), 'metadata.fallbackEvents recorded in real DB');
     assert(dbRowMeta.includes('t') || dbRowMeta.includes('true'), 'degraded boolean recorded as true in real DB');
 
     // =============================================================

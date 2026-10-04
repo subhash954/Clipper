@@ -3,6 +3,7 @@
  * Official Bunny Storage REST API + Bunny CDN Token Authentication
  */
 
+import fs from 'fs';
 import crypto from 'crypto';
 import path from 'path';
 import {
@@ -142,6 +143,120 @@ export class BunnyStorageProvider implements IStorageProvider {
 
     const arrayBuf = await res.arrayBuffer();
     return Buffer.from(arrayBuf);
+  }
+
+  async downloadToFile(
+    key: string,
+    destinationPath: string,
+    options?: { maxSizeBytes?: number }
+  ): Promise<{ sizeBytes: number }> {
+    const url = this.getStorageUrl(key);
+    const maxSizeBytes = options?.maxSizeBytes || 500 * 1024 * 1024; // 500 MB default
+
+    const res = await fetch(url, {
+      method: 'GET',
+      headers: {
+        AccessKey: this.apiKey,
+      },
+    });
+
+    if (res.status === 404) {
+      throw new ClipperError(
+        'NOT_FOUND',
+        `Object ${key} not found in Bunny Storage.`,
+        404,
+        false,
+        { key }
+      );
+    }
+
+    if (!res.ok) {
+      throw new ClipperError(
+        'STORAGE_UNAVAILABLE',
+        `Failed to retrieve object ${key} from Bunny Storage (HTTP ${res.status})`,
+        502,
+        true,
+        { key, status: res.status }
+      );
+    }
+
+    const parentDir = path.dirname(destinationPath);
+    if (!fs.existsSync(parentDir)) {
+      fs.mkdirSync(parentDir, { recursive: true });
+    }
+
+    const tempPartialPath = `${destinationPath}.partial`;
+    if (fs.existsSync(tempPartialPath)) {
+      try { fs.unlinkSync(tempPartialPath); } catch {}
+    }
+
+    const writeStream = fs.createWriteStream(tempPartialPath);
+    let totalBytes = 0;
+
+    try {
+      if (res.body && typeof (res.body as any).getReader === 'function') {
+        const reader = (res.body as ReadableStream<Uint8Array>).getReader();
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          if (value && value.length > 0) {
+            totalBytes += value.length;
+            if (totalBytes > maxSizeBytes) {
+              throw new ClipperError(
+                'MEDIA_INVALID',
+                `Media object exceeds maximum allowed size of ${maxSizeBytes} bytes`,
+                400
+              );
+            }
+            await new Promise<void>((resolve, reject) => {
+              if (!writeStream.write(Buffer.from(value))) {
+                writeStream.once('drain', resolve);
+                writeStream.once('error', reject);
+              } else {
+                resolve();
+              }
+            });
+          }
+        }
+      } else {
+        const arrayBuf = await res.arrayBuffer();
+        const buf = Buffer.from(arrayBuf);
+        totalBytes = buf.length;
+        if (totalBytes > maxSizeBytes) {
+          throw new ClipperError(
+            'MEDIA_INVALID',
+            `Media object exceeds maximum allowed size of ${maxSizeBytes} bytes`,
+            400
+          );
+        }
+        await new Promise<void>((resolve, reject) => {
+          writeStream.write(buf, (err) => {
+            if (err) reject(err);
+            else resolve();
+          });
+        });
+      }
+
+      await new Promise<void>((resolve, reject) => {
+        writeStream.end((err?: Error | null) => {
+          if (err) reject(err);
+          else resolve();
+        });
+      });
+
+      if (totalBytes === 0) {
+        throw new ClipperError('MEDIA_INVALID', 'Downloaded media file is empty (0 bytes)', 400);
+      }
+
+      fs.renameSync(tempPartialPath, destinationPath);
+      return { sizeBytes: totalBytes };
+    } catch (err) {
+      try { writeStream.destroy(); } catch {}
+      if (fs.existsSync(tempPartialPath)) {
+        try { fs.unlinkSync(tempPartialPath); } catch {}
+      }
+      throw err;
+    }
   }
 
   async objectExists(key: string): Promise<boolean> {

@@ -177,6 +177,8 @@ export async function POST(req: NextRequest) {
         capabilities: detectorMeta.capabilities,
         degraded: isDegraded,
         fallbackReason: detectorMeta.fallbackReason,
+        providersUsed: detectorMeta.providersUsed || [detectorMeta.provider],
+        fallbackEvents: detectorMeta.fallbackEvents || [],
         sceneDetection: {
           status: sceneDetectionDegraded ? 'degraded' : 'normal',
           reason: sceneDetectionReason,

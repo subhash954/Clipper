@@ -9,12 +9,21 @@ export interface DetectorOptions {
   timestamp: number;
 }
 
+export interface FallbackEvent {
+  timestamp?: number;
+  fromProvider: string;
+  toProvider: string;
+  reason: string;
+}
+
 export interface DetectorMetadata {
   provider: string;
   providerMode: 'ml-vision' | 'heuristic' | 'fixture' | 'hybrid';
   capabilities: string[];
   degraded: boolean;
   fallbackReason?: string;
+  providersUsed?: string[];
+  fallbackEvents?: FallbackEvent[];
 }
 
 export interface ISubjectDetectorProvider {
@@ -41,6 +50,8 @@ export class LocalCentroidDetectorProvider implements ISubjectDetectorProvider {
       capabilities: ['spatial-luminance-centroid', 'color-contrast'],
       degraded: true,
       fallbackReason: this.fallbackReason,
+      providersUsed: ['local-centroid'],
+      fallbackEvents: [],
     };
   }
 
@@ -125,6 +136,8 @@ export class GeminiVisionDetectorProvider implements ISubjectDetectorProvider {
       providerMode: 'ml-vision',
       capabilities: ['multimodal-bounding-boxes', 'face-and-person-labels', 'speaker-identification'],
       degraded: false,
+      providersUsed: ['gemini-vision'],
+      fallbackEvents: [],
     };
   }
 
@@ -233,6 +246,8 @@ export class FixtureDetectorProvider implements ISubjectDetectorProvider {
       providerMode: 'fixture',
       capabilities: ['deterministic-fixtures'],
       degraded: false,
+      providersUsed: ['fixture'],
+      fallbackEvents: [],
     };
   }
 
@@ -265,22 +280,59 @@ export class FixtureDetectorProvider implements ISubjectDetectorProvider {
 /**
  * Hybrid Detector Provider
  * Tries Gemini Vision first when configured, seamlessly falling back to local centroid heuristic.
- * Accurately reports whether execution ran in degraded/heuristic mode.
+ * Accurately reports every provider used during the analysis and all fallback transitions.
  */
 export class HybridDetectorProvider implements ISubjectDetectorProvider {
   readonly name = 'hybrid';
-  private gemini = new GeminiVisionDetectorProvider();
-  private local = new LocalCentroidDetectorProvider('Gemini unavailable or failed, fell back to local centroid');
-  private activeProviderName: 'gemini-vision' | 'local-centroid' = process.env.GEMINI_API_KEY ? 'gemini-vision' : 'local-centroid';
-  private fallbackReason?: string = process.env.GEMINI_API_KEY ? undefined : 'GEMINI_API_KEY not configured, using local heuristic';
+  private gemini: ISubjectDetectorProvider;
+  private local: ISubjectDetectorProvider;
+  private providersUsed: string[] = [];
+  private fallbackEvents: FallbackEvent[] = [];
+  private fallbackReason?: string;
+
+  constructor(gemini?: ISubjectDetectorProvider, local?: ISubjectDetectorProvider) {
+    this.gemini = gemini || new GeminiVisionDetectorProvider();
+    this.local = local || new LocalCentroidDetectorProvider('Gemini unavailable or failed, fell back to local centroid');
+    if (!process.env.GEMINI_API_KEY && !gemini) {
+      this.fallbackReason = 'GEMINI_API_KEY not configured, using local heuristic';
+    }
+  }
+
+  private addProviderUsed(name: string) {
+    if (!this.providersUsed.includes(name)) {
+      this.providersUsed.push(name);
+    }
+  }
 
   getMetadata(): DetectorMetadata {
-    if (this.activeProviderName === 'gemini-vision' && !this.fallbackReason) {
+    const providers = this.providersUsed.length > 0
+      ? [...this.providersUsed]
+      : (process.env.GEMINI_API_KEY ? ['gemini-vision'] : ['local-centroid']);
+
+    const isFallbackOccurred = this.fallbackEvents.length > 0 || Boolean(this.fallbackReason);
+    const usesLocal = providers.includes('local-centroid');
+    const usesGemini = providers.includes('gemini-vision');
+
+    if (usesGemini && usesLocal) {
+      return {
+        provider: 'hybrid',
+        providerMode: 'hybrid',
+        capabilities: ['multimodal-bounding-boxes', 'spatial-luminance-centroid', 'color-contrast'],
+        degraded: true,
+        fallbackReason: this.fallbackReason || 'Gemini Vision partially failed, fell back to local heuristic',
+        providersUsed: providers,
+        fallbackEvents: [...this.fallbackEvents],
+      };
+    }
+
+    if (usesGemini && !isFallbackOccurred) {
       return {
         provider: 'gemini-vision',
         providerMode: 'ml-vision',
         capabilities: ['multimodal-bounding-boxes', 'face-and-person-labels'],
         degraded: false,
+        providersUsed: providers,
+        fallbackEvents: [],
       };
     }
 
@@ -290,28 +342,38 @@ export class HybridDetectorProvider implements ISubjectDetectorProvider {
       capabilities: ['spatial-luminance-centroid', 'color-contrast'],
       degraded: true,
       fallbackReason: this.fallbackReason || 'Gemini Vision unavailable, fell back to local heuristic',
+      providersUsed: providers,
+      fallbackEvents: [...this.fallbackEvents],
     };
   }
 
   async detectSubjects(options: DetectorOptions): Promise<SubjectDetection[]> {
-    if (process.env.GEMINI_API_KEY) {
+    const isGeminiAvailable = Boolean(process.env.GEMINI_API_KEY) || (this.gemini !== undefined && !(this.gemini instanceof GeminiVisionDetectorProvider));
+
+    if (isGeminiAvailable) {
       try {
         const results = await this.gemini.detectSubjects(options);
-        if (results.length > 0) {
-          this.activeProviderName = 'gemini-vision';
-          this.fallbackReason = undefined;
-          return results;
-        }
+        // Successful call from Gemini: record provider and return results (even if empty [])
+        this.addProviderUsed('gemini-vision');
+        return results;
       } catch (err: any) {
-        // Fall back to local centroid on network/quota failure
-        this.activeProviderName = 'local-centroid';
-        this.fallbackReason = `Gemini call failed (${err.message || 'unknown error'}), fell back to local centroid`;
+        // Fall back to local centroid on failure
+        const reason = err?.message || 'Gemini request failed';
+        this.fallbackReason = `Gemini call failed (${reason}), fell back to local centroid`;
+        this.fallbackEvents.push({
+          timestamp: options.timestamp,
+          fromProvider: 'gemini-vision',
+          toProvider: 'local-centroid',
+          reason,
+        });
       }
     } else {
-      this.activeProviderName = 'local-centroid';
-      this.fallbackReason = 'GEMINI_API_KEY not configured, using local heuristic';
+      if (!this.fallbackReason) {
+        this.fallbackReason = 'GEMINI_API_KEY not configured, using local heuristic';
+      }
     }
 
+    this.addProviderUsed('local-centroid');
     return await this.local.detectSubjects(options);
   }
 }

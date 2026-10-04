@@ -129,6 +129,13 @@ export interface ReframeAnalysisMetadata {
   capabilities?: string[];
   degraded: boolean;
   fallbackReason?: string;
+  providersUsed?: string[];
+  fallbackEvents?: Array<{
+    timestamp?: number;
+    fromProvider: string;
+    toProvider: string;
+    reason: string;
+  }>;
   sceneDetection?: {
     status: 'normal' | 'degraded';
     reason?: string;

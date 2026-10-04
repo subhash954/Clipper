@@ -3,6 +3,7 @@
  * Provider-agnostic coordinator for cloud object storage & media uploads.
  */
 
+import fs from 'fs';
 import crypto from 'crypto';
 import path from 'path';
 import {
@@ -303,6 +304,46 @@ export class StorageService implements IStorageService {
     const { Readable } = await import('stream');
     const buffer = await this.getObject(key);
     return Readable.from(buffer);
+  }
+
+  async downloadObjectToFile(
+    key: string,
+    destinationPath: string,
+    options?: { maxSizeBytes?: number }
+  ): Promise<{ sizeBytes: number }> {
+    if (this.provider.downloadToFile) {
+      return this.provider.downloadToFile(key, destinationPath, options);
+    }
+
+    const maxSizeBytes = options?.maxSizeBytes || 500 * 1024 * 1024;
+    const buffer = await this.provider.getObject(key);
+    if (buffer.length > maxSizeBytes) {
+      throw new ClipperError(
+        'MEDIA_INVALID',
+        `Media object exceeds maximum allowed size of ${maxSizeBytes} bytes`,
+        400
+      );
+    }
+    if (buffer.length === 0) {
+      throw new ClipperError('MEDIA_INVALID', 'Downloaded media file is empty (0 bytes)', 400);
+    }
+
+    const parentDir = path.dirname(destinationPath);
+    if (!fs.existsSync(parentDir)) {
+      fs.mkdirSync(parentDir, { recursive: true });
+    }
+
+    const tempPartial = `${destinationPath}.partial`;
+    try {
+      fs.writeFileSync(tempPartial, buffer);
+      fs.renameSync(tempPartial, destinationPath);
+      return { sizeBytes: buffer.length };
+    } catch (err) {
+      if (fs.existsSync(tempPartial)) {
+        try { fs.unlinkSync(tempPartial); } catch {}
+      }
+      throw err;
+    }
   }
 }
 

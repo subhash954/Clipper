@@ -77,6 +77,78 @@ export class LocalStorageProvider implements IStorageProvider {
     return fs.readFileSync(fullPath);
   }
 
+  async downloadToFile(
+    key: string,
+    destinationPath: string,
+    options?: { maxSizeBytes?: number }
+  ): Promise<{ sizeBytes: number }> {
+    const fullPath = this.resolveLocalPath(key);
+    if (!fs.existsSync(fullPath)) {
+      throw new ClipperError('NOT_FOUND', `Object ${key} not found in local storage.`, 404);
+    }
+
+    const maxSizeBytes = options?.maxSizeBytes || 500 * 1024 * 1024;
+    const stats = fs.statSync(fullPath);
+    if (stats.size > maxSizeBytes) {
+      throw new ClipperError(
+        'MEDIA_INVALID',
+        `Media object exceeds maximum allowed size of ${maxSizeBytes} bytes`,
+        400
+      );
+    }
+
+    if (stats.size === 0) {
+      throw new ClipperError('MEDIA_INVALID', 'Downloaded media file is empty (0 bytes)', 400);
+    }
+
+    const parentDir = path.dirname(destinationPath);
+    if (!fs.existsSync(parentDir)) {
+      fs.mkdirSync(parentDir, { recursive: true });
+    }
+
+    const tempPartialPath = `${destinationPath}.partial`;
+    if (fs.existsSync(tempPartialPath)) {
+      try { fs.unlinkSync(tempPartialPath); } catch {}
+    }
+
+    const readStream = fs.createReadStream(fullPath);
+    const writeStream = fs.createWriteStream(tempPartialPath);
+    let bytesWritten = 0;
+
+    await new Promise<void>((resolve, reject) => {
+      readStream.on('data', (chunk: Buffer | string) => {
+        const chunkLen = typeof chunk === 'string' ? Buffer.byteLength(chunk) : chunk.length;
+        bytesWritten += chunkLen;
+        if (bytesWritten > maxSizeBytes) {
+          readStream.destroy();
+          writeStream.destroy();
+          reject(
+            new ClipperError(
+              'MEDIA_INVALID',
+              `Media object exceeds maximum allowed size of ${maxSizeBytes} bytes`,
+              400
+            )
+          );
+        }
+      });
+      readStream.on('error', (err) => {
+        writeStream.destroy();
+        reject(err);
+      });
+      writeStream.on('error', reject);
+      writeStream.on('finish', () => resolve());
+      readStream.pipe(writeStream);
+    }).catch((err) => {
+      if (fs.existsSync(tempPartialPath)) {
+        try { fs.unlinkSync(tempPartialPath); } catch {}
+      }
+      throw err;
+    });
+
+    fs.renameSync(tempPartialPath, destinationPath);
+    return { sizeBytes: bytesWritten };
+  }
+
   async objectExists(key: string): Promise<boolean> {
     const fullPath = this.resolveLocalPath(key);
     return fs.existsSync(fullPath);
