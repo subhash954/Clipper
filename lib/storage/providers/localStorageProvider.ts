@@ -14,6 +14,7 @@ import {
   StorageObjectMetadata,
   UploadOptions,
   SignedUrlOptions,
+  MAX_MEDIA_DOWNLOAD_BYTES,
 } from '../types';
 import { ClipperError } from '../../errors';
 
@@ -87,7 +88,7 @@ export class LocalStorageProvider implements IStorageProvider {
       throw new ClipperError('NOT_FOUND', `Object ${key} not found in local storage.`, 404);
     }
 
-    const maxSizeBytes = options?.maxSizeBytes || 500 * 1024 * 1024;
+    const maxSizeBytes = options?.maxSizeBytes || MAX_MEDIA_DOWNLOAD_BYTES;
     const stats = fs.statSync(fullPath);
     if (stats.size > maxSizeBytes) {
       throw new ClipperError(
@@ -141,6 +142,9 @@ export class LocalStorageProvider implements IStorageProvider {
     }).catch((err) => {
       if (fs.existsSync(tempPartialPath)) {
         try { fs.unlinkSync(tempPartialPath); } catch {}
+      }
+      if (fs.existsSync(destinationPath)) {
+        try { fs.unlinkSync(destinationPath); } catch {}
       }
       throw err;
     });

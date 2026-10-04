@@ -278,14 +278,125 @@ export class FixtureDetectorProvider implements ISubjectDetectorProvider {
 }
 
 /**
+ * Deterministically sanitizes and categorizes provider failure reasons.
+ * Enforces strict semantic error codes and guarantees no URLs, paths, tokens,
+ * headers, response payloads, or stack traces are ever exposed or persisted.
+ */
+export function sanitizeProviderFailureReason(error: unknown): string {
+  try {
+    let rawStr = '';
+    if (error instanceof Error) {
+      rawStr = `${error.name} ${error.message}`;
+    } else if (typeof error === 'string') {
+      rawStr = error;
+    } else if (error && typeof error === 'object') {
+      try {
+        rawStr = JSON.stringify(error);
+      } catch {
+        rawStr = String(error);
+      }
+    }
+
+    const lower = rawStr.toLowerCase();
+
+    // 1. Rate limiting & quota exhaustion (HTTP 429)
+    if (
+      lower.includes('429') ||
+      lower.includes('rate limit') ||
+      lower.includes('quota') ||
+      lower.includes('resource_exhausted') ||
+      lower.includes('too many requests')
+    ) {
+      return 'GEMINI_RATE_LIMITED';
+    }
+
+    // 2. Authentication & Authorization (HTTP 401, 403)
+    if (
+      lower.includes('401') ||
+      lower.includes('403') ||
+      lower.includes('unauthorized') ||
+      lower.includes('forbidden') ||
+      lower.includes('permission_denied') ||
+      lower.includes('api key') ||
+      lower.includes('apikey') ||
+      lower.includes('api_key') ||
+      lower.includes('key=') ||
+      lower.includes('bearer') ||
+      lower.includes('auth') ||
+      lower.includes('credential')
+    ) {
+      return 'GEMINI_AUTH_FAILURE';
+    }
+
+    // 3. Timeouts (HTTP 408, deadline exceeded)
+    if (
+      lower.includes('408') ||
+      lower.includes('timeout') ||
+      lower.includes('timed out') ||
+      lower.includes('deadline_exceeded') ||
+      lower.includes('etimedout')
+    ) {
+      return 'GEMINI_TIMEOUT';
+    }
+
+    // 4. Provider server errors (5xx, service unavailable, bad gateway)
+    if (
+      lower.includes('500') ||
+      lower.includes('502') ||
+      lower.includes('503') ||
+      lower.includes('504') ||
+      lower.includes('internal server error') ||
+      lower.includes('service unavailable') ||
+      lower.includes('bad gateway') ||
+      lower.includes('gateway timeout')
+    ) {
+      return 'GEMINI_PROVIDER_UNAVAILABLE';
+    }
+
+    // 5. Network / Transport connectivity failures
+    if (
+      lower.includes('econnrefused') ||
+      lower.includes('enotfound') ||
+      lower.includes('econnreset') ||
+      lower.includes('fetch failed') ||
+      lower.includes('network') ||
+      lower.includes('dns') ||
+      lower.includes('socket hang up')
+    ) {
+      return 'GEMINI_NETWORK_FAILURE';
+    }
+
+    // 6. Response parsing / Invalid JSON payload
+    if (
+      lower.includes('invalid json') ||
+      lower.includes('unexpected token') ||
+      lower.includes('json parse') ||
+      lower.includes('syntaxerror')
+    ) {
+      return 'GEMINI_INVALID_RESPONSE';
+    }
+
+    // 7. Generic / default fallback
+    return 'GEMINI_REQUEST_FAILED';
+  } catch {
+    return 'GEMINI_REQUEST_FAILED';
+  }
+}
+
+export type ActiveDetectorProvider = 'gemini-vision' | 'local-centroid';
+
+/**
  * Hybrid Detector Provider
- * Tries Gemini Vision first when configured, seamlessly falling back to local centroid heuristic.
+ * Tries Gemini Vision first when configured, permanently falling back to local centroid heuristic
+ * upon the first Gemini failure within an analysis lifecycle.
  * Accurately reports every provider used during the analysis and all fallback transitions.
  */
 export class HybridDetectorProvider implements ISubjectDetectorProvider {
   readonly name = 'hybrid';
   private gemini: ISubjectDetectorProvider;
   private local: ISubjectDetectorProvider;
+  private activeProvider: ActiveDetectorProvider;
+  private degraded: boolean = false;
   private providersUsed: string[] = [];
   private fallbackEvents: FallbackEvent[] = [];
   private fallbackReason?: string;
@@ -293,8 +404,17 @@ export class HybridDetectorProvider implements ISubjectDetectorProvider {
   constructor(gemini?: ISubjectDetectorProvider, local?: ISubjectDetectorProvider) {
     this.gemini = gemini || new GeminiVisionDetectorProvider();
     this.local = local || new LocalCentroidDetectorProvider('Gemini unavailable or failed, fell back to local centroid');
-    if (!process.env.GEMINI_API_KEY && !gemini) {
-      this.fallbackReason = 'GEMINI_API_KEY not configured, using local heuristic';
+
+    const isGeminiConfigured = Boolean(process.env.GEMINI_API_KEY) || (gemini !== undefined && !(gemini instanceof GeminiVisionDetectorProvider));
+
+    if (isGeminiConfigured) {
+      this.activeProvider = 'gemini-vision';
+      this.degraded = false;
+    } else {
+      this.activeProvider = 'local-centroid';
+      this.degraded = true;
+      this.fallbackReason = 'GEMINI_UNAVAILABLE';
+      this.addProviderUsed('local-centroid');
     }
   }
 
@@ -307,9 +427,8 @@ export class HybridDetectorProvider implements ISubjectDetectorProvider {
   getMetadata(): DetectorMetadata {
     const providers = this.providersUsed.length > 0
       ? [...this.providersUsed]
-      : (process.env.GEMINI_API_KEY ? ['gemini-vision'] : ['local-centroid']);
+      : (this.activeProvider === 'gemini-vision' ? ['gemini-vision'] : ['local-centroid']);
 
-    const isFallbackOccurred = this.fallbackEvents.length > 0 || Boolean(this.fallbackReason);
     const usesLocal = providers.includes('local-centroid');
     const usesGemini = providers.includes('gemini-vision');
 
@@ -325,7 +444,7 @@ export class HybridDetectorProvider implements ISubjectDetectorProvider {
       };
     }
 
-    if (usesGemini && !isFallbackOccurred) {
+    if (usesGemini && !this.degraded && this.fallbackEvents.length === 0) {
       return {
         provider: 'gemini-vision',
         providerMode: 'ml-vision',
@@ -348,32 +467,35 @@ export class HybridDetectorProvider implements ISubjectDetectorProvider {
   }
 
   async detectSubjects(options: DetectorOptions): Promise<SubjectDetection[]> {
-    const isGeminiAvailable = Boolean(process.env.GEMINI_API_KEY) || (this.gemini !== undefined && !(this.gemini instanceof GeminiVisionDetectorProvider));
-
-    if (isGeminiAvailable) {
-      try {
-        const results = await this.gemini.detectSubjects(options);
-        // Successful call from Gemini: record provider and return results (even if empty [])
-        this.addProviderUsed('gemini-vision');
-        return results;
-      } catch (err: any) {
-        // Fall back to local centroid on failure
-        const reason = err?.message || 'Gemini request failed';
-        this.fallbackReason = `Gemini call failed (${reason}), fell back to local centroid`;
-        this.fallbackEvents.push({
-          timestamp: options.timestamp,
-          fromProvider: 'gemini-vision',
-          toProvider: 'local-centroid',
-          reason,
-        });
-      }
-    } else {
-      if (!this.fallbackReason) {
-        this.fallbackReason = 'GEMINI_API_KEY not configured, using local heuristic';
-      }
+    // If activeProvider has permanently transitioned to local-centroid, invoke local directly without retrying Gemini
+    if (this.activeProvider === 'local-centroid') {
+      this.addProviderUsed('local-centroid');
+      return await this.local.detectSubjects(options);
     }
 
-    this.addProviderUsed('local-centroid');
-    return await this.local.detectSubjects(options);
+    // Active provider is gemini-vision
+    try {
+      const results = await this.gemini.detectSubjects(options);
+      // Successful call from Gemini: record provider and return results (even if empty [])
+      this.addProviderUsed('gemini-vision');
+      return results;
+    } catch (err: unknown) {
+      // Gemini failed: permanently transition to local-centroid for the remainder of this analysis
+      const sanitizedReason = sanitizeProviderFailureReason(err);
+      this.activeProvider = 'local-centroid';
+      this.degraded = true;
+      this.fallbackReason = `Gemini call failed (${sanitizedReason}), fell back to local centroid`;
+
+      // Record exactly ONE fallback transition event
+      this.fallbackEvents.push({
+        timestamp: options.timestamp,
+        fromProvider: 'gemini-vision',
+        toProvider: 'local-centroid',
+        reason: sanitizedReason,
+      });
+
+      this.addProviderUsed('local-centroid');
+      return await this.local.detectSubjects(options);
+    }
   }
 }

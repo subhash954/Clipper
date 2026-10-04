@@ -13,6 +13,7 @@ import { MediaAsset } from '../types';
 import { getStorageService } from '../storage/storageService';
 import { validateMediaFileSignature } from '../media/probeService';
 import { ClipperError } from '../errors';
+import { MAX_REFRAME_MEDIA_BYTES } from './types';
 
 export interface ResolvedMediaSource {
   localPath: string;
@@ -214,17 +215,9 @@ export async function resolveAuthorizedMediaSource(
     fs.mkdirSync(tempDir, { recursive: true });
     const tempFile = path.join(tempDir, `${mediaAsset.id}.mp4`);
 
-    if (typeof storageService.downloadObjectToFile === 'function') {
-      await storageService.downloadObjectToFile(storageKey, tempFile, {
-        maxSizeBytes: 500 * 1024 * 1024,
-      });
-    } else {
-      const buffer = await storageService.getObject(storageKey);
-      if (buffer.length > 500 * 1024 * 1024) {
-        throw new ClipperError('MEDIA_INVALID', 'Media object exceeds maximum allowed size of 500 MB', 400);
-      }
-      fs.writeFileSync(tempFile, buffer);
-    }
+    await storageService.downloadObjectToFile(storageKey, tempFile, {
+      maxSizeBytes: MAX_REFRAME_MEDIA_BYTES,
+    });
 
     const safeTempPath = assertSafeFilesystemPath(tempFile);
 

@@ -2,6 +2,8 @@
  * Reframe & Subject Tracking Data Models
  */
 
+export const MAX_REFRAME_MEDIA_BYTES = 500 * 1024 * 1024; // 500 MB = 524,288,000 bytes
+
 export type AspectRatio = '9:16' | '1:1' | '16:9' | '4:5';
 
 export type TrackingMode = 'center' | 'smart' | 'manual';

@@ -492,7 +492,7 @@ async function runPhase6PostgresTests() {
       SELECT public.save_reframe_analysis_atomic(
         '${projectAId}', '${ownerUserId}', '${mediaAId}',
         1920, 1080, 45.0, '[]'::jsonb, '[]'::jsonb, 'hybrid', '2.0.0',
-        '{"detectorMode":"hybrid","capabilities":["multimodal-bounding-boxes","spatial-luminance-centroid"],"providersUsed":["gemini-vision","local-centroid"],"fallbackEvents":[{"fromProvider":"gemini-vision","toProvider":"local-centroid","reason":"429 quota"}]}'::jsonb,
+        '{"detectorMode":"hybrid","capabilities":["multimodal-bounding-boxes","spatial-luminance-centroid"],"providersUsed":["gemini-vision","local-centroid"],"fallbackEvents":[{"fromProvider":"gemini-vision","toProvider":"local-centroid","reason":"GEMINI_RATE_LIMITED"}]}'::jsonb,
         true
       );
     `);
@@ -506,7 +506,7 @@ async function runPhase6PostgresTests() {
     `).trim();
     assert(dbRowMeta.includes('hybrid'), 'metadata.detectorMode recorded as hybrid in real DB');
     assert(dbRowMeta.includes('gemini-vision') && dbRowMeta.includes('local-centroid'), 'metadata.providersUsed recorded in real DB');
-    assert(dbRowMeta.includes('429 quota'), 'metadata.fallbackEvents recorded in real DB');
+    assert(dbRowMeta.includes('GEMINI_RATE_LIMITED'), 'metadata.fallbackEvents recorded in real DB with sanitized reason');
     assert(dbRowMeta.includes('t') || dbRowMeta.includes('true'), 'degraded boolean recorded as true in real DB');
 
     // =============================================================

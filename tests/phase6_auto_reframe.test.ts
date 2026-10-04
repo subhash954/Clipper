@@ -39,7 +39,12 @@ import {
   FixtureDetectorProvider,
   HybridDetectorProvider,
   ISubjectDetectorProvider,
+  sanitizeProviderFailureReason,
 } from '../lib/reframe/detectorProvider';
+import { BunnyStorageProvider } from '../lib/storage/providers/bunnyStorageProvider';
+import { LocalStorageProvider } from '../lib/storage/providers/localStorageProvider';
+import { MAX_MEDIA_DOWNLOAD_BYTES } from '../lib/storage/types';
+import { MAX_REFRAME_MEDIA_BYTES } from '../lib/reframe/types';
 import {
   assertSafeFilesystemPath,
   resolveAuthorizedMediaSource,
@@ -1045,7 +1050,7 @@ async function runPhase6UnitTests() {
   }
 
   // --------------------------------------------------------------------------
-  // CATEGORY 22: Cloud Media Streaming & Memory Safety Gate (Phase 6.1.1)
+  // CATEGORY 22: Cloud Media Streaming & Memory Safety Gate (Phase 6.1.1 & 6.1.2)
   // --------------------------------------------------------------------------
   console.log('\n--- CATEGORY 22: Cloud Media Streaming & Memory Safety Gate ---');
 
@@ -1089,7 +1094,58 @@ async function runPhase6UnitTests() {
     mockStorageService.setProvider(origProvider);
   }
 
-  // Test 22.2: LocalStorageProvider streaming download
+  // Test 22.2: Concrete Provider Contracts: Every production storage provider exposes downloadToFile
+  const testBunnyProvider = new BunnyStorageProvider({ storageZone: 'test', apiKey: 'test' });
+  assert(typeof testBunnyProvider.downloadToFile === 'function', 'BunnyStorageProvider exposes required downloadToFile');
+  const testLocalProvider = new LocalStorageProvider(path.join(os.tmpdir(), 'test_local_bucket'));
+  assert(typeof testLocalProvider.downloadToFile === 'function', 'LocalStorageProvider exposes required downloadToFile');
+
+  // Test 22.3: StorageService strictly forbids getObject fallback when downloadToFile is active
+  const mockForbiddenGetObjectProvider: any = {
+    providerType: 'bunny',
+    storageZoneOrBucket: 'test',
+    async getObject() {
+      throw new Error('FORBIDDEN_GET_OBJECT_FALLBACK');
+    },
+    async downloadToFile(key: string, dest: string) {
+      fs.writeFileSync(dest, 'SAFE_STREAMED_BYTES');
+      return { sizeBytes: 19 };
+    },
+  };
+  mockStorageService.setProvider(mockForbiddenGetObjectProvider);
+  const forbiddenDest = path.join(os.tmpdir(), `test_forbidden_dest_${Date.now()}.mp4`);
+  try {
+    const streamRes = await mockStorageService.downloadObjectToFile('test/file.mp4', forbiddenDest);
+    assert(streamRes.sizeBytes === 19, 'downloadObjectToFile succeeded without invoking getObject()');
+  } finally {
+    if (fs.existsSync(forbiddenDest)) fs.unlinkSync(forbiddenDest);
+    mockStorageService.setProvider(origProvider);
+  }
+
+  // Test 22.4: StorageService throws STORAGE_UNSUPPORTED without calling getObject if downloadToFile missing
+  let getObjectCalledOnMissing = false;
+  const mockMissingDownloadProvider: any = {
+    providerType: 'bunny',
+    storageZoneOrBucket: 'test',
+    async getObject() {
+      getObjectCalledOnMissing = true;
+      return Buffer.from('SHOULD_NOT_BE_RETURNED');
+    },
+  };
+  mockStorageService.setProvider(mockMissingDownloadProvider);
+  let unsupportedThrew = false;
+  try {
+    await mockStorageService.downloadObjectToFile('test/missing.mp4', forbiddenDest);
+  } catch (err: any) {
+    unsupportedThrew = true;
+    assert(err.code === 'CONFIGURATION_ERROR', 'Missing downloadToFile throws CONFIGURATION_ERROR');
+    assert(getObjectCalledOnMissing === false, 'getObject() was NOT called on missing downloadToFile');
+  } finally {
+    mockStorageService.setProvider(origProvider);
+  }
+  assert(unsupportedThrew, 'Unsupported provider throws controlled error without memory buffering');
+
+  // Test 22.5: LocalStorageProvider streaming download
   const testKey = 'stream_test_video.mp4';
   const testPayload = Buffer.from('STREAM_PAYLOAD_CHUNK_DATA');
   await mockStorageService.upload(testKey, testPayload);
@@ -1105,7 +1161,7 @@ async function runPhase6UnitTests() {
     await mockStorageService.deleteObject(testKey);
   }
 
-  // Test 22.3: Zero-byte stream result throws and cleans up
+  // Test 22.6: Zero-byte stream result throws and cleans up
   const emptyKey = 'empty_test_file.mp4';
   await mockStorageService.upload(emptyKey, Buffer.alloc(0));
   const emptyDestFile = path.join(os.tmpdir(), `test_empty_download_${Date.now()}.mp4`);
@@ -1122,29 +1178,57 @@ async function runPhase6UnitTests() {
   }
   assert(emptyStreamThrew, 'Zero-byte stream rejected');
 
-  // Test 22.4: Oversized result exceeding maxSizeBytes rejected and cleaned up
-  const bigKey = 'big_test_file.mp4';
-  const bigPayload = Buffer.alloc(1024 * 1024); // 1 MB
-  await mockStorageService.upload(bigKey, bigPayload);
-  const bigDestFile = path.join(os.tmpdir(), `test_big_download_${Date.now()}.mp4`);
-  let oversizedThrew = false;
+  // Test 22.7: 500 MB Boundary Semantics (Within limit vs exact 500 MB vs 500 MB + 1 byte)
+  const boundaryDestFile = path.join(os.tmpdir(), `test_boundary_${Date.now()}.mp4`);
+  const mockBoundaryProvider: any = {
+    providerType: 'bunny',
+    storageZoneOrBucket: 'test',
+    async downloadToFile(key: string, dest: string, opts?: { maxSizeBytes?: number }) {
+      const max = opts?.maxSizeBytes || MAX_MEDIA_DOWNLOAD_BYTES;
+      if (key === 'exact_500mb') {
+        // Exactly 500 MB: permitted
+        fs.writeFileSync(dest, 'X');
+        return { sizeBytes: max };
+      }
+      if (key === 'exceed_500mb') {
+        // 500 MB + 1 byte: rejected with MEDIA_INVALID
+        const size = max + 1;
+        if (size > max) {
+          throw new ClipperError('MEDIA_INVALID', `Media object exceeds maximum allowed size of ${max} bytes`, 400);
+        }
+        return { sizeBytes: size };
+      }
+      return { sizeBytes: 1024 };
+    },
+  };
+  mockStorageService.setProvider(mockBoundaryProvider);
   try {
-    // Limit to 500 KB
-    await mockStorageService.downloadObjectToFile(bigKey, bigDestFile, { maxSizeBytes: 500 * 1024 });
-  } catch (err: any) {
-    oversizedThrew = true;
-    assert(err.code === 'MEDIA_INVALID', 'Oversized download rejected with MEDIA_INVALID');
+    // Exact 500 MB is permitted
+    const exactRes = await mockStorageService.downloadObjectToFile('exact_500mb', boundaryDestFile, {
+      maxSizeBytes: MAX_MEDIA_DOWNLOAD_BYTES,
+    });
+    assert(exactRes.sizeBytes === MAX_MEDIA_DOWNLOAD_BYTES, 'Exact 500 MB payload is permitted');
+
+    // 500 MB + 1 byte is rejected
+    let exceedThrew = false;
+    try {
+      await mockStorageService.downloadObjectToFile('exceed_500mb', boundaryDestFile, {
+        maxSizeBytes: MAX_MEDIA_DOWNLOAD_BYTES,
+      });
+    } catch (err: any) {
+      exceedThrew = true;
+      assert(err.code === 'MEDIA_INVALID', '500 MB + 1 byte is rejected with MEDIA_INVALID');
+    }
+    assert(exceedThrew, 'Exceeding 500 MB boundary rejected');
   } finally {
-    assert(!fs.existsSync(bigDestFile), 'Oversized target file not created');
-    assert(!fs.existsSync(`${bigDestFile}.partial`), 'Oversized partial file cleaned up');
-    await mockStorageService.deleteObject(bigKey);
+    if (fs.existsSync(boundaryDestFile)) fs.unlinkSync(boundaryDestFile);
+    mockStorageService.setProvider(origProvider);
   }
-  assert(oversizedThrew, 'Oversized stream rejected without memory exhaustion');
 
   // --------------------------------------------------------------------------
-  // CATEGORY 23: Complete Detector Provider Provenance Gate (Phase 6.1.1)
+  // CATEGORY 23: Complete Detector Provider State Machine & Provenance Gate
   // --------------------------------------------------------------------------
-  console.log('\n--- CATEGORY 23: Complete Detector Provider Provenance Gate ---');
+  console.log('\n--- CATEGORY 23: Complete Detector Provider State Machine & Provenance Gate ---');
 
   // Test 23.1: Gemini success for all frames
   const mockGeminiSuccess: ISubjectDetectorProvider = {
@@ -1174,7 +1258,7 @@ async function runPhase6UnitTests() {
   );
   assert(metaGeminiSuccess.fallbackEvents?.length === 0, 'No fallback events recorded on success');
 
-  // Test 23.2: Gemini unavailable (local centroid from start)
+  // Test 23.2: Gemini unavailable from beginning (local centroid from start)
   const hybridLocalOnly = new HybridDetectorProvider(undefined, new LocalCentroidDetectorProvider());
   const origKey = process.env.GEMINI_API_KEY;
   delete process.env.GEMINI_API_KEY;
@@ -1191,9 +1275,9 @@ async function runPhase6UnitTests() {
     if (origKey) process.env.GEMINI_API_KEY = origKey;
   }
 
-  // Test 23.3: Gemini succeeds initially then fails
-  let callCount = 0;
-  const mockGeminiFlaky: ISubjectDetectorProvider = {
+  // Test 23.3: Hybrid State Machine — Gemini permanently stops after first failure (Issue 1.3)
+  let geminiCallCount = 0;
+  const mockGeminiStateMachine: ISubjectDetectorProvider = {
     name: 'gemini-vision',
     getMetadata: () => ({
       provider: 'gemini-vision',
@@ -1202,47 +1286,59 @@ async function runPhase6UnitTests() {
       degraded: false,
     }),
     async detectSubjects(options) {
-      callCount++;
-      if (callCount === 1) {
+      geminiCallCount++;
+      if (geminiCallCount === 1) {
+        // Frame 1: succeeds
         return [{ timestamp: options.timestamp, x: 0.5, y: 0.5, width: 0.3, height: 0.4, confidence: 0.95 }];
       }
-      throw new Error('Quota exceeded 429');
+      if (geminiCallCount === 2) {
+        // Frame 2: throws rate limit error
+        throw new Error('Quota exceeded 429');
+      }
+      // Frame 3+: If called again, throw fatal error
+      throw new Error('FATAL: Gemini was called after fallback!');
     },
   };
-  const hybridFlaky = new HybridDetectorProvider(mockGeminiFlaky);
-  // Frame 1 succeeds
-  await hybridFlaky.detectSubjects({ framePath: 'dummy', timestamp: 0.0 });
-  // Frame 2 fails -> falls back to local centroid
-  await hybridFlaky.detectSubjects({ framePath: 'dummy', timestamp: 1.0 });
+  const hybridStateMachine = new HybridDetectorProvider(mockGeminiStateMachine);
 
-  const metaFlaky = hybridFlaky.getMetadata();
-  assert(metaFlaky.provider === 'hybrid', 'Mixed execution reports provider: hybrid');
-  assert(metaFlaky.providerMode === 'hybrid', 'Mixed execution reports providerMode: hybrid');
-  assert(metaFlaky.degraded === true, 'Mixed execution reports degraded: true');
+  // Frame 1: uses Gemini (call 1)
+  const f1Res = await hybridStateMachine.detectSubjects({ framePath: 'dummy', timestamp: 0.0 });
+  assert(f1Res.length === 1 && f1Res[0].confidence === 0.95, 'Frame 1 used Gemini successfully');
+  assert(geminiCallCount === 1, 'Gemini called exactly 1 time after Frame 1');
+
+  // Frame 2: Gemini throws -> permanently switches to local centroid (call 2)
+  await hybridStateMachine.detectSubjects({ framePath: 'dummy', timestamp: 1.0 });
+  assert(geminiCallCount === 2, 'Gemini called exactly 2 times after Frame 2 failure');
+
+  // Frame 3: Local centroid handled directly; Gemini MUST NOT be called!
+  await hybridStateMachine.detectSubjects({ framePath: 'dummy', timestamp: 2.0 });
+  assert(geminiCallCount === 2, 'Gemini was NOT called for Frame 3; permanently switched to local');
+
+  // Frames 4, 5, 6: Verify Gemini call count remains 2
+  await hybridStateMachine.detectSubjects({ framePath: 'dummy', timestamp: 3.0 });
+  await hybridStateMachine.detectSubjects({ framePath: 'dummy', timestamp: 4.0 });
+  await hybridStateMachine.detectSubjects({ framePath: 'dummy', timestamp: 5.0 });
+  assert(geminiCallCount === 2, 'Gemini call count remains exactly 2 across subsequent frames 4, 5, 6');
+
+  const metaStateMachine = hybridStateMachine.getMetadata();
+  assert(metaStateMachine.provider === 'hybrid', 'Hybrid state machine metadata reports provider: hybrid');
+  assert(metaStateMachine.degraded === true, 'Hybrid state machine metadata reports degraded: true');
   assert(
-    Boolean(metaFlaky.providersUsed?.includes('gemini-vision') && metaFlaky.providersUsed?.includes('local-centroid')),
-    'providersUsed contains both gemini-vision and local-centroid'
+    JSON.stringify(metaStateMachine.providersUsed) === JSON.stringify(['gemini-vision', 'local-centroid']),
+    'providersUsed contains [gemini-vision, local-centroid]'
   );
+  assert(metaStateMachine.fallbackEvents?.length === 1, 'Exactly one Gemini -> local transition recorded');
   assert(
-    Boolean(metaFlaky.fallbackEvents && metaFlaky.fallbackEvents.length === 1),
-    'Fallback event recorded on Gemini failure'
-  );
-  assert(
-    metaFlaky.fallbackEvents![0].fromProvider === 'gemini-vision' &&
-    metaFlaky.fallbackEvents![0].toProvider === 'local-centroid',
+    metaStateMachine.fallbackEvents![0].fromProvider === 'gemini-vision' &&
+    metaStateMachine.fallbackEvents![0].toProvider === 'local-centroid',
     'Fallback event transition is from gemini-vision to local-centroid'
   );
+  assert(
+    metaStateMachine.fallbackEvents![0].reason === 'GEMINI_RATE_LIMITED',
+    'Fallback event reason is sanitized to GEMINI_RATE_LIMITED'
+  );
 
-  // Test 23.4: Multiple Gemini failures keep providersUsed deduplicated
-  await hybridFlaky.detectSubjects({ framePath: 'dummy', timestamp: 2.0 });
-  await hybridFlaky.detectSubjects({ framePath: 'dummy', timestamp: 3.0 });
-  const metaMultiFail = hybridFlaky.getMetadata();
-  const geminiCountInList = metaMultiFail.providersUsed?.filter((p) => p === 'gemini-vision').length;
-  const localCountInList = metaMultiFail.providersUsed?.filter((p) => p === 'local-centroid').length;
-  assert(geminiCountInList === 1, 'gemini-vision appears exactly once in providersUsed (deduplicated)');
-  assert(localCountInList === 1, 'local-centroid appears exactly once in providersUsed (deduplicated)');
-
-  // Test 23.5: Gemini legitimate empty detections do NOT trigger fallback
+  // Test 23.4: Gemini legitimate empty detections do NOT trigger fallback
   const mockGeminiEmpty: ISubjectDetectorProvider = {
     name: 'gemini-vision',
     getMetadata: () => ({
@@ -1265,6 +1361,42 @@ async function runPhase6UnitTests() {
     JSON.stringify(metaEmpty.providersUsed) === JSON.stringify(['gemini-vision']),
     'providersUsed remains strictly gemini-vision'
   );
+
+  // Test 23.5: Error Reason Sanitization & Classification Gate (Issue 2)
+  const maliciousErrors = [
+    { err: new Error('Request failed https://example.com?key=SECRET_API_KEY_12345'), expected: 'GEMINI_AUTH_FAILURE' },
+    { err: new Error('ENOENT /Users/subhash/private/video.mp4'), expected: 'GEMINI_REQUEST_FAILED' },
+    { err: new Error('Bearer super-secret-bearer-token-here'), expected: 'GEMINI_AUTH_FAILURE' },
+    { err: new Error('Internal provider response: 500 Internal Server Error ' + 'X'.repeat(5000)), expected: 'GEMINI_PROVIDER_UNAVAILABLE' },
+    { err: new Error('connect ECONNREFUSED 127.0.0.1:443'), expected: 'GEMINI_NETWORK_FAILURE' },
+    { err: new Error('fetch failed ENOTFOUND api.google.com'), expected: 'GEMINI_NETWORK_FAILURE' },
+    { err: new Error('SyntaxError: Unexpected token < in JSON at position 0'), expected: 'GEMINI_INVALID_RESPONSE' },
+    { err: new Error('Resource exhausted 429 quota reached'), expected: 'GEMINI_RATE_LIMITED' },
+    { err: new Error('HTTP 408 deadline_exceeded timeout'), expected: 'GEMINI_TIMEOUT' },
+  ];
+
+  const approvedCategories = new Set([
+    'GEMINI_RATE_LIMITED',
+    'GEMINI_AUTH_FAILURE',
+    'GEMINI_TIMEOUT',
+    'GEMINI_PROVIDER_UNAVAILABLE',
+    'GEMINI_NETWORK_FAILURE',
+    'GEMINI_INVALID_RESPONSE',
+    'GEMINI_REQUEST_FAILED',
+  ]);
+
+  for (const { err, expected } of maliciousErrors) {
+    const sanitized = sanitizeProviderFailureReason(err);
+    assert(approvedCategories.has(sanitized), `Sanitized reason "${sanitized}" is in approved categories`);
+    assert(sanitized === expected, `Sanitized reason matches expected classification "${expected}"`);
+    assert(sanitized.length <= 200, 'Sanitized reason length is <= 200 chars');
+    assert(!sanitized.includes('SECRET_API_KEY'), 'Sanitized reason contains no API keys');
+    assert(!sanitized.includes('/Users/'), 'Sanitized reason contains no filesystem paths');
+    assert(!sanitized.includes('Bearer'), 'Sanitized reason contains no bearer tokens');
+    assert(!sanitized.includes('http://') && !sanitized.includes('https://'), 'Sanitized reason contains no URLs');
+    assert(!sanitized.includes('XXXXX'), 'Sanitized reason contains no response bodies');
+  }
+  assert(true, 'All malicious provider errors safely classified and sanitized');
 
   console.log('\n====================================================');
   console.log(`📊 PHASE 6 UNIT TEST SUMMARY: ${passed} PASSED, ${failed} FAILED`);

@@ -13,6 +13,7 @@ import {
   StorageObjectMetadata,
   UploadOptions,
   SignedUrlOptions,
+  MAX_MEDIA_DOWNLOAD_BYTES,
 } from '../types';
 import { ClipperError } from '../../errors';
 
@@ -151,7 +152,7 @@ export class BunnyStorageProvider implements IStorageProvider {
     options?: { maxSizeBytes?: number }
   ): Promise<{ sizeBytes: number }> {
     const url = this.getStorageUrl(key);
-    const maxSizeBytes = options?.maxSizeBytes || 500 * 1024 * 1024; // 500 MB default
+    const maxSizeBytes = options?.maxSizeBytes || MAX_MEDIA_DOWNLOAD_BYTES;
 
     const res = await fetch(url, {
       method: 'GET',
@@ -180,6 +181,10 @@ export class BunnyStorageProvider implements IStorageProvider {
       );
     }
 
+    if (!res.body) {
+      throw new ClipperError('STORAGE_UNAVAILABLE', 'Cloud response body is empty or unavailable', 502);
+    }
+
     const parentDir = path.dirname(destinationPath);
     if (!fs.existsSync(parentDir)) {
       fs.mkdirSync(parentDir, { recursive: true });
@@ -194,7 +199,7 @@ export class BunnyStorageProvider implements IStorageProvider {
     let totalBytes = 0;
 
     try {
-      if (res.body && typeof (res.body as any).getReader === 'function') {
+      if (typeof (res.body as any).getReader === 'function') {
         const reader = (res.body as ReadableStream<Uint8Array>).getReader();
         while (true) {
           const { done, value } = await reader.read();
@@ -202,6 +207,7 @@ export class BunnyStorageProvider implements IStorageProvider {
           if (value && value.length > 0) {
             totalBytes += value.length;
             if (totalBytes > maxSizeBytes) {
+              await reader.cancel();
               throw new ClipperError(
                 'MEDIA_INVALID',
                 `Media object exceeds maximum allowed size of ${maxSizeBytes} bytes`,
@@ -219,22 +225,26 @@ export class BunnyStorageProvider implements IStorageProvider {
           }
         }
       } else {
-        const arrayBuf = await res.arrayBuffer();
-        const buf = Buffer.from(arrayBuf);
-        totalBytes = buf.length;
-        if (totalBytes > maxSizeBytes) {
-          throw new ClipperError(
-            'MEDIA_INVALID',
-            `Media object exceeds maximum allowed size of ${maxSizeBytes} bytes`,
-            400
-          );
-        }
-        await new Promise<void>((resolve, reject) => {
-          writeStream.write(buf, (err) => {
-            if (err) reject(err);
-            else resolve();
+        // Node Readable stream iterator
+        for await (const chunk of (res.body as any)) {
+          const chunkBuf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+          totalBytes += chunkBuf.length;
+          if (totalBytes > maxSizeBytes) {
+            throw new ClipperError(
+              'MEDIA_INVALID',
+              `Media object exceeds maximum allowed size of ${maxSizeBytes} bytes`,
+              400
+            );
+          }
+          await new Promise<void>((resolve, reject) => {
+            if (!writeStream.write(chunkBuf)) {
+              writeStream.once('drain', resolve);
+              writeStream.once('error', reject);
+            } else {
+              resolve();
+            }
           });
-        });
+        }
       }
 
       await new Promise<void>((resolve, reject) => {
@@ -254,6 +264,9 @@ export class BunnyStorageProvider implements IStorageProvider {
       try { writeStream.destroy(); } catch {}
       if (fs.existsSync(tempPartialPath)) {
         try { fs.unlinkSync(tempPartialPath); } catch {}
+      }
+      if (fs.existsSync(destinationPath)) {
+        try { fs.unlinkSync(destinationPath); } catch {}
       }
       throw err;
     }

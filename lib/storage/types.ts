@@ -94,12 +94,14 @@ export interface IStorageProvider {
   moveObject(sourceKey: string, destinationKey: string): Promise<void>;
   getSignedDownloadUrl(key: string, options?: SignedUrlOptions): Promise<string>;
   getSignedUploadUrl(key: string, options?: SignedUrlOptions): Promise<string>;
-  downloadToFile?(
+  downloadToFile(
     key: string,
     destinationPath: string,
     options?: { maxSizeBytes?: number }
   ): Promise<{ sizeBytes: number }>;
 }
+
+export const MAX_MEDIA_DOWNLOAD_BYTES = 500 * 1024 * 1024; // 500 MB = 524,288,000 bytes
 
 /**
  * High-level authoritative storage service for the application
@@ -141,7 +143,7 @@ export interface IStorageService {
   exists?(key: string): Promise<boolean>;
   getDownloadUrl?(key: string, options?: SignedUrlOptions): Promise<{ downloadUrl: string }>;
   getObjectStream?(key: string): Promise<any>;
-  downloadObjectToFile?(
+  downloadObjectToFile(
     key: string,
     destinationPath: string,
     options?: { maxSizeBytes?: number }
