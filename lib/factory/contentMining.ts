@@ -116,7 +116,7 @@ export function mineOpportunitiesFromIntelligence(
     // Compute platform fit based on duration and editorial score
     const duration = (candidate as any).duration || (candidate.end - candidate.start);
     const baseScore = candidate.editorialScore?.overallScore || 80;
-    const confidence = candidate.editorialScore?.confidence || 0.9;
+    const confidence = candidate.editorialScore?.confidence;
     const subtopic = (candidate as any).hook?.hookType || (candidate as any).hookAnalysis?.hookType || 'Key Highlight';
 
     const platformFit: Record<SupportedPlatform, number> = {
@@ -191,7 +191,7 @@ export function mineOpportunitiesFromIntelligence(
             payoff: segment.text,
             audience: options.audience || 'Target Audience',
             score: Math.min(95, segment.importance + 5),
-            confidence: segment.confidence ?? 0.85,
+            confidence: segment.confidence,
             evidence: {
               start: segment.start,
               end: segment.end,

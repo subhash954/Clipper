@@ -72,6 +72,7 @@ import { EditingService } from '../lib/editor/editingService';
 import { getStorage } from '../lib/storage';
 import { getStorageService } from '../lib/storage/storageService';
 import { ClipperError } from '../lib/errors';
+import { mineOpportunitiesFromIntelligence } from '../lib/factory/contentMining';
 
 
 async function runPhase6UnitTests() {
@@ -1731,6 +1732,155 @@ async function runPhase6UnitTests() {
     if (fs.existsSync(sceneTestVideoCut)) fs.unlinkSync(sceneTestVideoCut);
     if (fs.existsSync(sceneTestVideoSingle)) fs.unlinkSync(sceneTestVideoSingle);
     if (fs.existsSync(corruptFile)) fs.unlinkSync(corruptFile);
+  } catch {}
+
+  // --------------------------------------------------------------------------
+  // CATEGORY 28: Process Failure & Confidence Truthfulness (Phase 6.1.5)
+  // --------------------------------------------------------------------------
+  console.log('\n--- CATEGORY 28: Process Failure & Confidence Truthfulness ---');
+
+  // TEST A: Valid video + supplied duration + successful FFmpeg => scene detection succeeds normally
+  const cutVideoA = path.join(os.tmpdir(), 'clipper_test_28_a.mp4');
+  spawnSync(ffmpegBin, [
+    '-y',
+    '-f', 'lavfi', '-i', 'color=c=black:s=320x240:d=1',
+    '-f', 'lavfi', '-i', 'color=c=white:s=320x240:d=1',
+    '-filter_complex', '[0:v][1:v]concat=n=2:v=1[v]',
+    '-map', '[v]',
+    cutVideoA,
+  ]);
+  const scenesA = await detectVideoScenes({
+    filePath: cutVideoA,
+    projectId: 'test-28-a',
+    totalDurationSeconds: 2.0,
+  });
+  assert(Array.isArray(scenesA) && scenesA.length === 2, 'TEST A: Valid video with supplied duration succeeds normally (2 scenes)');
+  assert(scenesA[0].start === 0 && scenesA[0].end === 1.0, 'TEST A: Scene 0 bounded strictly at [0, 1.0]');
+  assert(scenesA[1].start === 1.0 && scenesA[1].end === 2.0, 'TEST A: Scene 1 bounded strictly at [1.0, 2.0]');
+
+  // TEST B: Valid continuous video + supplied duration + FFmpeg exit 0 => exactly one continuous scene
+  const contVideoB = path.join(os.tmpdir(), 'clipper_test_28_b.mp4');
+  spawnSync(ffmpegBin, [
+    '-y',
+    '-f', 'lavfi', '-i', 'color=c=green:s=320x240:d=2',
+    contVideoB,
+  ]);
+  const scenesB = await detectVideoScenes({
+    filePath: contVideoB,
+    projectId: 'test-28-b',
+    totalDurationSeconds: 2.0,
+  });
+  assert(Array.isArray(scenesB) && scenesB.length === 1, 'TEST B: Continuous video produces exactly 1 continuous scene');
+  assert(scenesB[0].evidence === 'continuous_sequence', 'TEST B: Evidence is continuous_sequence');
+  assert(scenesB[0].start === 0 && scenesB[0].end === 2.0, 'TEST B: Bounds strictly [0, 2.0]');
+
+  // TEST C: Corrupt/non-video file + supplied duration => FFmpeg failure => detectVideoScenes rejects with typed ClipperError
+  const corruptVideoC = path.join(os.tmpdir(), 'clipper_corrupt_28_c.mp4');
+  fs.writeFileSync(corruptVideoC, 'corrupt-header-data-not-a-valid-mp4-container');
+  let threwC = false;
+  let errorC: any = null;
+  try {
+    await detectVideoScenes({
+      filePath: corruptVideoC,
+      projectId: 'test-28-c',
+      totalDurationSeconds: 2.0,
+    });
+  } catch (err: any) {
+    threwC = true;
+    errorC = err;
+  }
+  assert(threwC, 'TEST C: Corrupt file with supplied duration rejects');
+  assert(errorC instanceof ClipperError, 'TEST C: Rejection is an instance of ClipperError');
+  assert(errorC?.code === 'MEDIA_INVALID', 'TEST C: Error code is MEDIA_INVALID (controlled classification)');
+
+  // TEST D: Missing/unavailable FFmpeg executable or simulated spawn error => controlled typed failure
+  let threwD = false;
+  let errorD: any = null;
+  try {
+    await detectVideoScenes({
+      filePath: cutVideoA,
+      projectId: 'test-28-d',
+      totalDurationSeconds: 2.0,
+      ffmpegPath: '/usr/local/bin/nonexistent_ffmpeg_binary_mock',
+    });
+  } catch (err: any) {
+    threwD = true;
+    errorD = err;
+  }
+  assert(threwD, 'TEST D: Missing/unavailable FFmpeg executable throws');
+  assert(errorD instanceof ClipperError, 'TEST D: Threw typed ClipperError');
+  assert(errorD?.code === 'MEDIA_UNAVAILABLE' || errorD?.code === 'ANALYSIS_FAILED', 'TEST D: Controlled error code');
+
+  // TEST E: Verify no raw FFmpeg stderr/path/command leaks through the thrown error
+  const msgC = String(errorC?.message || '');
+  const msgD = String(errorD?.message || '');
+  assert(!msgC.includes('/Users/') && !msgC.includes('/tmp/') && !msgC.includes('/private/'), 'TEST E: Error C contains no filesystem paths');
+  assert(!msgC.includes('ffmpeg') && !msgC.includes('-filter_complex'), 'TEST E: Error C contains no command lines');
+  assert(!msgC.includes('http://') && !msgC.includes('https://'), 'TEST E: Error C contains no URLs');
+  assert(!msgD.includes('/Users/') && !msgD.includes('/private/'), 'TEST E: Error D contains no filesystem paths');
+  assert(!msgD.includes('http://') && !msgD.includes('https://'), 'TEST E: Error D contains no URLs');
+
+  // TEST F: Verify confidence truthfulness in ContentOpportunity
+  const mockReport: any = {
+    projectId: 'test-proj',
+    candidateClips: [],
+    semanticSegments: [
+      {
+        id: 'seg-with-conf',
+        start: 0,
+        end: 20,
+        text: 'Segment with real calibrated confidence score here',
+        importance: 80,
+        confidence: 0.91,
+        segmentType: 'insight',
+      },
+      {
+        id: 'seg-without-conf',
+        start: 25,
+        end: 45,
+        text: 'Segment without calibrated confidence score here',
+        importance: 75,
+        confidence: undefined,
+        segmentType: 'insight',
+      },
+    ],
+  };
+  const miningResult = mineOpportunitiesFromIntelligence(mockReport, [], {
+    projectId: 'test-proj',
+    sourceDurationSeconds: 60,
+  });
+  const oppWithConf = miningResult.opportunities.find((o) => o.id === 'opp-seg-seg-with-conf');
+  const oppWithoutConf = miningResult.opportunities.find((o) => o.id === 'opp-seg-seg-without-conf');
+
+  assert(oppWithConf !== undefined, 'TEST F: Opportunity with confidence was mined');
+  assert(oppWithConf?.confidence === 0.91, 'TEST F: Authentic confidence 0.91 is preserved exactly');
+
+  assert(oppWithoutConf !== undefined, 'TEST F: Opportunity without confidence was mined');
+  assert(oppWithoutConf?.confidence === undefined, 'TEST F: Missing confidence is undefined (no fabricated 0.85/0.9)');
+
+  // TEST G: Repository-wide check for prohibited fabricated confidence fallback
+  const contentMiningSrc = fs.readFileSync(path.join(process.cwd(), 'lib', 'factory', 'contentMining.ts'), 'utf-8');
+  assert(!contentMiningSrc.includes('confidence ?? 0.85'), 'TEST G: lib/factory/contentMining.ts does not contain "confidence ?? 0.85"');
+  assert(!contentMiningSrc.includes('confidence || 0.85'), 'TEST G: lib/factory/contentMining.ts does not contain "confidence || 0.85"');
+  assert(!contentMiningSrc.includes('confidence || 0.9'), 'TEST G: lib/factory/contentMining.ts does not contain "confidence || 0.9"');
+
+  // TEST H: Verify existing Phase 6 truthfulness invariants remain intact
+  const sceneEngineSrc = fs.readFileSync(path.join(process.cwd(), 'lib', 'intelligence', 'engines', 'sceneEngine.ts'), 'utf-8');
+  assert(!sceneEngineSrc.includes('+ 5'), 'TEST H: sceneEngine contains no + 5 duration fallback');
+  assert(!sceneEngineSrc.includes(': 60'), 'TEST H: sceneEngine contains no 60s duration fallback');
+  assert(!sceneEngineSrc.includes('confidence: 0.92'), 'TEST H: sceneEngine contains no 0.92 confidence fallback');
+  assert(!sceneEngineSrc.includes('confidence: 0.95'), 'TEST H: sceneEngine contains no 0.95 confidence fallback');
+  assert(!sceneEngineSrc.includes('cutIntensityScore: 0.35'), 'TEST H: sceneEngine contains no 0.35 cut score fallback');
+  assert(!sceneEngineSrc.includes('sceneScores.push(0.45)'), 'TEST H: sceneEngine contains no 0.45 cut score fallback');
+  assert(!sceneEngineSrc.includes('cutIntensityScore: 0.1'), 'TEST H: sceneEngine contains no 0.1 cut score fallback');
+  assert(!sceneEngineSrc.includes("dominantObjects: ['speaker']"), 'TEST H: sceneEngine contains no fake objects');
+  assert(!sceneEngineSrc.includes('dominantFacesCount: 1'), 'TEST H: sceneEngine contains no fake faces');
+
+  // Cleanup temp files
+  try {
+    if (fs.existsSync(cutVideoA)) fs.unlinkSync(cutVideoA);
+    if (fs.existsSync(contVideoB)) fs.unlinkSync(contVideoB);
+    if (fs.existsSync(corruptVideoC)) fs.unlinkSync(corruptVideoC);
   } catch {}
 
   console.log('\n====================================================');

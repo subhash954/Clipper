@@ -99,7 +99,7 @@ export interface ContentOpportunity {
   payoff: string;
   audience?: string;
   score: number; // 0 - 100 AI Editorial Score
-  confidence: number; // 0.0 - 1.0
+  confidence?: number; // 0.0 - 1.0 (optional when uncalibrated)
   evidence: {
     start: number;
     end: number;

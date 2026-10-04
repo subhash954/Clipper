@@ -10,6 +10,7 @@ export interface SceneDetectionOptions {
   projectId: string;
   threshold?: number; // 0.2 to 0.4 standard
   totalDurationSeconds?: number;
+  ffmpegPath?: string;
 }
 
 /**
@@ -46,9 +47,9 @@ export async function detectVideoScenes(options: SceneDetectionOptions): Promise
     }
   }
 
-  const ffmpegPath = getFfmpegPath();
+  const ffmpegPath = options.ffmpegPath || getFfmpegPath();
 
-  return new Promise((resolve) => {
+  return new Promise<Scene[]>((resolve, reject) => {
     // Run FFmpeg to detect real frame-level scene changes with scene score metadata
     const args = [
       '-nostats',
@@ -58,14 +59,55 @@ export async function detectVideoScenes(options: SceneDetectionOptions): Promise
       '-',
     ];
 
-    const proc = spawn(/*turbopackIgnore: true*/ ffmpegPath, args);
+    let settled = false;
+    let proc: ReturnType<typeof spawn>;
+
+    try {
+      proc = spawn(/*turbopackIgnore: true*/ ffmpegPath, args);
+    } catch (spawnErr) {
+      settled = true;
+      const sanitized = sanitizeSceneFailureReason(spawnErr);
+      if (sanitized === 'SCENE_DETECTOR_UNAVAILABLE') {
+        return reject(new ClipperError('MEDIA_UNAVAILABLE', 'Scene detector binary unavailable or spawn failed', 503));
+      }
+      return reject(new ClipperError('ANALYSIS_FAILED', 'Scene detector process failed to launch', 500));
+    }
+
     let stderr = '';
 
-    proc.stderr.on('data', (data) => {
+    proc.stderr?.on('data', (data) => {
       stderr += data.toString();
     });
 
-    proc.on('close', () => {
+    proc.on('error', (err) => {
+      if (settled) return;
+      settled = true;
+      const sanitized = sanitizeSceneFailureReason(err);
+      if (sanitized === 'SCENE_DETECTOR_UNAVAILABLE') {
+        return reject(new ClipperError('MEDIA_UNAVAILABLE', 'Scene detector binary unavailable or spawn failed', 503));
+      }
+      return reject(new ClipperError('ANALYSIS_FAILED', 'Scene detector process failed to launch', 500));
+    });
+
+    proc.on('close', (code) => {
+      if (settled) return;
+      settled = true;
+
+      if (code !== 0) {
+        // FFmpeg non-zero exit code: FAIL CONTROLLED. NEVER return continuous_sequence.
+        const sanitized = sanitizeSceneFailureReason(stderr);
+        if (sanitized === 'SCENE_DETECTOR_INVALID_MEDIA') {
+          return reject(new ClipperError('MEDIA_INVALID', 'Scene detection failed: invalid or corrupt media stream', 400));
+        }
+        if (sanitized === 'SCENE_DETECTOR_TIMEOUT') {
+          return reject(new ClipperError('ANALYSIS_FAILED', 'Scene detection process timed out', 504));
+        }
+        if (sanitized === 'SCENE_DETECTOR_UNAVAILABLE') {
+          return reject(new ClipperError('MEDIA_UNAVAILABLE', 'Scene detection media or binary unavailable', 404));
+        }
+        return reject(new ClipperError('ANALYSIS_FAILED', 'Scene detection process failed', 500));
+      }
+
       const cuts: { timestamp: number; score?: number }[] = [];
       const lines = stderr.split(/\r?\n/);
       let pendingScore: number | undefined = undefined;
