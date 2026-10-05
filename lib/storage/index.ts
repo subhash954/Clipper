@@ -3,6 +3,7 @@ import path from 'path';
 import { Project, RenderJob, CostTelemetryRecord, Transcript, TranscriptSegment, NormalizedTranscriptWord, WordTimestamp, MediaAsset } from '../types';
 import { Timeline, TimelineTrack, TimelineItem, EDLOperation } from '../editor/edlTypes';
 import { ReframeAnalysis, ReframeConfig } from '../reframe/types';
+import { CaptionTrack, CaptionCue, CaptionWord } from '../captions/types';
 import { supabase, isSupabaseConfigured } from '../supabase';
 import { ClipperError } from '../errors';
 
@@ -56,6 +57,10 @@ export interface IStorageAdapter {
   getReframeAnalysis?(projectId: string, mediaAssetId?: string): Promise<ReframeAnalysis | null>;
   saveReframeConfig?(config: ReframeConfig, userId?: string): Promise<ReframeConfig>;
   getReframeConfig?(projectId: string, targetAspectRatio?: string): Promise<ReframeConfig | null>;
+  saveCaptionTrack?(track: CaptionTrack, userId?: string): Promise<CaptionTrack>;
+  getCaptionTrack?(projectId: string, version?: number): Promise<CaptionTrack | null>;
+  listCaptionTracks?(projectId: string): Promise<CaptionTrack[]>;
+  deleteCaptionTrack?(trackId: string, userId?: string): Promise<boolean>;
 }
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -1322,6 +1327,221 @@ export class SupabaseStorageAdapter implements IStorageAdapter {
       updatedAt: data.updated_at,
     };
   }
+
+  async saveCaptionTrack(track: CaptionTrack, userId?: string): Promise<CaptionTrack> {
+    const cuesJson = (track.cues || []).map((c, idx) => ({
+      id: c.id,
+      sequence: c.sequence || idx + 1,
+      start: c.start,
+      end: c.end,
+      text: c.text,
+      speakerId: c.speakerId || null,
+      emphasis: c.emphasis || null,
+      style: c.style || {},
+      language: c.language || track.language || 'en',
+      translatedText: c.translatedText || null,
+      source: c.source || track.source || 'generated',
+      words: (c.words || []).map((w, wIdx) => ({
+        id: w.id || null,
+        wordIndex: w.wordIndex !== undefined ? w.wordIndex : wIdx,
+        word: w.word,
+        start: w.start,
+        end: w.end,
+        confidence: w.confidence !== undefined ? w.confidence : null,
+        speaker: w.speaker !== undefined ? w.speaker : null,
+        highlighted: Boolean(w.highlighted),
+        emphasisStyle: w.emphasisStyle || null,
+      })),
+    }));
+
+    const { data, error } = await supabase.rpc('save_caption_track_atomic', {
+      p_project_id: track.projectId,
+      p_user_id: userId || track.userId || null,
+      p_track_id: track.id ? ensureValidUuid(track.id) : null,
+      p_transcript_id: track.transcriptId || null,
+      p_media_asset_id: track.mediaAssetId || null,
+      p_language: track.language || 'en',
+      p_version: track.version && track.version > 0 ? track.version : null,
+      p_source: track.source || 'generated',
+      p_style: track.style || {},
+      p_duration: track.durationSeconds || null,
+      p_metadata: track.metadata || {},
+      p_cues: cuesJson,
+    });
+
+    if (error) {
+      if (
+        error.code === '42501' ||
+        error.message?.includes('FORBIDDEN') ||
+        error.message?.includes('CROSS_PROJECT_FORBIDDEN')
+      ) {
+        throw new ClipperError('FORBIDDEN', error.message, 403);
+      }
+      if (
+        error.code === 'P0002' ||
+        error.message?.includes('PROJECT_NOT_FOUND') ||
+        error.message?.includes('TRANSCRIPT_NOT_FOUND')
+      ) {
+        throw new ClipperError('NOT_FOUND', error.message, 404);
+      }
+      throw new ClipperError('DATABASE_ERROR', `Failed to save caption track: ${error.message}`, 500);
+    }
+
+    return {
+      id: data.id,
+      projectId: data.projectId,
+      transcriptId: data.transcriptId,
+      mediaAssetId: data.mediaAssetId,
+      userId: data.userId,
+      version: data.version,
+      language: data.language,
+      source: data.source,
+      status: data.status,
+      style: data.style,
+      cuesCount: data.cuesCount,
+      durationSeconds: Number(data.durationSeconds || 0),
+      metadata: data.metadata,
+      createdAt: data.createdAt,
+      updatedAt: data.updatedAt,
+      cues: track.cues || [],
+    };
+  }
+
+  async getCaptionTrack(projectId: string, version?: number): Promise<CaptionTrack | null> {
+    let query = supabase.from('caption_tracks').select('*').eq('project_id', projectId);
+    if (version !== undefined && version > 0) {
+      query = query.eq('version', version);
+    } else {
+      query = query.order('version', { ascending: false }).limit(1);
+    }
+
+    const { data: trackRow, error: trackErr } = await query.maybeSingle();
+    if (trackErr || !trackRow) return null;
+
+    // Load cues
+    const { data: cueRows, error: cueErr } = await supabase
+      .from('caption_cues')
+      .select('*')
+      .eq('track_id', trackRow.id)
+      .order('sequence', { ascending: true });
+
+    if (cueErr) {
+      throw new ClipperError('DATABASE_ERROR', `Failed to load caption cues: ${cueErr.message}`, 500);
+    }
+
+    // Load words
+    const { data: wordRows, error: wordErr } = await supabase
+      .from('caption_words')
+      .select('*')
+      .eq('track_id', trackRow.id)
+      .order('word_index', { ascending: true });
+
+    if (wordErr) {
+      throw new ClipperError('DATABASE_ERROR', `Failed to load caption words: ${wordErr.message}`, 500);
+    }
+
+    // Group words by cue_id
+    const wordsByCue = new Map<string, CaptionWord[]>();
+    for (const w of wordRows || []) {
+      const cueWords = wordsByCue.get(w.cue_id) || [];
+      cueWords.push({
+        id: w.id,
+        cueId: w.cue_id,
+        trackId: w.track_id,
+        wordIndex: w.word_index,
+        word: w.word,
+        start: Number(w.start_time),
+        end: Number(w.end_time),
+        confidence: w.confidence !== null && w.confidence !== undefined ? Number(w.confidence) : undefined,
+        speaker: w.speaker !== null && w.speaker !== undefined ? Number(w.speaker) : undefined,
+        highlighted: Boolean(w.highlighted),
+        emphasisStyle: w.emphasis_style || undefined,
+      });
+      wordsByCue.set(w.cue_id, cueWords);
+    }
+
+    const cues: CaptionCue[] = (cueRows || []).map((c: any) => ({
+      id: c.id,
+      trackId: c.track_id,
+      sequence: c.sequence,
+      start: Number(c.start_time),
+      end: Number(c.end_time),
+      text: c.text,
+      speakerId: c.speaker_id || undefined,
+      emphasis: c.emphasis || undefined,
+      style: c.style || {},
+      language: c.language,
+      translatedText: c.translated_text || undefined,
+      source: c.source,
+      timingPrecision: 'exact_word',
+      projectId,
+      words: wordsByCue.get(c.id) || [],
+      createdAt: c.created_at,
+      updatedAt: c.updated_at,
+    }));
+
+    return {
+      id: trackRow.id,
+      projectId: trackRow.project_id,
+      transcriptId: trackRow.transcript_id,
+      mediaAssetId: trackRow.media_asset_id,
+      userId: trackRow.user_id,
+      version: trackRow.version,
+      language: trackRow.language,
+      source: trackRow.source,
+      status: trackRow.status,
+      style: trackRow.style,
+      cuesCount: trackRow.cues_count,
+      durationSeconds: Number(trackRow.duration || 0),
+      metadata: trackRow.metadata,
+      cues,
+      createdAt: trackRow.created_at,
+      updatedAt: trackRow.updated_at,
+    };
+  }
+
+  async listCaptionTracks(projectId: string): Promise<CaptionTrack[]> {
+    const { data, error } = await supabase
+      .from('caption_tracks')
+      .select('*')
+      .eq('project_id', projectId)
+      .order('version', { ascending: false });
+
+    if (error) {
+      throw new ClipperError('DATABASE_ERROR', `Failed to list caption tracks: ${error.message}`, 500);
+    }
+
+    return (data || []).map((d: any) => ({
+      id: d.id,
+      projectId: d.project_id,
+      transcriptId: d.transcript_id,
+      mediaAssetId: d.media_asset_id,
+      userId: d.user_id,
+      version: d.version,
+      language: d.language,
+      source: d.source,
+      status: d.status,
+      style: d.style,
+      cuesCount: d.cues_count,
+      durationSeconds: Number(d.duration || 0),
+      metadata: d.metadata,
+      cues: [],
+      createdAt: d.created_at,
+      updatedAt: d.updated_at,
+    }));
+  }
+
+  async deleteCaptionTrack(trackId: string, userId?: string): Promise<boolean> {
+    let query = supabase.from('caption_tracks').delete().eq('id', trackId);
+    if (userId) {
+      query = query.eq('user_id', userId);
+    }
+    const { error } = await query;
+    if (error) {
+      throw new ClipperError('DATABASE_ERROR', `Failed to delete caption track: ${error.message}`, 500);
+    }
+    return true;
+  }
 }
 
 /**
@@ -1341,6 +1561,9 @@ export class LocalStorageAdapter implements IStorageAdapter {
   private timelineOpsFile = path.join(process.cwd(), 'data', 'timeline_operations.json');
   private reframeAnalysesFile = path.join(process.cwd(), 'data', 'reframe_analyses.json');
   private reframeConfigsFile = path.join(process.cwd(), 'data', 'reframe_configs.json');
+  private captionTracksFile = path.join(process.cwd(), 'data', 'caption_tracks.json');
+  private captionCuesFile = path.join(process.cwd(), 'data', 'caption_cues.json');
+  private captionWordsFile = path.join(process.cwd(), 'data', 'caption_words.json');
 
   constructor() {
     if (!fs.existsSync(this.dataDir)) {
@@ -2118,6 +2341,283 @@ export class LocalStorageAdapter implements IStorageAdapter {
     return (
       list.find((c) => c.projectId === projectId && (!targetAspectRatio || c.targetAspectRatio === targetAspectRatio)) || null
     );
+  }
+
+  async saveCaptionTrack(track: CaptionTrack, userId?: string): Promise<CaptionTrack> {
+    const projects = this.readJson<Project[]>(this.projectsFile, []);
+    const proj = projects.find((p) => p.id === track.projectId);
+    if (!proj || proj.deletedAt) {
+      throw new ClipperError('NOT_FOUND', `Project ${track.projectId} not found`, 404);
+    }
+    if (userId && proj.userId && proj.userId !== userId) {
+      throw new ClipperError('FORBIDDEN', `Access denied: you do not own project ${track.projectId}`, 403);
+    }
+
+    // Verify transcript association if present
+    if (track.transcriptId) {
+      const transcripts = this.readJson<any[]>(this.transcriptsFile, []);
+      const tr = transcripts.find((t) => t.id === track.transcriptId);
+      if (!tr) {
+        throw new ClipperError('NOT_FOUND', `Transcript ${track.transcriptId} not found`, 404);
+      }
+      if (tr.projectId !== track.projectId) {
+        throw new ClipperError(
+          'FORBIDDEN',
+          `Transcript ${track.transcriptId} belongs to project ${tr.projectId}, not ${track.projectId}`,
+          403
+        );
+      }
+    }
+
+    // Verify media asset association if present
+    if (track.mediaAssetId) {
+      const mediaAssets = this.readJson<any[]>(this.mediaFile, []);
+      const media = mediaAssets.find((m) => m.id === track.mediaAssetId);
+      if (!media) {
+        throw new ClipperError('NOT_FOUND', `Media asset ${track.mediaAssetId} not found`, 404);
+      }
+      if (media.projectId && media.projectId !== track.projectId) {
+        throw new ClipperError(
+          'FORBIDDEN',
+          `Media asset ${track.mediaAssetId} belongs to project ${media.projectId}, not ${track.projectId}`,
+          403
+        );
+      }
+    }
+
+    const tracks = this.readJson<any[]>(this.captionTracksFile, []);
+    const projTracks = tracks.filter((t) => t.projectId === track.projectId);
+    let version = track.version;
+    if (!version || version <= 0) {
+      version = projTracks.reduce((max, t) => Math.max(max, t.version || 0), 0) + 1;
+    }
+
+    const trackId = track.id ? ensureValidUuid(track.id) : ensureValidUuid();
+    const now = new Date().toISOString();
+
+    const cues = (track.cues || []).map((c, idx) => {
+      const cueId = c.id ? ensureValidUuid(c.id) : ensureValidUuid();
+      return {
+        id: cueId,
+        trackId,
+        sequence: c.sequence || idx + 1,
+        start: c.start,
+        end: c.end,
+        text: c.text,
+        speakerId: c.speakerId || null,
+        emphasis: c.emphasis || null,
+        style: c.style || {},
+        language: c.language || track.language || 'en',
+        translatedText: c.translatedText || null,
+        source: c.source || track.source || 'generated',
+        words: (c.words || []).map((w, wIdx) => ({
+          id: w.id ? ensureValidUuid(w.id) : ensureValidUuid(),
+          cueId,
+          trackId,
+          wordIndex: w.wordIndex !== undefined ? w.wordIndex : wIdx,
+          word: w.word,
+          start: w.start,
+          end: w.end,
+          confidence: w.confidence !== undefined ? w.confidence : null,
+          speaker: w.speaker !== undefined ? w.speaker : null,
+          highlighted: Boolean(w.highlighted),
+          emphasisStyle: w.emphasisStyle || null,
+        })),
+      };
+    });
+
+    const savedTrackRecord: any = {
+      id: trackId,
+      projectId: track.projectId,
+      transcriptId: track.transcriptId || null,
+      mediaAssetId: track.mediaAssetId || null,
+      userId: userId || track.userId || proj.userId,
+      version,
+      language: track.language || 'en',
+      source: track.source || 'generated',
+      status: 'ready',
+      style: track.style || {},
+      cuesCount: cues.length,
+      durationSeconds: track.durationSeconds || 0,
+      metadata: track.metadata || {},
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    // Save tracks
+    const updatedTracks = [savedTrackRecord, ...tracks.filter((t) => t.id !== trackId)];
+    this.writeJson(this.captionTracksFile, updatedTracks);
+
+    // Save cues
+    const existingCues = this.readJson<any[]>(this.captionCuesFile, []).filter((c) => c.trackId !== trackId);
+    const cueRowsToPersist = cues.map((c) => ({
+      id: c.id,
+      trackId,
+      sequence: c.sequence,
+      start: c.start,
+      end: c.end,
+      text: c.text,
+      speakerId: c.speakerId,
+      emphasis: c.emphasis,
+      style: c.style,
+      language: c.language,
+      translatedText: c.translatedText,
+      source: c.source,
+      createdAt: now,
+      updatedAt: now,
+    }));
+    this.writeJson(this.captionCuesFile, [...existingCues, ...cueRowsToPersist]);
+
+    // Save words
+    const existingWords = this.readJson<any[]>(this.captionWordsFile, []).filter((w) => w.trackId !== trackId);
+    const wordsToPersist: any[] = [];
+    for (const c of cues) {
+      for (const w of c.words) {
+        wordsToPersist.push({
+          id: w.id,
+          cueId: c.id,
+          trackId,
+          wordIndex: w.wordIndex,
+          word: w.word,
+          start: w.start,
+          end: w.end,
+          confidence: w.confidence,
+          speaker: w.speaker,
+          highlighted: w.highlighted,
+          emphasisStyle: w.emphasisStyle,
+          createdAt: now,
+        });
+      }
+    }
+    this.writeJson(this.captionWordsFile, [...existingWords, ...wordsToPersist]);
+
+    return {
+      ...savedTrackRecord,
+      cues,
+    };
+  }
+
+  async getCaptionTrack(projectId: string, version?: number): Promise<CaptionTrack | null> {
+    const tracks = this.readJson<any[]>(this.captionTracksFile, []);
+    let projTracks = tracks.filter((t) => t.projectId === projectId);
+    if (projTracks.length === 0) return null;
+
+    let targetTrack = null;
+    if (version !== undefined && version > 0) {
+      targetTrack = projTracks.find((t) => t.version === version);
+    } else {
+      projTracks.sort((a, b) => (b.version || 0) - (a.version || 0));
+      targetTrack = projTracks[0];
+    }
+
+    if (!targetTrack) return null;
+
+    const allCues = this.readJson<any[]>(this.captionCuesFile, []);
+    const trackCues = allCues.filter((c) => c.trackId === targetTrack.id).sort((a, b) => a.sequence - b.sequence);
+
+    const allWords = this.readJson<any[]>(this.captionWordsFile, []);
+    const trackWords = allWords.filter((w) => w.trackId === targetTrack.id);
+
+    const wordsByCue = new Map<string, any[]>();
+    for (const w of trackWords) {
+      const list = wordsByCue.get(w.cueId) || [];
+      list.push(w);
+      wordsByCue.set(w.cueId, list);
+    }
+
+    const cues: CaptionCue[] = trackCues.map((c) => {
+      const cueWords = (wordsByCue.get(c.id) || []).sort((a, b) => a.wordIndex - b.wordIndex);
+      return {
+        id: c.id,
+        trackId: c.trackId,
+        sequence: c.sequence,
+        start: Number(c.start),
+        end: Number(c.end),
+        text: c.text,
+        speakerId: c.speakerId || undefined,
+        emphasis: c.emphasis || undefined,
+        style: c.style || {},
+        language: c.language,
+        translatedText: c.translatedText || undefined,
+        source: c.source,
+        timingPrecision: 'exact_word',
+        projectId,
+        words: cueWords.map((w) => ({
+          id: w.id,
+          cueId: w.cueId,
+          trackId: w.trackId,
+          wordIndex: w.wordIndex,
+          word: w.word,
+          start: Number(w.start),
+          end: Number(w.end),
+          confidence: w.confidence !== null && w.confidence !== undefined ? Number(w.confidence) : undefined,
+          speaker: w.speaker !== null && w.speaker !== undefined ? Number(w.speaker) : undefined,
+          highlighted: Boolean(w.highlighted),
+          emphasisStyle: w.emphasisStyle || undefined,
+        })),
+        createdAt: c.createdAt,
+        updatedAt: c.updatedAt,
+      };
+    });
+
+    return {
+      id: targetTrack.id,
+      projectId: targetTrack.projectId,
+      transcriptId: targetTrack.transcriptId,
+      mediaAssetId: targetTrack.mediaAssetId,
+      userId: targetTrack.userId,
+      version: targetTrack.version,
+      language: targetTrack.language,
+      source: targetTrack.source,
+      status: targetTrack.status,
+      style: targetTrack.style,
+      cuesCount: targetTrack.cuesCount,
+      durationSeconds: Number(targetTrack.durationSeconds || 0),
+      metadata: targetTrack.metadata,
+      cues,
+      createdAt: targetTrack.createdAt,
+      updatedAt: targetTrack.updatedAt,
+    };
+  }
+
+  async listCaptionTracks(projectId: string): Promise<CaptionTrack[]> {
+    const tracks = this.readJson<any[]>(this.captionTracksFile, []);
+    return tracks
+      .filter((t) => t.projectId === projectId)
+      .sort((a, b) => (b.version || 0) - (a.version || 0))
+      .map((t) => ({
+        id: t.id,
+        projectId: t.projectId,
+        transcriptId: t.transcriptId,
+        mediaAssetId: t.mediaAssetId,
+        userId: t.userId,
+        version: t.version,
+        language: t.language,
+        source: t.source,
+        status: t.status,
+        style: t.style,
+        cuesCount: t.cuesCount,
+        durationSeconds: Number(t.durationSeconds || 0),
+        metadata: t.metadata,
+        cues: [],
+        createdAt: t.createdAt,
+        updatedAt: t.updatedAt,
+      }));
+  }
+
+  async deleteCaptionTrack(trackId: string, userId?: string): Promise<boolean> {
+    const tracks = this.readJson<any[]>(this.captionTracksFile, []);
+    const target = tracks.find((t) => t.id === trackId);
+    if (!target) return false;
+    if (userId && target.userId && target.userId !== userId) {
+      throw new ClipperError('FORBIDDEN', 'Access denied to delete caption track', 403);
+    }
+    this.writeJson(this.captionTracksFile, tracks.filter((t) => t.id !== trackId));
+    const cues = this.readJson<any[]>(this.captionCuesFile, []);
+    this.writeJson(this.captionCuesFile, cues.filter((c) => c.trackId !== trackId));
+    const words = this.readJson<any[]>(this.captionWordsFile, []);
+    this.writeJson(this.captionWordsFile, words.filter((w) => w.trackId !== trackId));
+    return true;
   }
 }
 

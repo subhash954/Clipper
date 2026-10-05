@@ -1,5 +1,6 @@
 import { WordTimestamp, SubtitleStyle, VisualLayoutSettings } from './types';
 import { SAMPLE_TRANSLATIONS } from './sampleData';
+import { getActiveCaptionWord } from './captions/activeWord';
 
 const KEYWORD_EMOJIS: Record<string, string> = {
   BUSINESS: '💼',
@@ -25,7 +26,8 @@ export function renderSubtitlesOnCanvas(
   canvasWidth: number,
   canvasHeight: number,
   showFreeWatermark: boolean = false,
-  clipStartTime: number = 0
+  clipStartTime: number = 0,
+  isDemoMode: boolean = false
 ) {
   // Clear previous overlay frame
   ctx.clearRect(0, 0, canvasWidth, canvasHeight);
@@ -103,14 +105,19 @@ export function renderSubtitlesOnCanvas(
   // 4. Feature 8, 10, 11, 12: Dynamic Animated Subtitles & Translations
   if (words && words.length > 0) {
     // Convert absolute timestamps to relative clip time if words have absolute time
-    const activeIndex = words.findIndex((w) => {
-      const wStart = clipStartTime > 0 && w.start >= clipStartTime ? w.start - clipStartTime : w.start;
-      const wEnd = clipStartTime > 0 && w.end >= clipStartTime ? w.end - clipStartTime : w.end;
-      return currentTime >= wStart && currentTime <= wEnd;
-    });
+    const adjustedWords = clipStartTime > 0
+      ? words.map((w) => ({
+          ...w,
+          start: w.start >= clipStartTime ? w.start - clipStartTime : w.start,
+          end: w.end >= clipStartTime ? w.end - clipStartTime : w.end,
+        }))
+      : words;
+
+    const activeWordObj = getActiveCaptionWord({ words: adjustedWords as any }, currentTime);
+    const activeIndex = activeWordObj ? adjustedWords.indexOf(activeWordObj as any) : -1;
 
     if (activeIndex !== -1) {
-      const currentWord = words[activeIndex];
+      const currentWord = adjustedWords[activeIndex];
 
       // High-retention fast-cut 3-word window
       const windowSize = 3;
@@ -237,9 +244,18 @@ export function renderSubtitlesOnCanvas(
 
       // Feature 10 & 11: Dual-Language Translated Subtitles Stacked Below
       if (style.showDualLanguage && style.language !== 'en') {
-        const transDict = SAMPLE_TRANSLATIONS[style.language] || {};
-        const cleanWord = currentWord.word.replace(/[^a-zA-Z]/g, '').toUpperCase();
-        const translated = transDict[cleanWord] || transDict[currentWord.word] || '';
+        let translated: string | undefined;
+
+        if (style.translatedText) {
+          translated = style.translatedText;
+        } else if ((currentWord as any).translatedText) {
+          translated = (currentWord as any).translatedText;
+        } else if (isDemoMode) {
+          // Explicitly isolated to demo fixtures only
+          const transDict = SAMPLE_TRANSLATIONS[style.language] || {};
+          const cleanWord = currentWord.word.replace(/[^a-zA-Z]/g, '').toUpperCase();
+          translated = transDict[cleanWord] || transDict[currentWord.word] || undefined;
+        }
 
         if (translated) {
           ctx.save();

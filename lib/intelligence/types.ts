@@ -10,6 +10,8 @@ export interface IntelligenceItemMetadata {
   start: number;
   end: number;
   confidence?: number; // 0.0 - 1.0 (optional when uncalibrated)
+  confidenceSource?: 'transcription_provider' | 'heuristic' | 'calibrated_model' | string;
+  confidenceType?: string;
   evidence?: string;
   createdAt: string;
   providerMetadata?: {

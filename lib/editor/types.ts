@@ -1,5 +1,6 @@
 import { AspectRatio, TrackingMode, ReframeTrack } from '../reframe/types';
 import { SubtitleStyle, MediaAsset } from '../types';
+import { CaptionCue } from '../captions/types';
 
 export type TrackType =
   | 'VIDEO'
@@ -145,6 +146,8 @@ export interface CanonicalRenderSpec {
     enabled: boolean;
     style: SubtitleStyle;
     safeAreaEnabled: boolean;
+    trackId?: string;
+    cues?: CaptionCue[];
     words: Array<{
       word: string;
       start: number;

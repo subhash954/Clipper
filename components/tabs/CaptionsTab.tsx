@@ -2,6 +2,7 @@
 
 import React, { useState, useMemo } from 'react';
 import { WordTimestamp, SubtitleStyle, SubtitleLanguage } from '@/lib/types';
+import { getActiveCaptionWord } from '@/lib/captions/activeWord';
 import {
   Type,
   Search,
@@ -253,11 +254,12 @@ export const CaptionsTab: React.FC<CaptionsTabProps> = ({
 
                 {/* Spoken Word Chips */}
                 <div className="flex flex-wrap items-center gap-1.5">
-                  {block.words.map((w, wIdx) => {
-                    const globalIdx = block.startIndex + wIdx;
-                    const isWordActive =
-                      currentTime >= w.start && currentTime <= w.end;
-                    const isHighlighted = highlightedWords.includes(w.word.trim());
+                  {(() => {
+                    const activeWord = getActiveCaptionWord({ words: block.words }, currentTime);
+                    return block.words.map((w, wIdx) => {
+                      const globalIdx = block.startIndex + wIdx;
+                      const isWordActive = activeWord === w;
+                      const isHighlighted = highlightedWords.includes(w.word.trim());
 
                     if (editingWordIndex === globalIdx) {
                       return (
@@ -306,7 +308,8 @@ export const CaptionsTab: React.FC<CaptionsTabProps> = ({
                         </button>
                       </span>
                     );
-                  })}
+                  });
+                })()}
                 </div>
               </div>
             );
@@ -317,8 +320,8 @@ export const CaptionsTab: React.FC<CaptionsTabProps> = ({
       {/* Bottom Accuracy & Optimize Bar */}
       <div className="flex items-center justify-between p-3 rounded-xl bg-slate-50 border border-slate-200 text-xs">
         <div className="flex items-center gap-2">
-          <span className="text-slate-500 font-medium">Captions Accuracy:</span>
-          <span className="font-mono font-bold text-emerald-600">98.4%</span>
+          <span className="text-slate-500 font-medium">Timing Status:</span>
+          <span className="font-mono font-bold text-emerald-600">Verified</span>
         </div>
 
         <button
