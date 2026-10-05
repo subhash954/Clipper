@@ -59,6 +59,7 @@ export interface IStorageAdapter {
   getReframeConfig?(projectId: string, targetAspectRatio?: string): Promise<ReframeConfig | null>;
   saveCaptionTrack?(track: CaptionTrack, userId?: string): Promise<CaptionTrack>;
   getCaptionTrack?(projectId: string, version?: number): Promise<CaptionTrack | null>;
+  getCaptionTrackById?(trackId: string, userId?: string): Promise<CaptionTrack | null>;
   listCaptionTracks?(projectId: string): Promise<CaptionTrack[]>;
   deleteCaptionTrack?(trackId: string, userId?: string): Promise<boolean>;
 }
@@ -1384,6 +1385,12 @@ export class SupabaseStorageAdapter implements IStorageAdapter {
       ) {
         throw new ClipperError('NOT_FOUND', error.message, 404);
       }
+      if (
+        error.code === '22023' ||
+        error.message?.includes('VALIDATION_ERROR')
+      ) {
+        throw new ClipperError('VALIDATION_ERROR', error.message, 400);
+      }
       throw new ClipperError('DATABASE_ERROR', `Failed to save caption track: ${error.message}`, 500);
     }
 
@@ -1475,6 +1482,143 @@ export class SupabaseStorageAdapter implements IStorageAdapter {
       source: c.source,
       timingPrecision: 'exact_word',
       projectId,
+      words: wordsByCue.get(c.id) || [],
+      createdAt: c.created_at,
+      updatedAt: c.updated_at,
+    }));
+
+    return {
+      id: trackRow.id,
+      projectId: trackRow.project_id,
+      transcriptId: trackRow.transcript_id,
+      mediaAssetId: trackRow.media_asset_id,
+      userId: trackRow.user_id,
+      version: trackRow.version,
+      language: trackRow.language,
+      source: trackRow.source,
+      status: trackRow.status,
+      style: trackRow.style,
+      cuesCount: trackRow.cues_count,
+      durationSeconds: Number(trackRow.duration || 0),
+      metadata: trackRow.metadata,
+      cues,
+      createdAt: trackRow.created_at,
+      updatedAt: trackRow.updated_at,
+    };
+  }
+
+  async getCaptionTrackById(trackId: string, userId?: string): Promise<CaptionTrack | null> {
+    const { data: trackRow, error: trackErr } = await supabase
+      .from('caption_tracks')
+      .select('*')
+      .eq('id', trackId)
+      .maybeSingle();
+
+    if (trackErr || !trackRow) return null;
+
+    if (userId) {
+      const { data: proj, error: projErr } = await supabase
+        .from('projects')
+        .select('id, user_id, workspace_id, deleted_at')
+        .eq('id', trackRow.project_id)
+        .maybeSingle();
+
+      if (projErr || !proj || proj.deleted_at) {
+        throw new ClipperError('NOT_FOUND', `Project ${trackRow.project_id} not found`, 404);
+      }
+
+      if (proj.user_id !== userId) {
+        const { data: userProfile } = await supabase
+          .from('profiles')
+          .select('role')
+          .eq('id', userId)
+          .maybeSingle();
+
+        let authorized = false;
+        if (userProfile?.role === 'admin') {
+          authorized = true;
+        } else if (proj.workspace_id) {
+          const { data: member } = await supabase
+            .from('organization_members')
+            .select('role, status')
+            .eq('workspace_id', proj.workspace_id)
+            .eq('user_id', userId)
+            .eq('status', 'active')
+            .maybeSingle();
+          if (
+            member &&
+            ['owner', 'admin', 'manager', 'editor', 'OWNER', 'ADMIN', 'MANAGER', 'EDITOR'].includes(member.role)
+          ) {
+            authorized = true;
+          }
+        }
+
+        if (!authorized) {
+          throw new ClipperError(
+            'FORBIDDEN',
+            `Access denied: you do not have permission for project ${trackRow.project_id}`,
+            403
+          );
+        }
+      }
+    }
+
+    // Load cues
+    const { data: cueRows, error: cueErr } = await supabase
+      .from('caption_cues')
+      .select('*')
+      .eq('track_id', trackRow.id)
+      .order('sequence', { ascending: true });
+
+    if (cueErr) {
+      throw new ClipperError('DATABASE_ERROR', `Failed to load caption cues: ${cueErr.message}`, 500);
+    }
+
+    // Load words
+    const { data: wordRows, error: wordErr } = await supabase
+      .from('caption_words')
+      .select('*')
+      .eq('track_id', trackRow.id)
+      .order('word_index', { ascending: true });
+
+    if (wordErr) {
+      throw new ClipperError('DATABASE_ERROR', `Failed to load caption words: ${wordErr.message}`, 500);
+    }
+
+    const wordsByCue = new Map<string, CaptionWord[]>();
+    for (const w of wordRows || []) {
+      const cueWords = wordsByCue.get(w.cue_id) || [];
+      cueWords.push({
+        id: w.id,
+        cueId: w.cue_id,
+        trackId: w.track_id,
+        wordIndex: w.word_index,
+        word: w.word,
+        start: Number(w.start_time),
+        end: Number(w.end_time),
+        confidence: w.confidence !== null && w.confidence !== undefined ? Number(w.confidence) : undefined,
+        speaker: w.speaker !== null && w.speaker !== undefined ? Number(w.speaker) : undefined,
+        highlighted: Boolean(w.highlighted),
+        emphasisStyle: w.emphasis_style || undefined,
+      });
+      wordsByCue.set(w.cue_id, cueWords);
+    }
+
+    const cues: CaptionCue[] = (cueRows || []).map((c: any) => ({
+      id: c.id,
+      trackId: c.track_id,
+      sequence: c.sequence,
+      start: Number(c.start_time),
+      end: Number(c.end_time),
+      text: c.text,
+      speakerId: c.speaker_id || undefined,
+      emphasis: c.emphasis || undefined,
+      style: c.style || {},
+      language: c.language,
+      translatedText: c.translated_text || undefined,
+      source: c.source,
+      timingPrecision: 'exact_word',
+      projectId: trackRow.project_id,
       words: wordsByCue.get(c.id) || [],
       createdAt: c.created_at,
       updatedAt: c.updated_at,
@@ -2542,6 +2686,90 @@ export class LocalStorageAdapter implements IStorageAdapter {
         source: c.source,
         timingPrecision: 'exact_word',
         projectId,
+        words: cueWords.map((w) => ({
+          id: w.id,
+          cueId: w.cueId,
+          trackId: w.trackId,
+          wordIndex: w.wordIndex,
+          word: w.word,
+          start: Number(w.start),
+          end: Number(w.end),
+          confidence: w.confidence !== null && w.confidence !== undefined ? Number(w.confidence) : undefined,
+          speaker: w.speaker !== null && w.speaker !== undefined ? Number(w.speaker) : undefined,
+          highlighted: Boolean(w.highlighted),
+          emphasisStyle: w.emphasisStyle || undefined,
+        })),
+        createdAt: c.createdAt,
+        updatedAt: c.updatedAt,
+      };
+    });
+
+    return {
+      id: targetTrack.id,
+      projectId: targetTrack.projectId,
+      transcriptId: targetTrack.transcriptId,
+      mediaAssetId: targetTrack.mediaAssetId,
+      userId: targetTrack.userId,
+      version: targetTrack.version,
+      language: targetTrack.language,
+      source: targetTrack.source,
+      status: targetTrack.status,
+      style: targetTrack.style,
+      cuesCount: targetTrack.cuesCount,
+      durationSeconds: Number(targetTrack.durationSeconds || 0),
+      metadata: targetTrack.metadata,
+      cues,
+      createdAt: targetTrack.createdAt,
+      updatedAt: targetTrack.updatedAt,
+    };
+  }
+
+  async getCaptionTrackById(trackId: string, userId?: string): Promise<CaptionTrack | null> {
+    const tracks = this.readJson<any[]>(this.captionTracksFile, []);
+    const targetTrack = tracks.find((t) => t.id === trackId);
+    if (!targetTrack) return null;
+
+    if (userId) {
+      const projects = this.readJson<Project[]>(this.projectsFile, []);
+      const proj = projects.find((p) => p.id === targetTrack.projectId);
+      if (!proj || proj.deletedAt) {
+        throw new ClipperError('NOT_FOUND', `Project ${targetTrack.projectId} not found`, 404);
+      }
+      if (proj.userId && proj.userId !== userId) {
+        throw new ClipperError('FORBIDDEN', `Access denied: you do not own project ${targetTrack.projectId}`, 403);
+      }
+    }
+
+    const allCues = this.readJson<any[]>(this.captionCuesFile, []);
+    const trackCues = allCues.filter((c) => c.trackId === targetTrack.id).sort((a, b) => a.sequence - b.sequence);
+
+    const allWords = this.readJson<any[]>(this.captionWordsFile, []);
+    const trackWords = allWords.filter((w) => w.trackId === targetTrack.id);
+
+    const wordsByCue = new Map<string, any[]>();
+    for (const w of trackWords) {
+      const list = wordsByCue.get(w.cueId) || [];
+      list.push(w);
+      wordsByCue.set(w.cueId, list);
+    }
+
+    const cues: CaptionCue[] = trackCues.map((c) => {
+      const cueWords = (wordsByCue.get(c.id) || []).sort((a, b) => a.wordIndex - b.wordIndex);
+      return {
+        id: c.id,
+        trackId: c.trackId,
+        sequence: c.sequence,
+        start: Number(c.start),
+        end: Number(c.end),
+        text: c.text,
+        speakerId: c.speakerId || undefined,
+        emphasis: c.emphasis || undefined,
+        style: c.style || {},
+        language: c.language,
+        translatedText: c.translatedText || undefined,
+        source: c.source,
+        timingPrecision: 'exact_word',
+        projectId: targetTrack.projectId,
         words: cueWords.map((w) => ({
           id: w.id,
           cueId: w.cueId,

@@ -5,8 +5,8 @@ import { CaptionCue } from '../types';
  * @param seconds Floating point seconds
  */
 export function formatSrtTimestamp(seconds: number): string {
-  if (typeof seconds !== 'number' || isNaN(seconds) || seconds < 0) {
-    return '00:00:00,000';
+  if (typeof seconds !== 'number' || isNaN(seconds) || !isFinite(seconds) || seconds < 0) {
+    throw new RangeError(`Invalid timestamp for SRT formatting: ${seconds}`);
   }
 
   const totalMilliseconds = Math.round(seconds * 1000);
@@ -31,8 +31,29 @@ export function formatSrtTimestamp(seconds: number): string {
  * @returns Clean, deterministic SRT formatted string
  */
 export function generateSrt(cues: CaptionCue[]): string {
-  if (!Array.isArray(cues) || cues.length === 0) {
+  if (!Array.isArray(cues)) {
+    throw new Error('Cues must be an array');
+  }
+
+  if (cues.length === 0) {
     return '';
+  }
+
+  // Pre-validate all cues strictly before serializing
+  for (let i = 0; i < cues.length; i++) {
+    const cue = cues[i];
+    if (!cue) {
+      throw new Error(`Cue at index ${i} is missing or null`);
+    }
+    if (typeof cue.start !== 'number' || isNaN(cue.start) || !isFinite(cue.start) || cue.start < 0) {
+      throw new RangeError(`Cue at index ${i} has invalid start timestamp: ${cue.start}`);
+    }
+    if (typeof cue.end !== 'number' || isNaN(cue.end) || !isFinite(cue.end) || cue.end <= cue.start) {
+      throw new RangeError(`Cue at index ${i} has invalid end timestamp: ${cue.end} (start: ${cue.start})`);
+    }
+    if (typeof cue.text !== 'string' || cue.text.trim().length === 0) {
+      throw new Error(`Cue at index ${i} has empty text`);
+    }
   }
 
   // Sort cues deterministically by start time, then sequence
@@ -45,11 +66,7 @@ export function generateSrt(cues: CaptionCue[]): string {
     const seq = i + 1;
     const startStr = formatSrtTimestamp(cue.start);
     const endStr = formatSrtTimestamp(cue.end);
-    const text = (cue.text || '').trim();
-
-    if (text.length === 0) {
-      continue;
-    }
+    const text = cue.text.trim();
 
     blocks.push(`${seq}\n${startStr} --> ${endStr}\n${text}`);
   }

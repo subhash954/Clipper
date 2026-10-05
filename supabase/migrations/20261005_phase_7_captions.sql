@@ -328,10 +328,11 @@ DECLARE
   v_word_id UUID;
   v_result JSONB;
 BEGIN
-  -- 1. Validate project existence
+  -- 1. Validate project existence with row-level lock for serialization
   SELECT id, user_id, workspace_id, deleted_at INTO v_project
   FROM public.projects
-  WHERE id = p_project_id;
+  WHERE id = p_project_id
+  FOR UPDATE;
 
   IF NOT FOUND OR v_project.deleted_at IS NOT NULL THEN
     RAISE EXCEPTION 'PROJECT_NOT_FOUND: Project % does not exist or has been deleted', p_project_id
@@ -437,9 +438,21 @@ BEGIN
   )
   RETURNING * INTO v_track;
 
-  -- 7. Insert cues and words
+  -- 7. Insert cues and words with boundary validations
   FOR v_cue_elem IN SELECT * FROM jsonb_array_elements(p_cues)
   LOOP
+    -- Validate cue text
+    IF v_cue_elem->>'text' IS NULL OR TRIM(v_cue_elem->>'text') = '' THEN
+      RAISE EXCEPTION 'VALIDATION_ERROR: Cue text cannot be empty'
+        USING ERRCODE = '22023';
+    END IF;
+
+    -- Validate cue timestamps
+    IF (v_cue_elem->>'start')::NUMERIC < 0 OR (v_cue_elem->>'end')::NUMERIC <= (v_cue_elem->>'start')::NUMERIC THEN
+      RAISE EXCEPTION 'VALIDATION_ERROR: Cue end time must be strictly greater than start time'
+        USING ERRCODE = '22023';
+    END IF;
+
     v_cue_id := COALESCE((v_cue_elem->>'id')::UUID, gen_random_uuid());
 
     INSERT INTO public.caption_cues (
@@ -465,6 +478,32 @@ BEGIN
     IF v_cue_elem ? 'words' AND jsonb_typeof(v_cue_elem->'words') = 'array' THEN
       FOR v_word_elem IN SELECT * FROM jsonb_array_elements(v_cue_elem->'words')
       LOOP
+        -- Validate word text
+        IF v_word_elem->>'word' IS NULL OR TRIM(v_word_elem->>'word') = '' THEN
+          RAISE EXCEPTION 'VALIDATION_ERROR: Word text cannot be empty'
+            USING ERRCODE = '22023';
+        END IF;
+
+        -- Validate word timestamps
+        IF (v_word_elem->>'start')::NUMERIC < 0 OR (v_word_elem->>'end')::NUMERIC <= (v_word_elem->>'start')::NUMERIC THEN
+          RAISE EXCEPTION 'VALIDATION_ERROR: Word end time must be strictly greater than start time'
+            USING ERRCODE = '22023';
+        END IF;
+
+        -- Validate word within cue bounds (with 0.05s tolerance for rounding)
+        IF (v_word_elem->>'start')::NUMERIC < (v_cue_elem->>'start')::NUMERIC - 0.05 OR
+           (v_word_elem->>'end')::NUMERIC > (v_cue_elem->>'end')::NUMERIC + 0.05 THEN
+          RAISE EXCEPTION 'VALIDATION_ERROR: Word timing must fall within cue bounds'
+            USING ERRCODE = '22023';
+        END IF;
+
+        -- Validate word confidence bounds
+        IF v_word_elem->>'confidence' IS NOT NULL AND
+           ((v_word_elem->>'confidence')::NUMERIC < 0 OR (v_word_elem->>'confidence')::NUMERIC > 1.0) THEN
+          RAISE EXCEPTION 'VALIDATION_ERROR: Word confidence must be between 0.0 and 1.0'
+            USING ERRCODE = '22023';
+        END IF;
+
         v_word_id := COALESCE((v_word_elem->>'id')::UUID, gen_random_uuid());
 
         INSERT INTO public.caption_words (

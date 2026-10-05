@@ -659,6 +659,108 @@ async function runPhase7PostgresTests() {
     `).trim();
     assert(opSetCaptionStyle.includes('set_caption_style'), 'timeline_operations allows set_caption_style operation type');
 
+    // =============================================================
+    // SCENARIO 9: save_caption_track_atomic RPC Validation & Concurrency Gates
+    // =============================================================
+    console.log('\n--- Scenario 9: save_caption_track_atomic Boundary Validations ---');
+
+    // 1. Rejects empty cue text
+    const emptyCueTextRes = await execPsqlAsync(`
+      SELECT public.save_caption_track_atomic(
+        '${projectAId}',
+        '${ownerUserId}',
+        NULL,
+        '${transcriptAId}',
+        '${mediaAId}',
+        'en',
+        NULL,
+        'generated',
+        '{}'::jsonb,
+        10.0,
+        '{}'::jsonb,
+        '[{"id":"${ensureValidUuid()}","sequence":1,"start":0.0,"end":1.0,"text":"  "}]'::jsonb
+      );
+    `);
+    assert(emptyCueTextRes.exitCode !== 0, 'save_caption_track_atomic rejects empty cue text');
+    assert(emptyCueTextRes.stderr.includes('VALIDATION_ERROR'), 'Error contains VALIDATION_ERROR for empty cue text');
+
+    // 2. Rejects cue end_time <= start_time
+    const invertedCueTimeRes = await execPsqlAsync(`
+      SELECT public.save_caption_track_atomic(
+        '${projectAId}',
+        '${ownerUserId}',
+        NULL,
+        '${transcriptAId}',
+        '${mediaAId}',
+        'en',
+        NULL,
+        'generated',
+        '{}'::jsonb,
+        10.0,
+        '{}'::jsonb,
+        '[{"id":"${ensureValidUuid()}","sequence":1,"start":2.0,"end":1.0,"text":"Inverted"}]'::jsonb
+      );
+    `);
+    assert(invertedCueTimeRes.exitCode !== 0, 'save_caption_track_atomic rejects cue end <= start');
+    assert(invertedCueTimeRes.stderr.includes('VALIDATION_ERROR'), 'Error contains VALIDATION_ERROR for inverted cue time');
+
+    // 3. Rejects empty word text
+    const emptyWordTextRes = await execPsqlAsync(`
+      SELECT public.save_caption_track_atomic(
+        '${projectAId}',
+        '${ownerUserId}',
+        NULL,
+        '${transcriptAId}',
+        '${mediaAId}',
+        'en',
+        NULL,
+        'generated',
+        '{}'::jsonb,
+        10.0,
+        '{}'::jsonb,
+        '[{"id":"${ensureValidUuid()}","sequence":1,"start":0.0,"end":1.0,"text":"Valid","words":[{"wordIndex":0,"word":" ","start":0.0,"end":0.5}]}]'::jsonb
+      );
+    `);
+    assert(emptyWordTextRes.exitCode !== 0, 'save_caption_track_atomic rejects empty word text');
+    assert(emptyWordTextRes.stderr.includes('VALIDATION_ERROR'), 'Error contains VALIDATION_ERROR for empty word text');
+
+    // 4. Rejects word timing outside cue bounds
+    const outOfBoundsWordRes = await execPsqlAsync(`
+      SELECT public.save_caption_track_atomic(
+        '${projectAId}',
+        '${ownerUserId}',
+        NULL,
+        '${transcriptAId}',
+        '${mediaAId}',
+        'en',
+        NULL,
+        'generated',
+        '{}'::jsonb,
+        10.0,
+        '{}'::jsonb,
+        '[{"id":"${ensureValidUuid()}","sequence":1,"start":1.0,"end":2.0,"text":"Valid","words":[{"wordIndex":0,"word":"Out","start":0.2,"end":0.8}]}]'::jsonb
+      );
+    `);
+    assert(outOfBoundsWordRes.exitCode !== 0, 'save_caption_track_atomic rejects word timing outside cue bounds');
+    assert(outOfBoundsWordRes.stderr.includes('VALIDATION_ERROR'), 'Error contains VALIDATION_ERROR for out-of-bounds word');
+
+    // 5. Atomic concurrent version bump with FOR UPDATE serialization
+    const p1 = execPsqlAsync(`
+      SELECT (public.save_caption_track_atomic(
+        '${projectAId}', '${ownerUserId}', NULL, '${transcriptAId}', '${mediaAId}', 'en', NULL, 'generated', '{}'::jsonb, 10.0, '{}'::jsonb, '[]'::jsonb
+      )->>'version')::integer AS v;
+    `);
+    const p2 = execPsqlAsync(`
+      SELECT (public.save_caption_track_atomic(
+        '${projectAId}', '${ownerUserId}', NULL, '${transcriptAId}', '${mediaAId}', 'en', NULL, 'generated', '{}'::jsonb, 10.0, '{}'::jsonb, '[]'::jsonb
+      )->>'version')::integer AS v;
+    `);
+    const [res1, res2] = await Promise.all([p1, p2]);
+    assert(res1.exitCode === 0 && res2.exitCode === 0, 'Concurrent save_caption_track_atomic calls succeed without deadlock');
+    const v1 = parseInt(res1.stdout.trim(), 10);
+    const v2 = parseInt(res2.stdout.trim(), 10);
+    assert(v1 !== v2, `Concurrent calls allocate distinct versions (${v1} !== ${v2})`);
+
     console.log('\n====================================================');
     console.log(`📊 PHASE 7 POSTGRESQL GATE SUMMARY: ${passed} PASSED, ${failed} FAILED`);
     console.log('====================================================\n');

@@ -147,7 +147,17 @@ export interface CanonicalRenderSpec {
     style: SubtitleStyle;
     safeAreaEnabled: boolean;
     trackId?: string;
+    /**
+     * CANONICAL CAPTION CUES:
+     * Authoritative array of segmented caption cues representing the current track.
+     * When present, `cues` is the source of truth for subtitle rendering and timing.
+     */
     cues?: CaptionCue[];
+    /**
+     * DERIVED / BACKWARD-COMPATIBILITY CACHE:
+     * Flattened word list cached for backwards compatibility with legacy canvas render loops.
+     * Derived directly from `cues.flatMap(c => c.words)`. Not an independent source of truth.
+     */
     words: Array<{
       word: string;
       start: number;

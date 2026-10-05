@@ -6,6 +6,9 @@ import {
   CaptionCue,
   CaptionSegmentationConfig,
   CaptionFormat,
+  CaptionCueUpdate,
+  IMMUTABLE_CUE_FIELDS,
+  ExportCaptionsParams,
 } from './types';
 import { segmentTranscriptIntoCues } from './segmentationEngine';
 import { validateCaptionCues } from './validation';
@@ -30,16 +33,7 @@ export interface UpdateCueParams {
   trackId: string;
   cueId: string;
   userId: string;
-  updates: Partial<CaptionCue>;
-}
-
-export interface ExportCaptionsParams {
-  projectId: string;
-  trackId?: string;
-  version?: number;
-  userId: string;
-  format: CaptionFormat;
-  styleOverride?: Partial<SubtitleStyle>;
+  updates: CaptionCueUpdate;
 }
 
 export class CaptionService {
@@ -163,7 +157,7 @@ export class CaptionService {
       mediaAssetId: mediaAssetId || transcript.mediaAssetId || project.activeMediaId,
       userId,
       language: (transcript.language as SubtitleLanguage) || language,
-      version: 1,
+      version: forceRegenerate ? undefined : 1,
       source: 'generated',
       status: 'ready',
       style,
@@ -208,11 +202,49 @@ export class CaptionService {
   }
 
   /**
+   * Retrieves a caption track by track ID with tenancy and authorization verification.
+   */
+  async getCaptionTrackById(trackId: string, userId?: string, expectedProjectId?: string): Promise<CaptionTrack | null> {
+    const storage = getStorage();
+    if (!storage.getCaptionTrackById) {
+      throw new ClipperError('STORAGE_UNAVAILABLE', 'Caption track retrieval by ID is not supported', 500);
+    }
+
+    const track = await storage.getCaptionTrackById(trackId, userId);
+    if (!track) return null;
+
+    if (expectedProjectId && track.projectId !== expectedProjectId) {
+      throw new ClipperError(
+        'FORBIDDEN',
+        `Caption track ${trackId} belongs to project ${track.projectId}, not ${expectedProjectId}`,
+        403
+      );
+    }
+
+    return track;
+  }
+
+  /**
    * Updates an individual cue and creates a new edited version of the caption track,
    * preserving lineage and historical versions.
    */
   async updateCaptionCue(params: UpdateCueParams): Promise<CaptionTrack> {
     const { projectId, trackId, cueId, userId, updates } = params;
+
+    if (!updates || typeof updates !== 'object') {
+      throw new ClipperError('VALIDATION_ERROR', 'Updates payload is required', 400);
+    }
+
+    // Security Gate: Reject injection or mutation of immutable lineage and identity fields
+    for (const field of IMMUTABLE_CUE_FIELDS) {
+      if (field in updates) {
+        throw new ClipperError(
+          'VALIDATION_ERROR',
+          `Field '${field}' is immutable and cannot be updated by client`,
+          400
+        );
+      }
+    }
 
     const storage = getStorage();
 
@@ -228,7 +260,15 @@ export class CaptionService {
       throw new ClipperError('STORAGE_UNAVAILABLE', 'Caption storage is not available', 500);
     }
 
-    const currentTrack = await storage.getCaptionTrack(projectId);
+    // Resolve track by ID first, or fallback to current project track
+    let currentTrack: CaptionTrack | null = null;
+    if (storage.getCaptionTrackById) {
+      currentTrack = await storage.getCaptionTrackById(trackId, userId);
+    }
+    if (!currentTrack) {
+      currentTrack = await storage.getCaptionTrack(projectId);
+    }
+
     if (!currentTrack || currentTrack.id !== trackId) {
       throw new ClipperError('NOT_FOUND', `Caption track ${trackId} not found for project ${projectId}`, 404);
     }
@@ -239,9 +279,49 @@ export class CaptionService {
     }
 
     const originalCue = currentTrack.cues[cueIndex];
+
+    // Validate updated start/end if provided
+    const newStart = updates.start !== undefined ? updates.start : originalCue.start;
+    const newEnd = updates.end !== undefined ? updates.end : originalCue.end;
+
+    if (typeof newStart !== 'number' || isNaN(newStart) || !isFinite(newStart) || newStart < 0) {
+      throw new ClipperError('VALIDATION_ERROR', `Invalid cue start timestamp: ${newStart}`, 400);
+    }
+    if (typeof newEnd !== 'number' || isNaN(newEnd) || !isFinite(newEnd) || newEnd <= newStart) {
+      throw new ClipperError('VALIDATION_ERROR', `Invalid cue end timestamp: ${newEnd} (start: ${newStart})`, 400);
+    }
+
+    // Validate words bounds if words updated
+    if (updates.words !== undefined) {
+      if (!Array.isArray(updates.words)) {
+        throw new ClipperError('VALIDATION_ERROR', 'words must be an array', 400);
+      }
+      for (let wIdx = 0; wIdx < updates.words.length; wIdx++) {
+        const w = updates.words[wIdx];
+        if (!w || typeof w.word !== 'string' || w.word.trim().length === 0) {
+          throw new ClipperError('VALIDATION_ERROR', `Word at index ${wIdx} has empty text`, 400);
+        }
+        if (typeof w.start !== 'number' || isNaN(w.start) || !isFinite(w.start) || w.start < 0) {
+          throw new ClipperError('VALIDATION_ERROR', `Word at index ${wIdx} has invalid start timestamp`, 400);
+        }
+        if (typeof w.end !== 'number' || isNaN(w.end) || !isFinite(w.end) || w.end <= w.start) {
+          throw new ClipperError('VALIDATION_ERROR', `Word at index ${wIdx} has invalid end timestamp`, 400);
+        }
+        if (w.start < newStart - 0.05 || w.end > newEnd + 0.05) {
+          throw new ClipperError(
+            'VALIDATION_ERROR',
+            `Word at index ${wIdx} timing [${w.start}, ${w.end}] exceeds cue bounds [${newStart}, ${newEnd}]`,
+            400
+          );
+        }
+      }
+    }
+
     const updatedCue: CaptionCue = {
       ...originalCue,
       ...updates,
+      start: newStart,
+      end: newEnd,
       id: originalCue.id,
       sequence: originalCue.sequence,
       source: 'edited',
@@ -263,7 +343,7 @@ export class CaptionService {
       );
     }
 
-    // Increment version to preserve immutable version history
+    // Allocate next version to preserve immutable version history
     const nextVersion = (currentTrack.version || 1) + 1;
     const newEditedTrack: CaptionTrack = {
       ...currentTrack,
@@ -280,13 +360,26 @@ export class CaptionService {
 
   /**
    * Pure deterministic export of captions into SRT, WebVTT, or ASS format.
+   * Resolves deterministically: trackId -> projectId + version -> latest for projectId.
    */
   async exportCaptions(params: ExportCaptionsParams): Promise<string> {
-    const { projectId, version, userId, format, styleOverride } = params;
+    const { projectId, trackId, version, userId, format, styleOverride } = params;
 
-    const track = await this.getCaptionTrack(projectId, version, userId);
+    let track: CaptionTrack | null = null;
+    if (trackId) {
+      track = await this.getCaptionTrackById(trackId, userId, projectId);
+    } else if (projectId) {
+      track = await this.getCaptionTrack(projectId, version, userId);
+    } else {
+      throw new ClipperError('VALIDATION_ERROR', 'Either trackId or projectId must be provided for export', 400);
+    }
+
     if (!track) {
-      throw new ClipperError('NOT_FOUND', `No caption track found for project ${projectId}`, 404);
+      throw new ClipperError(
+        'NOT_FOUND',
+        `No caption track found${trackId ? ` with trackId ${trackId}` : ` for project ${projectId}`}`,
+        404
+      );
     }
 
     const activeStyle: SubtitleStyle = {

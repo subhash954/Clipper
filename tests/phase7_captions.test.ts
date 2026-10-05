@@ -21,6 +21,8 @@ import { renderSubtitlesOnCanvas } from '../lib/subtitleRenderer';
 import { WordTimestamp, SubtitleStyle, Project } from '../lib/types';
 import { CanonicalRenderSpec } from '../lib/editor/types';
 import { LocalStorageAdapter } from '../lib/storage';
+import { ClipperError } from '../lib/errors';
+import { getCaptionService } from '../lib/captions/captionService';
 import fs from 'fs';
 import path from 'path';
 
@@ -965,11 +967,451 @@ const cueIdAE = crypto.randomUUID();
   }
 }
 
+// ================================================================
+// CLIPPER PHASE 7.1: CATEGORY 30 — CAPTION ENGINE FINAL HARDENING GATES
+// ================================================================
+
+console.log('\n================================================================');
+console.log('CLIPPER PHASE 7.1: CATEGORY 30 — FINAL HARDENING GATES');
+console.log('================================================================\n');
+
+// Test 30-A: Reject empty word text
+{
+  let caught = false;
+  try {
+    segmentTranscriptIntoCues({
+      projectId: 'proj-30-a',
+      words: [{ word: '   ', start: 0.0, end: 0.5 }],
+    });
+  } catch (err: any) {
+    caught = true;
+    assert(err instanceof ClipperError && err.code === 'VALIDATION_ERROR', 'Test 30-A: Rejects empty word text with VALIDATION_ERROR');
+  }
+  assert(caught, 'Test 30-A: Throws error on empty word text');
+}
+
+// Test 30-B: Reject NaN start timestamp
+{
+  let caught = false;
+  try {
+    segmentTranscriptIntoCues({
+      projectId: 'proj-30-b',
+      words: [{ word: 'Hello', start: NaN, end: 0.5 }],
+    });
+  } catch (err: any) {
+    caught = true;
+    assert(err instanceof ClipperError && err.code === 'VALIDATION_ERROR', 'Test 30-B: Rejects NaN start timestamp');
+  }
+  assert(caught, 'Test 30-B: Throws error on NaN start');
+}
+
+// Test 30-C: Reject Infinity end timestamp
+{
+  let caught = false;
+  try {
+    segmentTranscriptIntoCues({
+      projectId: 'proj-30-c',
+      words: [{ word: 'Hello', start: 0.0, end: Infinity }],
+    });
+  } catch (err: any) {
+    caught = true;
+    assert(err instanceof ClipperError && err.code === 'VALIDATION_ERROR', 'Test 30-C: Rejects Infinity end timestamp');
+  }
+  assert(caught, 'Test 30-C: Throws error on Infinity end');
+}
+
+// Test 30-D: Reject negative start timestamp
+{
+  let caught = false;
+  try {
+    segmentTranscriptIntoCues({
+      projectId: 'proj-30-d',
+      words: [{ word: 'Hello', start: -0.1, end: 0.5 }],
+    });
+  } catch (err: any) {
+    caught = true;
+    assert(err instanceof ClipperError && err.code === 'VALIDATION_ERROR', 'Test 30-D: Rejects negative start timestamp');
+  }
+  assert(caught, 'Test 30-D: Throws error on negative start');
+}
+
+// Test 30-E: Reject end <= start timestamp
+{
+  let caught = false;
+  try {
+    segmentTranscriptIntoCues({
+      projectId: 'proj-30-e',
+      words: [{ word: 'Hello', start: 1.0, end: 0.8 }],
+    });
+  } catch (err: any) {
+    caught = true;
+    assert(err instanceof ClipperError && err.code === 'VALIDATION_ERROR', 'Test 30-E: Rejects end <= start');
+  }
+  assert(caught, 'Test 30-E: Throws error on inverted end <= start');
+}
+
+// Test 30-F: Reject backwards timing (fail closed, NO silent sorting)
+{
+  let caught = false;
+  try {
+    segmentTranscriptIntoCues({
+      projectId: 'proj-30-f',
+      words: [
+        { word: 'First', start: 2.0, end: 2.5 },
+        { word: 'Second', start: 1.0, end: 1.5 },
+      ],
+    });
+  } catch (err: any) {
+    caught = true;
+    assert(err instanceof ClipperError && err.code === 'VALIDATION_ERROR', 'Test 30-F: Rejects backwards timing without silent sorting');
+  }
+  assert(caught, 'Test 30-F: Throws on backwards timing');
+}
+
+// Test 30-G: Reject conflicting wordIndex
+{
+  let caught = false;
+  try {
+    segmentTranscriptIntoCues({
+      projectId: 'proj-30-g',
+      words: [
+        { word: 'First', start: 1.0, end: 1.4, wordIndex: 2 } as any,
+        { word: 'Second', start: 1.5, end: 1.9, wordIndex: 1 } as any,
+      ],
+    });
+  } catch (err: any) {
+    caught = true;
+    assert(err instanceof ClipperError && err.code === 'VALIDATION_ERROR', 'Test 30-G: Rejects conflicting wordIndex');
+  }
+  assert(caught, 'Test 30-G: Throws on conflicting wordIndex');
+}
+
+// Test 30-H: Reject invalid mediaDuration
+{
+  let caught = false;
+  try {
+    segmentTranscriptIntoCues({
+      projectId: 'proj-30-h',
+      words: [{ word: 'Hello', start: 0.0, end: 0.5 }],
+      mediaDuration: -5.0,
+    });
+  } catch (err: any) {
+    caught = true;
+    assert(err instanceof ClipperError && err.code === 'VALIDATION_ERROR', 'Test 30-H: Rejects negative mediaDuration');
+  }
+  assert(caught, 'Test 30-H: Throws on invalid mediaDuration');
+}
+
+// Test 30-I: Reject word start exceeding mediaDuration
+{
+  let caught = false;
+  try {
+    segmentTranscriptIntoCues({
+      projectId: 'proj-30-i',
+      words: [{ word: 'Late', start: 12.0, end: 12.5 }],
+      mediaDuration: 10.0,
+    });
+  } catch (err: any) {
+    caught = true;
+    assert(err instanceof ClipperError && err.code === 'VALIDATION_ERROR', 'Test 30-I: Rejects word start exceeding mediaDuration');
+  }
+  assert(caught, 'Test 30-I: Throws on word exceeding mediaDuration');
+}
+
+// Test 30-J: Lookahead candidate testing enforces CPS before committing word
+{
+  const fastCues = segmentTranscriptIntoCues({
+    projectId: 'proj-30-j',
+    words: [
+      { word: 'FirstLongTokenHere', start: 0.0, end: 0.4 },
+      { word: 'SecondLongTokenHere', start: 0.45, end: 0.8 },
+      { word: 'ThirdLongTokenHere', start: 0.85, end: 1.2 },
+    ],
+    config: { maxCps: 20 },
+  });
+  assert(fastCues.length >= 2, 'Test 30-J: Lookahead candidate testing enforces CPS limit across cues');
+}
+
+// Test 30-K: Single-word high-CPS preserves truthful timing without fabricating duration
+{
+  const singleFastWord = [{ word: 'AntidisestablishmentarianismNow', start: 1.0, end: 1.2 }];
+  const cues = segmentTranscriptIntoCues({
+    projectId: 'proj-30-k',
+    words: singleFastWord,
+    config: { maxCps: 15 },
+  });
+  assert(cues.length === 1, 'Test 30-K1: Single high CPS word emitted');
+  assert(cues[0].start === 1.0, 'Test 30-K2: Cue start matches word start');
+  assert(cues[0].end === 1.2, 'Test 30-K3: Truthful timing preserved without synthetic duration stretching');
+}
+
+// Test 30-L: Omitted mediaDuration does not fabricate cue duration beyond speech
+{
+  const endSpeechWord = [{ word: 'Closing', start: 5.0, end: 5.3 }];
+  const cues = segmentTranscriptIntoCues({
+    projectId: 'proj-30-l',
+    words: endSpeechWord,
+  });
+  assert(cues[0].end === 5.3, `Test 30-L: Cue end ${cues[0].end} strictly matches word end without fabricated duration`);
+}
+
+// Test 30-M: Deterministic emphasis IDs across multiple runs
+{
+  const testWords = [
+    { word: 'SECRET', start: 1.0, end: 1.4 },
+    { word: '$1000', start: 1.5, end: 1.9 },
+    { word: 'NEVER', start: 2.0, end: 2.4 },
+  ];
+  const emph1 = extractCaptionEmphases({ projectId: 'det-proj-1', words: testWords });
+  const emph2 = extractCaptionEmphases({ projectId: 'det-proj-1', words: testWords });
+  assert(emph1.length === emph2.length, 'Test 30-M1: Same emphasis count');
+  for (let i = 0; i < emph1.length; i++) {
+    assert(emph1[i].id === emph2[i].id, `Test 30-M2: Emphasis ${i} ID is strictly deterministic across runs`);
+  }
+}
+
+// Test 30-N: formatSrtTimestamp throws RangeError on invalid numbers
+{
+  let threwNaN = false;
+  let threwNeg = false;
+  let threwInf = false;
+  try { formatSrtTimestamp(NaN); } catch (e) { if (e instanceof RangeError) threwNaN = true; }
+  try { formatSrtTimestamp(-2); } catch (e) { if (e instanceof RangeError) threwNeg = true; }
+  try { formatSrtTimestamp(Infinity); } catch (e) { if (e instanceof RangeError) threwInf = true; }
+  assert(threwNaN && threwNeg && threwInf, 'Test 30-N: formatSrtTimestamp throws RangeError on NaN, negative, Infinity');
+}
+
+// Test 30-O: formatVttTimestamp throws RangeError on invalid numbers
+{
+  let threwNaN = false;
+  let threwNeg = false;
+  let threwInf = false;
+  try { formatVttTimestamp(NaN); } catch (e) { if (e instanceof RangeError) threwNaN = true; }
+  try { formatVttTimestamp(-2); } catch (e) { if (e instanceof RangeError) threwNeg = true; }
+  try { formatVttTimestamp(Infinity); } catch (e) { if (e instanceof RangeError) threwInf = true; }
+  assert(threwNaN && threwNeg && threwInf, 'Test 30-O: formatVttTimestamp throws RangeError on NaN, negative, Infinity');
+}
+
+// Test 30-P: formatAssTimestamp throws RangeError on invalid numbers
+{
+  let threwNaN = false;
+  let threwNeg = false;
+  let threwInf = false;
+  try { formatAssTimestamp(NaN); } catch (e) { if (e instanceof RangeError) threwNaN = true; }
+  try { formatAssTimestamp(-2); } catch (e) { if (e instanceof RangeError) threwNeg = true; }
+  try { formatAssTimestamp(Infinity); } catch (e) { if (e instanceof RangeError) threwInf = true; }
+  assert(threwNaN && threwNeg && threwInf, 'Test 30-P: formatAssTimestamp throws RangeError on NaN, negative, Infinity');
+}
+
+// Test 30-Q: generateSrt fails closed on corrupt cue
+{
+  let threwEmpty = false;
+  let threwInverted = false;
+  const emptyCue = [{ id: 'c1', sequence: 1, start: 0, end: 1, text: '   ', words: [], projectId: 'p' } as any];
+  const invertedCue = [{ id: 'c2', sequence: 1, start: 2, end: 1, text: 'Text', words: [], projectId: 'p' } as any];
+  try { generateSrt(emptyCue); } catch (e) { threwEmpty = true; }
+  try { generateSrt(invertedCue); } catch (e) { threwInverted = true; }
+  assert(threwEmpty && threwInverted, 'Test 30-Q: generateSrt fails closed on empty text and inverted timestamps');
+}
+
+// Test 30-R: generateWebVtt fails closed on corrupt cue
+{
+  let threwEmpty = false;
+  let threwInverted = false;
+  const emptyCue = [{ id: 'c1', sequence: 1, start: 0, end: 1, text: '', words: [], projectId: 'p' } as any];
+  const invertedCue = [{ id: 'c2', sequence: 1, start: 2, end: 1, text: 'Text', words: [], projectId: 'p' } as any];
+  try { generateWebVtt(emptyCue); } catch (e) { threwEmpty = true; }
+  try { generateWebVtt(invertedCue); } catch (e) { threwInverted = true; }
+  assert(threwEmpty && threwInverted, 'Test 30-R: generateWebVtt fails closed on empty text and inverted timestamps');
+}
+
+// Test 30-S: generateAss fails closed on corrupt cue
+{
+  let threwEmpty = false;
+  let threwInverted = false;
+  const emptyCue = [{ id: 'c1', sequence: 1, start: 0, end: 1, text: '  ', words: [], projectId: 'p' } as any];
+  const invertedCue = [{ id: 'c2', sequence: 1, start: 2, end: 1, text: 'Text', words: [], projectId: 'p' } as any];
+  try { generateAss(emptyCue); } catch (e) { threwEmpty = true; }
+  try { generateAss(invertedCue); } catch (e) { threwInverted = true; }
+  assert(threwEmpty && threwInverted, 'Test 30-S: generateAss fails closed on empty text and inverted timestamps');
+}
+
+// Test 30-T: updateCaptionCue rejects immutable field injection
+{
+  const captionService = getCaptionService();
+  let caught = false;
+  try {
+    await captionService.updateCaptionCue({
+      projectId: 'proj-1',
+      trackId: 'track-1',
+      cueId: 'cue-1',
+      userId: 'user-1',
+      updates: { id: 'injected-id', text: 'New text' } as any,
+    });
+  } catch (err: any) {
+    caught = true;
+    assert(err instanceof ClipperError && err.code === 'VALIDATION_ERROR', 'Test 30-T: Rejects immutable field injection');
+  }
+  assert(caught, 'Test 30-T: Throws on immutable field injection');
+}
+
+// Test 30-U: updateCaptionCue rejects words exceeding cue bounds
+{
+  const captionService = getCaptionService();
+  const projId = crypto.randomUUID();
+  const trackId = crypto.randomUUID();
+  const cueId = crypto.randomUUID();
+  const testTrack: CaptionTrack = {
+    id: trackId,
+    projectId: projId,
+    userId: 'user-1',
+    version: 1,
+    language: 'en',
+    source: 'generated',
+    status: 'ready',
+    cuesCount: 1,
+    durationSeconds: 5,
+    cues: [
+      {
+        id: cueId,
+        projectId: projId,
+        trackId: trackId,
+        sequence: 1,
+        start: 1.0,
+        end: 2.0,
+        text: 'Hello world',
+        language: 'en',
+        timingPrecision: 'exact_word',
+        words: [
+          { wordIndex: 0, word: 'Hello', start: 1.0, end: 1.4 },
+          { wordIndex: 1, word: 'world', start: 1.5, end: 2.0 },
+        ],
+        source: 'generated',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+    ],
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+  const storage = new LocalStorageAdapter();
+  await storage.saveProject({
+    id: projId,
+    userId: 'user-1',
+    title: 'Bounds',
+    workflowType: 'youtube_to_shorts',
+    sourceType: 'upload',
+    durationSeconds: 5,
+    status: 'ready',
+    clips: [],
+    createdAt: new Date().toISOString(),
+  });
+  await storage.saveCaptionTrack(testTrack, 'user-1');
+
+  let caught = false;
+  try {
+    await captionService.updateCaptionCue({
+      projectId: projId,
+      trackId: trackId,
+      cueId: cueId,
+      userId: 'user-1',
+      updates: {
+        words: [{ wordIndex: 0, word: 'Out', start: 0.2, end: 0.8 }], // start 0.2 is well outside [1.0, 2.0]
+      },
+    });
+  } catch (err: any) {
+    caught = true;
+    assert(err instanceof ClipperError && err.code === 'VALIDATION_ERROR', `Test 30-U: Rejects word timing outside cue bounds (${err.message})`);
+  }
+  assert(caught, 'Test 30-U: Throws on out-of-bounds word timing');
+}
+
+// Test 30-V: getCaptionTrackById loads track and verifies tenant isolation
+{
+  const storage = new LocalStorageAdapter();
+  const trackId = crypto.randomUUID();
+  const projId = crypto.randomUUID();
+  const testTrack: CaptionTrack = {
+    id: trackId,
+    projectId: projId,
+    userId: 'user-owner',
+    version: 1,
+    language: 'en',
+    source: 'generated',
+    status: 'ready',
+    cuesCount: 1,
+    durationSeconds: 4,
+    cues: [
+      {
+        id: crypto.randomUUID(),
+        projectId: projId,
+        trackId,
+        sequence: 1,
+        start: 0.5,
+        end: 2.5,
+        text: 'Retrieved by track ID',
+        language: 'en',
+        timingPrecision: 'exact_word',
+        words: [{ wordIndex: 0, word: 'Retrieved', start: 0.5, end: 1.0 }],
+        source: 'generated',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+    ],
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+  await storage.saveProject({
+    id: projId,
+    userId: 'user-owner',
+    title: 'Lookup',
+    workflowType: 'youtube_to_shorts',
+    sourceType: 'upload',
+    durationSeconds: 4,
+    status: 'ready',
+    clips: [],
+    createdAt: new Date().toISOString(),
+  });
+  await storage.saveCaptionTrack(testTrack, 'user-owner');
+
+  const loaded = await storage.getCaptionTrackById(trackId, 'user-owner');
+  assert(loaded !== null, 'Test 30-V1: getCaptionTrackById loads track');
+  assert(loaded?.id === trackId, 'Test 30-V2: Loaded track ID matches');
+  assert(loaded?.cues.length === 1, 'Test 30-V3: Loaded track contains cues');
+  assert(loaded?.cues[0].words.length === 1, 'Test 30-V4: Loaded cue contains words');
+
+  // Verify cross-tenant isolation
+  let forbidden = false;
+  try {
+    await storage.getCaptionTrackById(trackId, 'user-attacker');
+  } catch (err: any) {
+    if (err instanceof ClipperError && err.statusCode === 403) forbidden = true;
+  }
+  assert(forbidden, 'Test 30-V5: Cross-tenant access to getCaptionTrackById is strictly forbidden (403)');
+
+  // Test 30-W: exportCaptions resolves by trackId and by projectId + version
+  const captionService = getCaptionService();
+  const srtByTrackId = await captionService.exportCaptions({
+    trackId,
+    userId: 'user-owner',
+    format: 'srt',
+  });
+  assert(srtByTrackId.includes('Retrieved by track ID'), 'Test 30-W1: Export resolves directly by trackId');
+
+  const srtByProj = await captionService.exportCaptions({
+    projectId: projId,
+    version: 1,
+    userId: 'user-owner',
+    format: 'srt',
+  });
+  assert(srtByProj.includes('Retrieved by track ID'), 'Test 30-W2: Export resolves by projectId and version');
+}
+
 } // end runTests
 
 runTests().then(() => {
   console.log('\n================================================================');
-  console.log(`CATEGORY 29 VERIFIED: ${passed} passed, ${failed} failed`);
+  console.log(`CATEGORIES 29 & 30 VERIFIED: ${passed} passed, ${failed} failed`);
   console.log('================================================================\n');
 
   if (failed > 0) {

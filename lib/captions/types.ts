@@ -44,7 +44,7 @@ export interface CaptionTrack {
   mediaAssetId?: string;
   userId?: string;
   language: SubtitleLanguage;
-  version: number;
+  version?: number;
   source: 'generated' | 'edited' | 'imported';
   status: 'ready' | 'processing' | 'failed';
   style?: SubtitleStyle;
@@ -85,3 +85,43 @@ export const DEFAULT_SEGMENTATION_CONFIG: Required<CaptionSegmentationConfig> = 
 };
 
 export type CaptionFormat = 'srt' | 'vtt' | 'ass';
+
+/**
+ * Permitted mutable fields for client-facing caption cue updates.
+ * Clients are strictly forbidden from modifying lineage, sequence, or identity fields.
+ */
+export interface CaptionCueUpdate {
+  text?: string;
+  start?: number;
+  end?: number;
+  words?: CaptionWord[];
+  speakerId?: string | number;
+  emphasis?: CaptionEmphasisStyle;
+  style?: Partial<SubtitleStyle>;
+  language?: SubtitleLanguage;
+  translatedText?: string;
+  timingPrecision?: TranscriptTimingPrecision;
+}
+
+/**
+ * Fields that clients must NEVER be allowed to inject or mutate.
+ */
+export const IMMUTABLE_CUE_FIELDS = [
+  'id',
+  'projectId',
+  'trackId',
+  'transcriptId',
+  'sequence',
+  'createdAt',
+  'updatedAt',
+  'source',
+] as const;
+
+export interface ExportCaptionsParams {
+  projectId?: string;
+  trackId?: string;
+  version?: number;
+  userId?: string;
+  format: CaptionFormat;
+  styleOverride?: Partial<SubtitleStyle>;
+}

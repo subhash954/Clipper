@@ -12,13 +12,14 @@ export async function GET(req: NextRequest) {
     }
 
     const { searchParams } = new URL(req.url);
-    const projectId = searchParams.get('projectId');
+    const trackId = searchParams.get('trackId') || undefined;
+    const projectId = searchParams.get('projectId') || undefined;
     const format = (searchParams.get('format') || 'srt').toLowerCase() as CaptionFormat;
     const versionStr = searchParams.get('version');
     const version = versionStr ? parseInt(versionStr, 10) : undefined;
 
-    if (!projectId) {
-      return NextResponse.json({ error: 'projectId is required.' }, { status: 400 });
+    if (!trackId && !projectId) {
+      return NextResponse.json({ error: 'Either trackId or projectId is required.' }, { status: 400 });
     }
 
     if (!['srt', 'vtt', 'ass'].includes(format)) {
@@ -30,6 +31,7 @@ export async function GET(req: NextRequest) {
 
     const captionService = getCaptionService();
     const content = await captionService.exportCaptions({
+      trackId,
       projectId,
       version,
       userId: user.id,
@@ -47,11 +49,13 @@ export async function GET(req: NextRequest) {
       fileExtension = 'ass';
     }
 
+    const fileId = trackId ? trackId.slice(0, 8) : (projectId ? projectId.slice(0, 8) : 'captions');
+
     return new Response(content, {
       status: 200,
       headers: {
         'Content-Type': contentType,
-        'Content-Disposition': `attachment; filename="subtitles_${projectId.slice(0, 8)}.${fileExtension}"`,
+        'Content-Disposition': `attachment; filename="subtitles_${fileId}.${fileExtension}"`,
         'Cache-Control': 'no-cache',
       },
     });

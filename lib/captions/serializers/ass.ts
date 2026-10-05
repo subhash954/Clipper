@@ -32,8 +32,8 @@ export function hexToAssColor(hex: string, alphaHex: string = '00'): string {
  * @param seconds Floating point seconds
  */
 export function formatAssTimestamp(seconds: number): string {
-  if (typeof seconds !== 'number' || isNaN(seconds) || seconds < 0) {
-    return '0:00:00.00';
+  if (typeof seconds !== 'number' || isNaN(seconds) || !isFinite(seconds) || seconds < 0) {
+    throw new RangeError(`Invalid timestamp for ASS formatting: ${seconds}`);
   }
 
   const totalCentiseconds = Math.floor(Math.round(seconds * 1000) / 10);
@@ -105,8 +105,29 @@ Style: Highlight,${fontFamily},${fontSize},${highlightColor},${primaryColor},${s
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text`;
 
-  if (!Array.isArray(cues) || cues.length === 0) {
+  if (!Array.isArray(cues)) {
+    throw new Error('Cues must be an array');
+  }
+
+  if (cues.length === 0) {
     return header + '\n';
+  }
+
+  // Pre-validate all cues strictly before serializing
+  for (let i = 0; i < cues.length; i++) {
+    const cue = cues[i];
+    if (!cue) {
+      throw new Error(`Cue at index ${i} is missing or null`);
+    }
+    if (typeof cue.start !== 'number' || isNaN(cue.start) || !isFinite(cue.start) || cue.start < 0) {
+      throw new RangeError(`Cue at index ${i} has invalid start timestamp: ${cue.start}`);
+    }
+    if (typeof cue.end !== 'number' || isNaN(cue.end) || !isFinite(cue.end) || cue.end <= cue.start) {
+      throw new RangeError(`Cue at index ${i} has invalid end timestamp: ${cue.end} (start: ${cue.start})`);
+    }
+    if (typeof cue.text !== 'string' || cue.text.trim().length === 0) {
+      throw new Error(`Cue at index ${i} has empty text`);
+    }
   }
 
   const sorted = [...cues].sort((a, b) => a.start - b.start || a.sequence - b.sequence);

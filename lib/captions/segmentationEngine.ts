@@ -8,11 +8,12 @@ import {
   CaptionEmphasisStyle,
 } from './types';
 import { CaptionEmphasis } from '../intelligence/types';
+import { ClipperError } from '../errors';
 
 export interface SegmentTranscriptParams {
   projectId: string;
   transcriptId?: string;
-  words: Array<WordTimestamp | { word: string; start: number; end: number; confidence?: number; speaker?: number }>;
+  words: Array<WordTimestamp | { word: string; start: number; end: number; confidence?: number; speaker?: number; wordIndex?: number }>;
   mediaDuration?: number;
   language?: SubtitleLanguage;
   timingPrecision?: TranscriptTimingPrecision;
@@ -74,37 +75,78 @@ export function segmentTranscriptIntoCues(params: SegmentTranscriptParams): Capt
     emphases = [],
   } = params;
 
-  if (!inputWords || !Array.isArray(inputWords) || inputWords.length === 0) {
+  if (inputWords === undefined || inputWords === null || !Array.isArray(inputWords)) {
+    throw new ClipperError('VALIDATION_ERROR', 'Words must be a valid array');
+  }
+
+  if (inputWords.length === 0) {
     return [];
   }
+
+  if (mediaDuration !== undefined) {
+    if (typeof mediaDuration !== 'number' || isNaN(mediaDuration) || !isFinite(mediaDuration) || mediaDuration <= 0) {
+      throw new ClipperError(
+        'VALIDATION_ERROR',
+        `mediaDuration must be a positive finite number, received: ${mediaDuration}`
+      );
+    }
+  }
+
+  // Strict Authoritative Source Validation (Fail closed: No silent filtering, No silent sorting)
+  for (let i = 0; i < inputWords.length; i++) {
+    const w = inputWords[i];
+    if (!w) {
+      throw new ClipperError('VALIDATION_ERROR', `Word at index ${i} is missing or null`);
+    }
+    if (typeof w.word !== 'string' || w.word.trim().length === 0) {
+      throw new ClipperError('VALIDATION_ERROR', `Word at index ${i} has empty text`);
+    }
+    if (typeof w.start !== 'number' || isNaN(w.start) || !isFinite(w.start)) {
+      throw new ClipperError('VALIDATION_ERROR', `Word at index ${i} has non-finite start timestamp: ${w.start}`);
+    }
+    if (typeof w.end !== 'number' || isNaN(w.end) || !isFinite(w.end)) {
+      throw new ClipperError('VALIDATION_ERROR', `Word at index ${i} has non-finite end timestamp: ${w.end}`);
+    }
+    if (w.start < 0) {
+      throw new ClipperError('VALIDATION_ERROR', `Word at index ${i} has negative start timestamp: ${w.start}`);
+    }
+    if (w.end <= w.start) {
+      throw new ClipperError(
+        'VALIDATION_ERROR',
+        `Word at index ${i} has end timestamp ${w.end} <= start timestamp ${w.start}`
+      );
+    }
+    if (mediaDuration !== undefined && w.start > mediaDuration) {
+      throw new ClipperError(
+        'VALIDATION_ERROR',
+        `Word at index ${i} start ${w.start} exceeds media duration ${mediaDuration}`
+      );
+    }
+    if (i > 0) {
+      const prev = inputWords[i - 1];
+      if (w.start < prev.start) {
+        throw new ClipperError(
+          'VALIDATION_ERROR',
+          `Word timestamps move backwards at index ${i}: ${w.start} < ${prev.start}`
+        );
+      }
+      const currIdx = (w as any).wordIndex;
+      const prevIdx = (prev as any).wordIndex;
+      if (typeof currIdx === 'number' && typeof prevIdx === 'number' && currIdx <= prevIdx) {
+        throw new ClipperError(
+          'VALIDATION_ERROR',
+          `Word order contradicts wordIndex at index ${i}: ${currIdx} <= ${prevIdx}`
+        );
+      }
+    }
+  }
+
+  const validWords = inputWords;
 
   const config: Required<CaptionSegmentationConfig> = {
     ...DEFAULT_SEGMENTATION_CONFIG,
     ...userConfig,
   };
-
-  // Filter and sort words by start time to guarantee monotonic sequence
-  const validWords = inputWords
-    .filter((w) => {
-      return (
-        w &&
-        typeof w.word === 'string' &&
-        w.word.trim().length > 0 &&
-        typeof w.start === 'number' &&
-        !isNaN(w.start) &&
-        isFinite(w.start) &&
-        w.start >= 0 &&
-        typeof w.end === 'number' &&
-        !isNaN(w.end) &&
-        isFinite(w.end) &&
-        w.end >= w.start
-      );
-    })
-    .sort((a, b) => a.start - b.start || a.end - b.end);
-
-  if (validWords.length === 0) {
-    return [];
-  }
 
   // Pre-index emphases by time interval and token match
   const emphasisLookup = new Map<string, CaptionEmphasis>();
@@ -193,9 +235,17 @@ export function segmentTranscriptIntoCues(params: SegmentTranscriptParams): Capt
         shouldBreak = true;
       }
 
-      // 8. CPS reading speed threshold reached with enough words
-      if (!shouldBreak && currentChunk.length >= 3 && currentCps > config.maxCps) {
-        shouldBreak = true;
+      // 8. CPS reading speed threshold: lookahead candidate testing
+      if (!shouldBreak && nextWord) {
+        const nextWordClean = nextWord.word.trim();
+        const nextWordChars = 1 + getUnicodeCharacterCount(nextWordClean);
+        const candidateChars = accumulatedChars + nextWordChars;
+        const candidateDuration = nextWord.end - chunkStart;
+        const candidateCps = candidateDuration > 0 ? candidateChars / candidateDuration : 0;
+
+        if (currentChunk.length >= 1 && (candidateCps > config.maxCps || currentCps > config.maxCps)) {
+          shouldBreak = true;
+        }
       }
     }
 
@@ -213,7 +263,8 @@ export function segmentTranscriptIntoCues(params: SegmentTranscriptParams): Capt
         } else if (typeof mediaDuration === 'number' && isFinite(mediaDuration) && mediaDuration > 0) {
           maxAllowedEnd = mediaDuration;
         } else {
-          maxAllowedEnd = chunkStart + config.minCueDurationSeconds;
+          // Do NOT fabricate cue duration when mediaDuration is omitted and no next word exists
+          maxAllowedEnd = cueEnd;
         }
 
         const targetEnd = chunkStart + config.minCueDurationSeconds;

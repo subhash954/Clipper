@@ -16,16 +16,12 @@ export async function GET(
 
     const { trackId } = await params;
     const { searchParams } = new URL(req.url);
-    const projectId = searchParams.get('projectId');
-
-    if (!projectId) {
-      return NextResponse.json({ error: 'projectId is required.' }, { status: 400 });
-    }
+    const projectId = searchParams.get('projectId') || undefined;
 
     const captionService = getCaptionService();
-    const track = await captionService.getCaptionTrack(projectId, undefined, user.id);
+    const track = await captionService.getCaptionTrackById(trackId, user.id, projectId);
 
-    if (!track || track.id !== trackId) {
+    if (!track) {
       return NextResponse.json({ success: false, error: 'Caption track not found.' }, { status: 404 });
     }
 
