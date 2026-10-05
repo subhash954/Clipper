@@ -6,9 +6,10 @@ import { SAMPLE_VIDEO_URL } from '@/lib/sampleData';
 
 interface VideoUploaderProps {
   onVideoSelected: (videoUrl: string, fileName: string, isSample?: boolean) => void;
+  showUrlImport?: boolean;
 }
 
-export const VideoUploader: React.FC<VideoUploaderProps> = ({ onVideoSelected }) => {
+export const VideoUploader: React.FC<VideoUploaderProps> = ({ onVideoSelected, showUrlImport = false }) => {
   const [isDragging, setIsDragging] = useState(false);
   const [youtubeUrl, setYoutubeUrl] = useState('');
   const [loading, setLoading] = useState(false);
@@ -147,51 +148,55 @@ export const VideoUploader: React.FC<VideoUploaderProps> = ({ onVideoSelected })
         </div>
       </div>
 
-      {/* Or Divider */}
-      <div className="relative flex items-center justify-center">
-        <div className="border-t border-slate-200 w-full"></div>
-        <span className="bg-[#F4F5F7] px-3 text-[11px] font-bold text-slate-400 uppercase tracking-wider">
-          OR IMPORT VIA URL
-        </span>
-        <div className="border-t border-slate-200 w-full"></div>
-      </div>
-
-      {/* Instant Demo & YouTube Import */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        {/* Development Demo Button */}
-        <button
-          type="button"
-          onClick={handleUseSample}
-          disabled={loading}
-          className="flex items-center justify-center gap-2 p-3 rounded-xl bg-white border border-slate-200 text-slate-700 hover:text-red-600 hover:border-red-300 transition-all font-semibold text-xs shadow-xs group cursor-pointer"
-        >
-          <PlayCircle className="w-4 h-4 text-red-500 group-hover:scale-110 transition-transform" />
-          <span>⚡ Try Dev Sample Video</span>
-        </button>
-
-        {/* YouTube Link Form */}
-        <form onSubmit={handleYoutubeSubmit} className="flex gap-2">
-          <div className="relative flex-1">
-            <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-              <Youtube className="w-4 h-4 text-red-600" />
-            </div>
-            <input
-              type="text"
-              placeholder="Paste YouTube Link..."
-              value={youtubeUrl}
-              onChange={(e) => setYoutubeUrl(e.target.value)}
-              className="w-full pl-9 pr-3 py-2.5 rounded-xl bg-white border border-slate-200 text-slate-900 placeholder-slate-400 text-xs focus:outline-hidden focus:border-red-500 shadow-xs"
-            />
+      {showUrlImport && (
+        <>
+          {/* Or Divider */}
+          <div className="relative flex items-center justify-center">
+            <div className="border-t border-slate-200 w-full"></div>
+            <span className="bg-[#F4F5F7] px-3 text-[11px] font-bold text-slate-400 uppercase tracking-wider">
+              OR IMPORT VIA URL
+            </span>
+            <div className="border-t border-slate-200 w-full"></div>
           </div>
-          <button
-            type="submit"
-            disabled={loading || !youtubeUrl.trim()}
-            className="px-4 py-2.5 rounded-xl bg-red-600 hover:bg-red-500 disabled:opacity-50 text-white text-xs font-bold transition-colors shadow-xs cursor-pointer"
-          >
-            Import
-          </button>
-        </form>
-      </div>
+
+          {/* Instant Demo & YouTube Import */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {/* Development Demo Button */}
+            <button
+              type="button"
+              onClick={handleUseSample}
+              disabled={loading}
+              className="flex items-center justify-center gap-2 p-3 rounded-xl bg-white border border-slate-200 text-slate-700 hover:text-red-600 hover:border-red-300 transition-all font-semibold text-xs shadow-xs group cursor-pointer"
+            >
+              <PlayCircle className="w-4 h-4 text-red-500 group-hover:scale-110 transition-transform" />
+              <span>⚡ Try Dev Sample Video</span>
+            </button>
+
+            {/* YouTube Link Form */}
+            <form onSubmit={handleYoutubeSubmit} className="flex gap-2">
+              <div className="relative flex-1">
+                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                  <Youtube className="w-4 h-4 text-red-600" />
+                </div>
+                <input
+                  type="text"
+                  placeholder="Paste YouTube Link..."
+                  value={youtubeUrl}
+                  onChange={(e) => setYoutubeUrl(e.target.value)}
+                  className="w-full pl-9 pr-3 py-2.5 rounded-xl bg-white border border-slate-200 text-slate-900 placeholder-slate-400 text-xs focus:outline-hidden focus:border-red-500 shadow-xs"
+                />
+              </div>
+              <button
+                type="submit"
+                disabled={loading || !youtubeUrl.trim()}
+                className="px-4 py-2.5 rounded-xl bg-red-600 hover:bg-red-500 disabled:opacity-50 text-white text-xs font-bold transition-colors shadow-xs cursor-pointer"
+              >
+                Import
+              </button>
+            </form>
+          </div>
+        </>
+      )}
 
       {statusMessage && (
         <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-center text-xs text-red-700 flex items-center justify-center gap-2">

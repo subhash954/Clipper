@@ -104,6 +104,11 @@ export default function StudioPage() {
   const [timeline, setTimeline] = useState<Timeline | null>(null);
   const commandManagerRef = useRef<EditorCommandManager | null>(null);
 
+  // Quick YouTube Importer State
+  const [quickYoutubeUrl, setQuickYoutubeUrl] = useState('');
+  const [isQuickYoutubeLoading, setIsQuickYoutubeLoading] = useState(false);
+  const [quickYoutubeError, setQuickYoutubeError] = useState<string | null>(null);
+
   // Active Tool for Editor (Workflow inspired by modern AI Video SaaS)
   const [activeTool, setActiveTool] = useState<
     'style' | 'captions' | 'ai-tools' | 'brolls' | 'reframe' | 'moments' | 'audio' | 'publish'
@@ -183,7 +188,6 @@ export default function StudioPage() {
               setProjectId(p.id);
               if (p.version) setProjectVersion(p.version);
               if (p.title) setProjectName(p.title);
-              if (p.sourceUrl) setVideoUrl(p.sourceUrl);
               if (p.clips && p.clips.length > 0) {
                 setClips(p.clips);
                 setActiveClipId(p.clips[0].id);
@@ -196,6 +200,13 @@ export default function StudioPage() {
               }
               if (p.transcript?.timingPrecision) {
                 setTimingPrecision(p.transcript.timingPrecision);
+              }
+              if (p.sourceUrl) {
+                setVideoUrl(p.sourceUrl);
+                setIsMediaAvailable(true);
+              } else if ((p.clips && p.clips.length > 0) || (p.transcript?.words && p.transcript.words.length > 0)) {
+                setVideoUrl(DEMO_VIDEO_URL);
+                setIsMediaAvailable(false);
               }
               if (typeof p.isMediaAvailable === 'boolean') {
                 setIsMediaAvailable(p.isMediaAvailable);
@@ -217,7 +228,6 @@ export default function StudioPage() {
               setProjectId(p.id);
               if (p.version) setProjectVersion(p.version);
               if (p.title) setProjectName(p.title);
-              if (p.sourceUrl) setVideoUrl(p.sourceUrl);
               if (p.clips && p.clips.length > 0) {
                 setClips(p.clips);
                 setActiveClipId(p.clips[0].id);
@@ -230,6 +240,13 @@ export default function StudioPage() {
               }
               if (p.transcript?.timingPrecision) {
                 setTimingPrecision(p.transcript.timingPrecision);
+              }
+              if (p.sourceUrl) {
+                setVideoUrl(p.sourceUrl);
+                setIsMediaAvailable(true);
+              } else if ((p.clips && p.clips.length > 0) || (p.transcript?.words && p.transcript.words.length > 0)) {
+                setVideoUrl(DEMO_VIDEO_URL);
+                setIsMediaAvailable(false);
               }
               if (typeof p.isMediaAvailable === 'boolean') {
                 setIsMediaAvailable(p.isMediaAvailable);
@@ -307,6 +324,42 @@ export default function StudioPage() {
     setClips(DEMO_VIRAL_CLIPS);
     setActiveClipId(DEMO_VIRAL_CLIPS[0].id);
     setIsMediaAvailable(true);
+  };
+
+  const handleDirectYoutubeImport = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!quickYoutubeUrl.trim()) return;
+    setIsQuickYoutubeLoading(true);
+    setQuickYoutubeError(null);
+    try {
+      const res = await fetch('/api/youtube/ingest', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ youtubeUrl: quickYoutubeUrl.trim(), clipCount: 5 }),
+      });
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || 'Failed to ingest YouTube video');
+      }
+      const data = await res.json();
+      if (data.sourceUrl) {
+        setVideoUrl(data.sourceUrl);
+        setIsMediaAvailable(true);
+      } else {
+        setVideoUrl(DEMO_VIDEO_URL);
+        setIsMediaAvailable(false);
+      }
+      if (data.title) setProjectName(data.title);
+      if (data.clips && data.clips.length > 0) {
+        setClips(data.clips);
+        setActiveClipId(data.clips[0].id);
+        if (data.clips[0].words) setWords(data.clips[0].words);
+      }
+    } catch (err: any) {
+      setQuickYoutubeError(err.message || 'Error processing YouTube video');
+    } finally {
+      setIsQuickYoutubeLoading(false);
+    }
   };
 
   const handleVideoSelected = (url: string, name: string) => {
@@ -836,9 +889,9 @@ export default function StudioPage() {
       {/* 2. EDITOR MAIN WORKSPACE */}
       <main className="p-6 max-w-[1600px] w-full mx-auto space-y-6">
         
-        {!videoUrl ? (
-          /* Empty State for New Project: White Cards with Soft Shadow on Light Grey */
-          <div className="max-w-2xl mx-auto space-y-8 pt-8">
+        {(!videoUrl && clips.length === 0) ? (
+          /* Empty State for New Project: Two balanced cards + Demo Banner */
+          <div className="max-w-4xl mx-auto space-y-8 pt-6">
             <div className="text-center space-y-2">
               <div className="w-12 h-12 rounded-2xl bg-red-50 border border-red-200 text-red-600 flex items-center justify-center mx-auto shadow-sm">
                 <Scissors className="w-6 h-6 -rotate-45" />
@@ -846,57 +899,114 @@ export default function StudioPage() {
               <h2 className="text-2xl font-extrabold text-slate-900 tracking-tight">
                 Import Your Video to Begin
               </h2>
-              <p className="text-xs text-slate-500 max-w-md mx-auto">
+              <p className="text-xs text-slate-500 max-w-lg mx-auto">
                 Upload raw footage or paste a YouTube URL to automatically detect high-retention moments and sync word captions.
               </p>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-stretch">
               {/* Option 1: File Upload */}
-              <div className="clipper-card bg-white border border-slate-200/90 p-6 space-y-3 shadow-sm rounded-2xl">
-                <div className="flex items-center gap-2 text-red-600 font-bold text-xs">
-                  <Upload className="w-4 h-4" />
-                  <span>Upload Local File</span>
+              <div className="bg-white border border-slate-200/90 p-6 rounded-2xl shadow-sm flex flex-col justify-between space-y-4">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2 text-red-600 font-bold text-xs">
+                    <Upload className="w-4 h-4" />
+                    <span>Upload Local File</span>
+                  </div>
+                  <p className="text-xs text-slate-500">
+                    Directly process MP4, MOV, or WebM video up to 500MB.
+                  </p>
                 </div>
-                <p className="text-xs text-slate-500">
-                  Directly process MP4, MOV, or WebM videos.
-                </p>
-                <VideoUploader onVideoSelected={handleVideoSelected} />
+                <div className="flex-1 flex flex-col justify-center">
+                  <VideoUploader onVideoSelected={handleVideoSelected} showUrlImport={false} />
+                </div>
               </div>
 
-              {/* Option 2: YouTube Import */}
-              <div className="clipper-card bg-white border border-slate-200/90 p-6 flex flex-col justify-between space-y-3 shadow-sm rounded-2xl">
-                <div className="space-y-2">
+              {/* Option 2: Direct YouTube Import */}
+              <div className="bg-white border border-slate-200/90 p-6 rounded-2xl shadow-sm flex flex-col justify-between space-y-4">
+                <div className="space-y-1">
                   <div className="flex items-center gap-2 text-red-600 font-bold text-xs">
                     <Youtube className="w-4 h-4 text-red-600" />
                     <span>Paste YouTube URL</span>
                   </div>
                   <p className="text-xs text-slate-500">
-                    Extract top 5 moments from official caption cues.
+                    Extract top viral moments from captions &amp; speeches.
                   </p>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setIsCreateModalOpen(true)}
-                  className="w-full py-2.5 rounded-xl bg-red-600 hover:bg-red-700 text-white font-bold text-xs shadow-md shadow-red-600/20 transition-all flex items-center justify-center gap-2 cursor-pointer"
-                >
-                  <span>Open URL Importer</span>
-                  <ChevronRight className="w-4 h-4" />
-                </button>
+
+                <form onSubmit={handleDirectYoutubeImport} className="space-y-4 flex-1 flex flex-col justify-center">
+                  <div className="relative">
+                    <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none">
+                      <Youtube className="w-4 h-4 text-red-600" />
+                    </div>
+                    <input
+                      type="text"
+                      placeholder="https://www.youtube.com/watch?v=..."
+                      value={quickYoutubeUrl}
+                      onChange={(e) => setQuickYoutubeUrl(e.target.value)}
+                      className="w-full pl-10 pr-3 py-3 rounded-xl bg-slate-50 border border-slate-200 text-slate-900 placeholder-slate-400 text-xs focus:bg-white focus:outline-hidden focus:border-red-500 shadow-xs"
+                    />
+                  </div>
+
+                  <div className="space-y-2 text-xs text-slate-600 bg-slate-50 p-3.5 rounded-xl border border-slate-100">
+                    <div className="flex items-center gap-2">
+                      <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                      <span>Speech-to-text with word-level timestamps</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                      <span>AI viral hook &amp; key moment detection</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                      <span>Automatic 9:16 vertical reframe &amp; dynamic captions</span>
+                    </div>
+                  </div>
+
+                  {quickYoutubeError && (
+                    <div className="p-2.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-center gap-2">
+                      <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+                      <span>{quickYoutubeError}</span>
+                    </div>
+                  )}
+
+                  <button
+                    type="submit"
+                    disabled={isQuickYoutubeLoading || !quickYoutubeUrl.trim()}
+                    className="w-full py-3 rounded-xl bg-gradient-to-r from-red-600 to-rose-600 hover:from-red-500 hover:to-rose-500 text-white font-bold text-xs shadow-md shadow-red-600/20 disabled:opacity-50 transition-all flex items-center justify-center gap-2 cursor-pointer"
+                  >
+                    {isQuickYoutubeLoading ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin text-white" />
+                        <span>Analyzing YouTube Video...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles className="w-4 h-4 text-white" />
+                        <span>Import &amp; Slices Moments</span>
+                      </>
+                    )}
+                  </button>
+                </form>
               </div>
             </div>
 
             {/* Option 3: Explicit Demo Mode */}
-            <div className="p-4 rounded-xl bg-white border border-slate-200/90 shadow-sm text-center space-y-2">
-              <p className="text-xs text-slate-500">
-                Want to test Clipper Studio immediately without uploading your own media?
-              </p>
+            <div className="p-4 rounded-2xl bg-white border border-slate-200/90 shadow-sm flex flex-col sm:flex-row items-center justify-between gap-3 text-center sm:text-left">
+              <div>
+                <p className="text-xs font-bold text-slate-800">
+                  Want to explore Clipper Studio immediately?
+                </p>
+                <p className="text-[11px] text-slate-500">
+                  Pre-load sample high-retention podcast footage with synced animated captions.
+                </p>
+              </div>
               <button
                 type="button"
                 onClick={handleLoadDemo}
-                className="px-4 py-2 rounded-xl bg-slate-50 hover:bg-red-50 text-red-700 text-xs font-bold border border-red-200 shadow-xs transition-colors cursor-pointer"
+                className="px-4 py-2.5 rounded-xl bg-slate-50 hover:bg-red-50 text-red-700 hover:text-red-800 text-xs font-bold border border-red-200 shadow-xs transition-colors shrink-0 flex items-center gap-1.5 cursor-pointer"
               >
-                ⚡ Explore Demo Project (Pre-Loaded Clip)
+                <span>⚡ Load Demo Project</span>
+                <ChevronRight className="w-3.5 h-3.5 text-red-600" />
               </button>
             </div>
           </div>
@@ -973,7 +1083,7 @@ export default function StudioPage() {
               <div className="lg:col-span-5 flex flex-col items-center justify-center space-y-4">
                 <VideoPreviewPlayer
                   ref={playerRef}
-                  videoUrl={videoUrl}
+                  videoUrl={videoUrl || DEMO_VIDEO_URL}
                   words={words}
                   subtitleStyle={subtitleStyle}
                   visualSettings={visualSettings}
