@@ -79,16 +79,11 @@ import {
 } from 'lucide-react';
 
 export default function StudioPage() {
-  const [projectId, setProjectId] = useState<string>(() => {
-    if (typeof window !== 'undefined') {
-      const params = new URLSearchParams(window.location.search);
-      return params.get('projectId') || params.get('id') || '';
-    }
-    return '';
-  });
+  const [projectId, setProjectId] = useState<string>('');
+  const [isMounted, setIsMounted] = useState(false);
   const [projectVersion, setProjectVersion] = useState<number>(1);
   const [dbSyncStatus, setDbSyncStatus] = useState<'saved' | 'saving' | 'error'>('saved');
-  const [lastSavedAt, setLastSavedAt] = useState<Date>(new Date());
+  const [lastSavedAt, setLastSavedAt] = useState<Date>(() => new Date());
 
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [projectName, setProjectName] = useState<string>("My Podcast Short");
@@ -172,6 +167,7 @@ export default function StudioPage() {
 
   // Load project: Query DB first if query id present, fallback to most recent DB project
   useEffect(() => {
+    setIsMounted(true);
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams(window.location.search);
       const queryId = params.get('projectId') || params.get('id');
@@ -707,6 +703,17 @@ export default function StudioPage() {
     { id: 'audio', label: 'Audio & Music', icon: Mic2, desc: 'Voice Clean & SFX' },
     { id: 'publish', label: 'Distribution', icon: Share2, desc: 'Viral Titles & Export' },
   ] as const;
+
+  if (!isMounted) {
+    return (
+      <AppShell onOpenCreateProject={() => setIsCreateModalOpen(true)}>
+        <div className="flex-1 flex flex-col items-center justify-center min-h-[80vh] text-slate-400 gap-3">
+          <Loader2 className="w-8 h-8 animate-spin text-red-600" />
+          <span className="text-xs font-semibold text-slate-500">Loading Studio Workspace...</span>
+        </div>
+      </AppShell>
+    );
+  }
 
   return (
     <AppShell onOpenCreateProject={() => setIsCreateModalOpen(true)}>
