@@ -1744,11 +1744,149 @@ console.log('================================================================\n'
   assert(edit2.version! > edit1.version!, `Test 31-U2: Successive edits allocate strictly increasing versions (${edit2.version} > ${edit1.version})`);
 }
 
+// ================================================================
+// CLIPPER PHASE 7.1.2: CATEGORY 32 — SERIALIZER INTEGRITY GATES
+// ================================================================
+console.log('\n================================================================');
+console.log('CLIPPER PHASE 7.1.2: CATEGORY 32 — SERIALIZER INTEGRITY GATES');
+console.log('================================================================\n');
+
+// Test 32-Q: Serializer rejects word outside cue bounds
+{
+  const cueWithOutWord: CaptionCue = {
+    id: crypto.randomUUID(),
+    projectId: 'proj-32-q',
+    sequence: 1,
+    start: 2.0,
+    end: 4.0,
+    text: 'Out of bounds word',
+    language: 'en',
+    timingPrecision: 'exact_word',
+    words: [
+      { wordIndex: 0, word: 'Out', start: 1.8, end: 2.5 }, // 1.8 < cue.start 2.0
+      { wordIndex: 1, word: 'of', start: 2.5, end: 3.0 },
+      { wordIndex: 2, word: 'bounds', start: 3.0, end: 3.5 },
+      { wordIndex: 3, word: 'word', start: 3.5, end: 4.0 },
+    ],
+    source: 'generated',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+
+  let srtFailed = false;
+  let vttFailed = false;
+  let assFailed = false;
+
+  try { generateSrt([cueWithOutWord]); } catch (e: any) { srtFailed = e instanceof ClipperError && e.code === 'VALIDATION_ERROR'; }
+  try { generateWebVtt([cueWithOutWord]); } catch (e: any) { vttFailed = e instanceof ClipperError && e.code === 'VALIDATION_ERROR'; }
+  try { generateAss([cueWithOutWord]); } catch (e: any) { assFailed = e instanceof ClipperError && e.code === 'VALIDATION_ERROR'; }
+
+  assert(srtFailed, 'Test 32-Q1: generateSrt rejects word outside cue bounds');
+  assert(vttFailed, 'Test 32-Q2: generateWebVtt rejects word outside cue bounds');
+  assert(assFailed, 'Test 32-Q3: generateAss rejects word outside cue bounds');
+}
+
+// Test 32-R: Serializer rejects non-monotonic word timing
+{
+  const cueWithBackwardsWords: CaptionCue = {
+    id: crypto.randomUUID(),
+    projectId: 'proj-32-r',
+    sequence: 1,
+    start: 1.0,
+    end: 5.0,
+    text: 'Word timing backwards',
+    language: 'en',
+    timingPrecision: 'exact_word',
+    words: [
+      { wordIndex: 0, word: 'Word', start: 3.0, end: 4.0 },
+      { wordIndex: 1, word: 'timing', start: 2.0, end: 2.5 }, // 2.0 < prev 3.0
+      { wordIndex: 2, word: 'backwards', start: 4.0, end: 4.5 },
+    ],
+    source: 'generated',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+
+  let srtFailed = false;
+  let vttFailed = false;
+  let assFailed = false;
+
+  try { generateSrt([cueWithBackwardsWords]); } catch (e: any) { srtFailed = e instanceof ClipperError && e.code === 'VALIDATION_ERROR'; }
+  try { generateWebVtt([cueWithBackwardsWords]); } catch (e: any) { vttFailed = e instanceof ClipperError && e.code === 'VALIDATION_ERROR'; }
+  try { generateAss([cueWithBackwardsWords]); } catch (e: any) { assFailed = e instanceof ClipperError && e.code === 'VALIDATION_ERROR'; }
+
+  assert(srtFailed, 'Test 32-R1: generateSrt rejects non-monotonic word timing');
+  assert(vttFailed, 'Test 32-R2: generateWebVtt rejects non-monotonic word timing');
+  assert(assFailed, 'Test 32-R3: generateAss rejects non-monotonic word timing');
+}
+
+// Test 32-S: Serializer rejects zero-duration word
+{
+  const cueWithZeroWord: CaptionCue = {
+    id: crypto.randomUUID(),
+    projectId: 'proj-32-s',
+    sequence: 1,
+    start: 1.0,
+    end: 3.0,
+    text: 'Zero duration word',
+    language: 'en',
+    timingPrecision: 'exact_word',
+    words: [
+      { wordIndex: 0, word: 'Zero', start: 1.0, end: 1.0 }, // 1.0 === 1.0
+      { wordIndex: 1, word: 'duration', start: 1.5, end: 2.0 },
+      { wordIndex: 2, word: 'word', start: 2.0, end: 2.5 },
+    ],
+    source: 'generated',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+
+  let srtFailed = false;
+  let vttFailed = false;
+  let assFailed = false;
+
+  try { generateSrt([cueWithZeroWord]); } catch (e: any) { srtFailed = e instanceof ClipperError && e.code === 'VALIDATION_ERROR'; }
+  try { generateWebVtt([cueWithZeroWord]); } catch (e: any) { vttFailed = e instanceof ClipperError && e.code === 'VALIDATION_ERROR'; }
+  try { generateAss([cueWithZeroWord]); } catch (e: any) { assFailed = e instanceof ClipperError && e.code === 'VALIDATION_ERROR'; }
+
+  assert(srtFailed, 'Test 32-S1: generateSrt rejects zero-duration word');
+  assert(vttFailed, 'Test 32-S2: generateWebVtt rejects zero-duration word');
+  assert(assFailed, 'Test 32-S3: generateAss rejects zero-duration word');
+}
+
+// Test 32-N: Serializer rejects non-monotonic wordIndex
+{
+  const cueWithBadWordIndex: CaptionCue = {
+    id: crypto.randomUUID(),
+    projectId: 'proj-32-n',
+    sequence: 1,
+    start: 1.0,
+    end: 3.0,
+    text: 'Word index out of order',
+    language: 'en',
+    timingPrecision: 'exact_word',
+    words: [
+      { wordIndex: 2, word: 'Word', start: 1.0, end: 1.4 },
+      { wordIndex: 1, word: 'index', start: 1.4, end: 1.8 }, // 1 <= prev 2
+      { wordIndex: 3, word: 'out', start: 1.8, end: 2.2 },
+      { wordIndex: 4, word: 'of', start: 2.2, end: 2.6 },
+      { wordIndex: 5, word: 'order', start: 2.6, end: 3.0 },
+    ],
+    source: 'generated',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+
+  let srtFailed = false;
+  try { generateSrt([cueWithBadWordIndex]); } catch (e: any) { srtFailed = e instanceof ClipperError && e.code === 'VALIDATION_ERROR'; }
+  assert(srtFailed, 'Test 32-N: generateSrt rejects non-monotonic wordIndex progression');
+}
+
 } // end runTests
 
 runTests().then(() => {
   console.log('\n================================================================');
-  console.log(`CATEGORIES 29, 30 & 31 VERIFIED: ${passed} passed, ${failed} failed`);
+  console.log(`CATEGORIES 29, 30, 31 & 32 VERIFIED: ${passed} passed, ${failed} failed`);
   console.log('================================================================\n');
 
   if (failed > 0) {

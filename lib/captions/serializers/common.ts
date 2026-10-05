@@ -67,6 +67,9 @@ export function validateCanonicalCuesForSerialization(cues: CaptionCue[], format
     }
 
     if (Array.isArray(cue.words) && cue.words.length > 0) {
+      let prevWordStart = -1;
+      let prevWordIndex = -1;
+
       for (let wIdx = 0; wIdx < cue.words.length; wIdx++) {
         const w = cue.words[wIdx];
         if (!w || typeof w.word !== 'string' || w.word.trim().length === 0) {
@@ -82,6 +85,44 @@ export function validateCanonicalCuesForSerialization(cues: CaptionCue[], format
             400
           );
         }
+
+        // Containment inside cue boundaries
+        if (w.start < cue.start || w.end > cue.end) {
+          throw new ClipperError(
+            'VALIDATION_ERROR',
+            `Cue ${i} word at index ${wIdx} timing [${w.start}, ${w.end}] falls outside cue bounds [${cue.start}, ${cue.end}]`,
+            400
+          );
+        }
+
+        // Monotonic wordIndex progression when present
+        if (typeof w.wordIndex === 'number') {
+          if (w.wordIndex < 0) {
+            throw new ClipperError(
+              'VALIDATION_ERROR',
+              `Cue ${i} word at index ${wIdx} has invalid negative wordIndex: ${w.wordIndex}`,
+              400
+            );
+          }
+          if (prevWordIndex >= 0 && w.wordIndex <= prevWordIndex) {
+            throw new ClipperError(
+              'VALIDATION_ERROR',
+              `Cue ${i} wordIndex is non-monotonic at index ${wIdx}: ${w.wordIndex} <= previous ${prevWordIndex}`,
+              400
+            );
+          }
+          prevWordIndex = w.wordIndex;
+        }
+
+        // Monotonic word timing progression within cue
+        if (prevWordStart >= 0 && w.start < prevWordStart) {
+          throw new ClipperError(
+            'VALIDATION_ERROR',
+            `Cue ${i} word timing is non-monotonic at index ${wIdx}: ${w.start} < previous ${prevWordStart}`,
+            400
+          );
+        }
+        prevWordStart = w.start;
       }
     }
   }

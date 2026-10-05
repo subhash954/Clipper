@@ -942,6 +942,220 @@ async function runPhase7PostgresTests() {
     `).trim();
     assert(Number(remainingCues) === 0, 'Test 31-V3: Entire transaction rolls back; no caption_cues row remains');
 
+    // =============================================================
+    // SCENARIO 11: Category 32 — Canonical Database Boundary Lock
+    // =============================================================
+    console.log('\n--- Scenario 11: Category 32 — Canonical Database Boundary Lock ---');
+
+    // 32-A: Authenticated direct UPDATE caption_tracks rejected
+    const authUpdateTrackRes = await execPsqlAsync(`
+      SET ROLE authenticated;
+      SET request.jwt.claim.sub = '${ownerUserId}';
+      UPDATE public.caption_tracks SET status = 'failed' WHERE id = '${track1Id}';
+    `);
+    assert(authUpdateTrackRes.exitCode !== 0, 'Test 32-A: Authenticated direct UPDATE on caption_tracks rejected');
+    assert(authUpdateTrackRes.stderr.includes('permission denied for table caption_tracks'), 'Test 32-A: Error is permission denied for table caption_tracks');
+
+    // 32-B: Authenticated direct DELETE caption_tracks rejected
+    const authDeleteTrackRes = await execPsqlAsync(`
+      SET ROLE authenticated;
+      SET request.jwt.claim.sub = '${ownerUserId}';
+      DELETE FROM public.caption_tracks WHERE id = '${track1Id}';
+    `);
+    assert(authDeleteTrackRes.exitCode !== 0, 'Test 32-B: Authenticated direct DELETE on caption_tracks rejected');
+    assert(authDeleteTrackRes.stderr.includes('permission denied for table caption_tracks'), 'Test 32-B: Error is permission denied for table caption_tracks');
+
+    // 32-C: Authenticated direct UPDATE caption_cues rejected
+    const authUpdateCueRes = await execPsqlAsync(`
+      SET ROLE authenticated;
+      SET request.jwt.claim.sub = '${ownerUserId}';
+      UPDATE public.caption_cues SET text = 'Hacked' WHERE id = '${cue1Id}';
+    `);
+    assert(authUpdateCueRes.exitCode !== 0, 'Test 32-C: Authenticated direct UPDATE on caption_cues rejected');
+    assert(authUpdateCueRes.stderr.includes('permission denied for table caption_cues'), 'Test 32-C: Error is permission denied for table caption_cues');
+
+    // 32-D: Authenticated direct DELETE caption_cues rejected
+    const authDeleteCueRes = await execPsqlAsync(`
+      SET ROLE authenticated;
+      SET request.jwt.claim.sub = '${ownerUserId}';
+      DELETE FROM public.caption_cues WHERE id = '${cue1Id}';
+    `);
+    assert(authDeleteCueRes.exitCode !== 0, 'Test 32-D: Authenticated direct DELETE on caption_cues rejected');
+    assert(authDeleteCueRes.stderr.includes('permission denied for table caption_cues'), 'Test 32-D: Error is permission denied for table caption_cues');
+
+    // 32-E: Authenticated direct UPDATE caption_words rejected
+    const authUpdateWordRes = await execPsqlAsync(`
+      SET ROLE authenticated;
+      SET request.jwt.claim.sub = '${ownerUserId}';
+      UPDATE public.caption_words SET word = 'Hacked' WHERE id = '${word1Id}';
+    `);
+    assert(authUpdateWordRes.exitCode !== 0, 'Test 32-E: Authenticated direct UPDATE on caption_words rejected');
+    assert(authUpdateWordRes.stderr.includes('permission denied for table caption_words'), 'Test 32-E: Error is permission denied for table caption_words');
+
+    // 32-F: Authenticated direct DELETE caption_words rejected
+    const authDeleteWordRes = await execPsqlAsync(`
+      SET ROLE authenticated;
+      SET request.jwt.claim.sub = '${ownerUserId}';
+      DELETE FROM public.caption_words WHERE id = '${word1Id}';
+    `);
+    assert(authDeleteWordRes.exitCode !== 0, 'Test 32-F: Authenticated direct DELETE on caption_words rejected');
+    assert(authDeleteWordRes.stderr.includes('permission denied for table caption_words'), 'Test 32-F: Error is permission denied for table caption_words');
+
+    // 32-G: RPC rejects non-monotonic cue sequence
+    const badSeqTrackId = ensureValidUuid();
+    const badSeqRes = await execPsqlAsync(`
+      SELECT public.save_caption_track_atomic(
+        '${projectAId}', '${ownerUserId}', '${badSeqTrackId}', '${transcriptAId}', '${mediaAId}',
+        'en', NULL, 'generated', '{}'::jsonb, 10.0, '{}'::jsonb,
+        '[{"sequence":2,"start":1.0,"end":2.0,"text":"Second"},{"sequence":1,"start":2.0,"end":3.0,"text":"First"}]'::jsonb
+      );
+    `);
+    assert(badSeqRes.exitCode !== 0, 'Test 32-G: RPC rejects non-monotonic cue sequence');
+    assert(badSeqRes.stderr.includes('strictly increasing'), 'Test 32-G: Error mentions strictly increasing sequence');
+
+    // 32-H: RPC rejects overlapping cues
+    const overlapTrackId = ensureValidUuid();
+    const overlapRes = await execPsqlAsync(`
+      SELECT public.save_caption_track_atomic(
+        '${projectAId}', '${ownerUserId}', '${overlapTrackId}', '${transcriptAId}', '${mediaAId}',
+        'en', NULL, 'generated', '{}'::jsonb, 10.0, '{}'::jsonb,
+        '[{"sequence":1,"start":1.0,"end":3.0,"text":"Cue 1"},{"sequence":2,"start":2.5,"end":4.0,"text":"Cue 2"}]'::jsonb
+      );
+    `);
+    assert(overlapRes.exitCode !== 0, 'Test 32-H: RPC rejects overlapping cues');
+    assert(overlapRes.stderr.includes('overlap'), 'Test 32-H: Error mentions cue overlap');
+
+    // 32-I: RPC rejects cue beyond media duration
+    const beyondDurationTrackId = ensureValidUuid();
+    const beyondDurationRes = await execPsqlAsync(`
+      SELECT public.save_caption_track_atomic(
+        '${projectAId}', '${ownerUserId}', '${beyondDurationTrackId}', '${transcriptAId}', '${mediaAId}',
+        'en', NULL, 'generated', '{}'::jsonb, 5.0, '{}'::jsonb,
+        '[{"sequence":1,"start":4.0,"end":6.0,"text":"Cue beyond duration"}]'::jsonb
+      );
+    `);
+    assert(beyondDurationRes.exitCode !== 0, 'Test 32-I: RPC rejects cue beyond media duration');
+    assert(beyondDurationRes.stderr.includes('extends beyond media duration'), 'Test 32-I: Error mentions extends beyond media duration');
+
+    // 32-J: RPC rejects invalid p_duration
+    const badDurationRes = await execPsqlAsync(`
+      SELECT public.save_caption_track_atomic(
+        '${projectAId}', '${ownerUserId}', NULL, '${transcriptAId}', '${mediaAId}',
+        'en', NULL, 'generated', '{}'::jsonb, -5.0, '{}'::jsonb, '[]'::jsonb
+      );
+    `);
+    assert(badDurationRes.exitCode !== 0, 'Test 32-J: RPC rejects negative p_duration');
+    assert(badDurationRes.stderr.includes('finite positive number'), 'Test 32-J: Error mentions finite positive number');
+
+    // 32-K: RPC rejects non-monotonic word timing
+    const badWordTimingTrackId = ensureValidUuid();
+    const badWordTimingRes = await execPsqlAsync(`
+      SELECT public.save_caption_track_atomic(
+        '${projectAId}', '${ownerUserId}', '${badWordTimingTrackId}', '${transcriptAId}', '${mediaAId}',
+        'en', NULL, 'generated', '{}'::jsonb, 10.0, '{}'::jsonb,
+        '[{"sequence":1,"start":1.0,"end":5.0,"text":"Word timing backwards","words":[{"wordIndex":0,"word":"Word","start":3.0,"end":4.0},{"wordIndex":1,"word":"timing","start":2.0,"end":2.5},{"wordIndex":2,"word":"backwards","start":4.0,"end":4.5}]}]'::jsonb
+      );
+    `);
+    assert(badWordTimingRes.exitCode !== 0, 'Test 32-K: RPC rejects non-monotonic word timing');
+    assert(badWordTimingRes.stderr.includes('Word timing is non-monotonic'), 'Test 32-K: Error mentions non-monotonic word timing');
+
+    // 32-L: RPC rejects word outside cue bounds
+    const outWordTrackId = ensureValidUuid();
+    const outWordRes = await execPsqlAsync(`
+      SELECT public.save_caption_track_atomic(
+        '${projectAId}', '${ownerUserId}', '${outWordTrackId}', '${transcriptAId}', '${mediaAId}',
+        'en', NULL, 'generated', '{}'::jsonb, 10.0, '{}'::jsonb,
+        '[{"sequence":1,"start":2.0,"end":4.0,"text":"Out of bounds word","words":[{"wordIndex":0,"word":"Out","start":1.99,"end":2.5},{"wordIndex":1,"word":"of","start":2.5,"end":3.0},{"wordIndex":2,"word":"bounds","start":3.0,"end":3.5},{"wordIndex":3,"word":"word","start":3.5,"end":4.0}]}]'::jsonb
+      );
+    `);
+    assert(outWordRes.exitCode !== 0, 'Test 32-L: RPC rejects word outside cue bounds');
+    assert(outWordRes.stderr.includes('fall within cue bounds'), 'Test 32-L: Error mentions cue bounds');
+
+    // 32-M: RPC rejects word beyond media duration
+    const wordBeyondDurationTrackId = ensureValidUuid();
+    const wordBeyondDurationRes = await execPsqlAsync(`
+      SELECT public.save_caption_track_atomic(
+        '${projectAId}', '${ownerUserId}', '${wordBeyondDurationTrackId}', '${transcriptAId}', '${mediaAId}',
+        'en', NULL, 'generated', '{}'::jsonb, 3.0, '{}'::jsonb,
+        '[{"sequence":1,"start":1.0,"end":2.8,"text":"Word exceeds","words":[{"wordIndex":0,"word":"Word","start":1.0,"end":2.0},{"wordIndex":1,"word":"exceeds","start":2.0,"end":3.5}]}]'::jsonb
+      );
+    `);
+    assert(wordBeyondDurationRes.exitCode !== 0, 'Test 32-M: RPC rejects word exceeding cue/media duration');
+
+    // 32-N: RPC rejects invalid wordIndex ordering
+    const badWordIdxTrackId = ensureValidUuid();
+    const badWordIdxRes = await execPsqlAsync(`
+      SELECT public.save_caption_track_atomic(
+        '${projectAId}', '${ownerUserId}', '${badWordIdxTrackId}', '${transcriptAId}', '${mediaAId}',
+        'en', NULL, 'generated', '{}'::jsonb, 10.0, '{}'::jsonb,
+        '[{"sequence":1,"start":1.0,"end":3.0,"text":"Word index out of order","words":[{"wordIndex":2,"word":"Word","start":1.0,"end":1.5},{"wordIndex":1,"word":"index","start":1.5,"end":2.0}]}]'::jsonb
+      );
+    `);
+    assert(badWordIdxRes.exitCode !== 0, 'Test 32-N: RPC rejects non-monotonic wordIndex ordering');
+    assert(badWordIdxRes.stderr.includes('wordIndex must be strictly increasing'), 'Test 32-N: Error mentions wordIndex must be strictly increasing');
+
+    // 32-O: RPC rollback after invalid sequence
+    const rollbackSeqTrackId = ensureValidUuid();
+    await execPsqlAsync(`
+      SELECT public.save_caption_track_atomic(
+        '${projectAId}', '${ownerUserId}', '${rollbackSeqTrackId}', '${transcriptAId}', '${mediaAId}',
+        'en', NULL, 'generated', '{}'::jsonb, 10.0, '{}'::jsonb,
+        '[{"sequence":2,"start":1.0,"end":2.0,"text":"Second"},{"sequence":1,"start":2.0,"end":3.0,"text":"First"}]'::jsonb
+      );
+    `);
+    const countSeqTracks = Number(runPsql(`SELECT count(*) FROM public.caption_tracks WHERE id = '${rollbackSeqTrackId}';`).trim());
+    assert(countSeqTracks === 0, 'Test 32-O: Entire transaction rolls back after invalid cue sequence; 0 tracks remain');
+
+    // 32-P: RPC rollback after invalid timing
+    const rollbackTimingTrackId = ensureValidUuid();
+    await execPsqlAsync(`
+      SELECT public.save_caption_track_atomic(
+        '${projectAId}', '${ownerUserId}', '${rollbackTimingTrackId}', '${transcriptAId}', '${mediaAId}',
+        'en', NULL, 'generated', '{}'::jsonb, 10.0, '{}'::jsonb,
+        '[{"sequence":1,"start":1.0,"end":3.0,"text":"Cue 1"},{"sequence":2,"start":2.0,"end":4.0,"text":"Cue 2"}]'::jsonb
+      );
+    `);
+    const countTimingTracks = Number(runPsql(`SELECT count(*) FROM public.caption_tracks WHERE id = '${rollbackTimingTrackId}';`).trim());
+    assert(countTimingTracks === 0, 'Test 32-P: Entire transaction rolls back after overlapping cues; 0 tracks remain');
+
+    // 32-T: SECURITY DEFINER search_path audit
+    const secDefAudit = runPsql(`
+      SELECT proname, prosecdef, (proconfig[1] LIKE 'search_path=%') AS empty_search_path
+      FROM pg_proc
+      WHERE proname IN ('save_caption_track_atomic', 'prevent_caption_track_immutability_violation');
+    `);
+    assert(secDefAudit.includes('save_caption_track_atomic') && secDefAudit.includes('t') && secDefAudit.includes('| t'),
+      'Test 32-T: save_caption_track_atomic has prosecdef=true and search_path=""');
+
+    // 32-U: Function privilege audit
+    const privAudit = runPsql(`
+      SELECT
+        has_function_privilege('anon', 'public.save_caption_track_atomic(uuid,uuid,uuid,uuid,uuid,text,integer,text,jsonb,numeric,jsonb,jsonb)', 'EXECUTE') AS anon_can_exec,
+        has_function_privilege('authenticated', 'public.save_caption_track_atomic(uuid,uuid,uuid,uuid,uuid,text,integer,text,jsonb,numeric,jsonb,jsonb)', 'EXECUTE') AS auth_can_exec,
+        has_table_privilege('authenticated', 'public.caption_tracks', 'UPDATE') AS auth_can_update,
+        has_table_privilege('authenticated', 'public.caption_tracks', 'DELETE') AS auth_can_delete;
+    `);
+    const privCols = privAudit.trim().split('|').map(s => s.trim());
+    assert(privCols[0] === 'f' && privCols[1] === 't' && privCols[2] === 'f' && privCols[3] === 'f',
+      'Test 32-U: Privilege audit confirms anon denied RPC, auth granted RPC, auth denied UPDATE and DELETE');
+
+    // 32-V: Concurrent version uniqueness
+    const concurrentP1 = execPsqlAsync(`
+      SELECT (public.save_caption_track_atomic(
+        '${projectAId}', '${ownerUserId}', NULL, '${transcriptAId}', '${mediaAId}', 'en', NULL, 'generated', '{}'::jsonb, 10.0, '{}'::jsonb, '[]'::jsonb
+      )->>'version')::integer AS v;
+    `);
+    const concurrentP2 = execPsqlAsync(`
+      SELECT (public.save_caption_track_atomic(
+        '${projectAId}', '${ownerUserId}', NULL, '${transcriptAId}', '${mediaAId}', 'en', NULL, 'generated', '{}'::jsonb, 10.0, '{}'::jsonb, '[]'::jsonb
+      )->>'version')::integer AS v;
+    `);
+    const [cRes1, cRes2] = await Promise.all([concurrentP1, concurrentP2]);
+    assert(cRes1.exitCode === 0 && cRes2.exitCode === 0, 'Test 32-V1: Concurrent save_caption_track_atomic calls succeed without error');
+    const ver1 = parseInt(cRes1.stdout.trim(), 10);
+    const ver2 = parseInt(cRes2.stdout.trim(), 10);
+    assert(ver1 !== ver2, `Test 32-V2: Concurrent save_caption_track_atomic calls allocate distinct versions (${ver1} !== ${ver2})`);
+
     console.log('\n====================================================');
     console.log(`📊 PHASE 7 POSTGRESQL GATE SUMMARY: ${passed} PASSED, ${failed} FAILED`);
     console.log('====================================================\n');
