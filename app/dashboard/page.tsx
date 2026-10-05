@@ -34,6 +34,11 @@ export default function WorkspaceDashboard() {
   const [loading, setLoading] = useState(true);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [activeMenuProjectId, setActiveMenuProjectId] = useState<string | null>(null);
+  const [isMounted, setIsMounted] = useState(false);
+
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
 
   // Load real projects from database / persistent API
   useEffect(() => {
@@ -403,7 +408,7 @@ export default function WorkspaceDashboard() {
 
                     {/* Footer Info */}
                     <div className="pt-3 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500 font-medium">
-                      <span>Created {new Date(project.createdAt).toLocaleDateString()}</span>
+                      <span>Created {project.createdAt ? new Date(project.createdAt).toISOString().split('T')[0] : 'Recently'}</span>
                       <button
                         type="button"
                         onClick={() => handleOpenProjectInStudio(project)}
@@ -425,13 +430,15 @@ export default function WorkspaceDashboard() {
       </div>
 
       {/* Creation Modal */}
-      <CreateProjectModal
-        isOpen={isCreateModalOpen}
-        onClose={() => setIsCreateModalOpen(false)}
-        onProjectCreated={(newProject) => {
-          setProjects((prev) => [newProject, ...prev]);
-        }}
-      />
+      {isMounted && (
+        <CreateProjectModal
+          isOpen={isCreateModalOpen}
+          onClose={() => setIsCreateModalOpen(false)}
+          onProjectCreated={(newProject) => {
+            setProjects((prev) => [newProject, ...prev]);
+          }}
+        />
+      )}
 
     </AppShell>
   );

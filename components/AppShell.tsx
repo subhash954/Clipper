@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { 
@@ -41,6 +41,11 @@ export const AppShell: React.FC<AppShellProps> = ({
   const pathname = usePathname();
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [isApiModalOpen, setIsApiModalOpen] = useState(false);
+  const [isMounted, setIsMounted] = useState(false);
+
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
 
   // Grouped into clean, modern semantic sections (Title-case, no noisy OS badges)
   const navSections = [
@@ -70,7 +75,7 @@ export const AppShell: React.FC<AppShellProps> = ({
   ];
 
   return (
-    <div className="min-h-screen bg-[#F8FAFC] text-slate-900 flex font-sans selection:bg-red-500/20 selection:text-red-900">
+    <div suppressHydrationWarning className="min-h-screen bg-[#F8FAFC] text-slate-900 flex font-sans selection:bg-red-500/20 selection:text-red-900">
       
       {/* PERSISTENT MODERN APPLICATION SIDEBAR */}
       <aside 
@@ -256,7 +261,7 @@ export const AppShell: React.FC<AppShellProps> = ({
       </div>
 
       {/* AI Key & Provider Config Modal */}
-      <ApiKeyModal isOpen={isApiModalOpen} onClose={() => setIsApiModalOpen(false)} />
+      {isMounted && <ApiKeyModal isOpen={isApiModalOpen} onClose={() => setIsApiModalOpen(false)} />}
 
     </div>
   );
