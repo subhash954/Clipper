@@ -1,4 +1,5 @@
 import { CaptionCue } from '../types';
+import { validateCanonicalCuesForSerialization } from './common';
 
 /**
  * Formats seconds into SRT timestamp format: HH:MM:SS,mmm
@@ -32,38 +33,21 @@ export function formatSrtTimestamp(seconds: number): string {
  */
 export function generateSrt(cues: CaptionCue[]): string {
   if (!Array.isArray(cues)) {
-    throw new Error('Cues must be an array');
+    throw new RangeError('Cues must be an array');
   }
 
   if (cues.length === 0) {
     return '';
   }
 
-  // Pre-validate all cues strictly before serializing
-  for (let i = 0; i < cues.length; i++) {
-    const cue = cues[i];
-    if (!cue) {
-      throw new Error(`Cue at index ${i} is missing or null`);
-    }
-    if (typeof cue.start !== 'number' || isNaN(cue.start) || !isFinite(cue.start) || cue.start < 0) {
-      throw new RangeError(`Cue at index ${i} has invalid start timestamp: ${cue.start}`);
-    }
-    if (typeof cue.end !== 'number' || isNaN(cue.end) || !isFinite(cue.end) || cue.end <= cue.start) {
-      throw new RangeError(`Cue at index ${i} has invalid end timestamp: ${cue.end} (start: ${cue.start})`);
-    }
-    if (typeof cue.text !== 'string' || cue.text.trim().length === 0) {
-      throw new Error(`Cue at index ${i} has empty text`);
-    }
-  }
-
-  // Sort cues deterministically by start time, then sequence
-  const sorted = [...cues].sort((a, b) => a.start - b.start || a.sequence - b.sequence);
+  // Pre-validate all cues strictly before serializing without silent reordering
+  validateCanonicalCuesForSerialization(cues, 'SRT');
 
   const blocks: string[] = [];
 
-  for (let i = 0; i < sorted.length; i++) {
-    const cue = sorted[i];
-    const seq = i + 1;
+  for (let i = 0; i < cues.length; i++) {
+    const cue = cues[i];
+    const seq = cue.sequence ?? i + 1;
     const startStr = formatSrtTimestamp(cue.start);
     const endStr = formatSrtTimestamp(cue.end);
     const text = cue.text.trim();

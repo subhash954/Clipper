@@ -1,5 +1,6 @@
 import { CaptionCue, CaptionWord } from '../types';
 import { SubtitleStyle } from '../../types';
+import { validateCanonicalCuesForSerialization } from './common';
 
 /**
  * Converts a hex color (#RRGGBB or #RGB) into ASS &HAABBGGRR format.
@@ -106,35 +107,20 @@ Style: Highlight,${fontFamily},${fontSize},${highlightColor},${primaryColor},${s
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text`;
 
   if (!Array.isArray(cues)) {
-    throw new Error('Cues must be an array');
+    throw new RangeError('Cues must be an array');
   }
 
   if (cues.length === 0) {
     return header + '\n';
   }
 
-  // Pre-validate all cues strictly before serializing
-  for (let i = 0; i < cues.length; i++) {
-    const cue = cues[i];
-    if (!cue) {
-      throw new Error(`Cue at index ${i} is missing or null`);
-    }
-    if (typeof cue.start !== 'number' || isNaN(cue.start) || !isFinite(cue.start) || cue.start < 0) {
-      throw new RangeError(`Cue at index ${i} has invalid start timestamp: ${cue.start}`);
-    }
-    if (typeof cue.end !== 'number' || isNaN(cue.end) || !isFinite(cue.end) || cue.end <= cue.start) {
-      throw new RangeError(`Cue at index ${i} has invalid end timestamp: ${cue.end} (start: ${cue.start})`);
-    }
-    if (typeof cue.text !== 'string' || cue.text.trim().length === 0) {
-      throw new Error(`Cue at index ${i} has empty text`);
-    }
-  }
+  // Pre-validate all cues strictly before serializing without silent reordering
+  validateCanonicalCuesForSerialization(cues, 'ASS');
 
-  const sorted = [...cues].sort((a, b) => a.start - b.start || a.sequence - b.sequence);
   const events: string[] = [];
 
-  for (let i = 0; i < sorted.length; i++) {
-    const cue = sorted[i];
+  for (let i = 0; i < cues.length; i++) {
+    const cue = cues[i];
     const startStr = formatAssTimestamp(cue.start);
     const endStr = formatAssTimestamp(cue.end);
 

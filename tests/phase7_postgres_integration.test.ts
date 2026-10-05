@@ -761,6 +761,187 @@ async function runPhase7PostgresTests() {
     const v2 = parseInt(res2.stdout.trim(), 10);
     assert(v1 !== v2, `Concurrent calls allocate distinct versions (${v1} !== ${v2})`);
 
+    // =============================================================
+    // SCENARIO 10: Category 31 — Final Security-Definer & Immutability Gates
+    // =============================================================
+    console.log('\n--- Scenario 10: Category 31 — Final Security-Definer & Immutability Gates ---');
+
+    // 31-A: SECURITY DEFINER identity impersonation rejection
+    // Authenticated user editorUserId attempting to claim ownerUserId via p_user_id
+    const impersonationRes = await execPsqlAsync(`
+      SET request.jwt.claim.sub = '${editorUserId}';
+      SELECT public.save_caption_track_atomic(
+        '${projectAId}',
+        '${ownerUserId}',
+        NULL,
+        '${transcriptAId}',
+        '${mediaAId}',
+        'en',
+        NULL,
+        'generated',
+        '{}'::jsonb,
+        10.0,
+        '{}'::jsonb,
+        '[]'::jsonb
+      );
+    `);
+    assert(impersonationRes.exitCode !== 0, 'Test 31-A: Authenticated user cannot impersonate another user via p_user_id');
+    assert(impersonationRes.stderr.includes('Impersonation not permitted') || impersonationRes.stderr.includes('42501'), 'Test 31-A: Error code is 42501 FORBIDDEN for impersonation');
+
+    // 31-B: Owner RPC success with own identity
+    const ownerSuccessRes = await execPsqlAsync(`
+      SET request.jwt.claim.sub = '${ownerUserId}';
+      SELECT public.save_caption_track_atomic(
+        '${projectAId}',
+        '${ownerUserId}',
+        NULL,
+        '${transcriptAId}',
+        '${mediaAId}',
+        'en',
+        NULL,
+        'generated',
+        '{}'::jsonb,
+        10.0,
+        '{}'::jsonb,
+        '[]'::jsonb
+      );
+    `);
+    assert(ownerSuccessRes.exitCode === 0, 'Test 31-B: Owner can invoke RPC with own authenticated identity');
+
+    // 31-C: Viewer mutation rejection
+    const viewerMutationRes = await execPsqlAsync(`
+      SET request.jwt.claim.sub = '${viewerUserId}';
+      SELECT public.save_caption_track_atomic(
+        '${projectAId}',
+        '${viewerUserId}',
+        NULL,
+        '${transcriptAId}',
+        '${mediaAId}',
+        'en',
+        NULL,
+        'generated',
+        '{}'::jsonb,
+        10.0,
+        '{}'::jsonb,
+        '[]'::jsonb
+      );
+    `);
+    assert(viewerMutationRes.exitCode !== 0, 'Test 31-C: Viewer role rejected from mutating captions via RPC');
+    assert(viewerMutationRes.stderr.includes('42501') || viewerMutationRes.stderr.includes('Viewer'), 'Test 31-C: Viewer error code is 42501 FORBIDDEN');
+
+    // 31-D: Unauthorized user rejection
+    const unauthorizedRes = await execPsqlAsync(`
+      SET request.jwt.claim.sub = '${unrelatedUserId}';
+      SELECT public.save_caption_track_atomic(
+        '${projectAId}',
+        '${unrelatedUserId}',
+        NULL,
+        '${transcriptAId}',
+        '${mediaAId}',
+        'en',
+        NULL,
+        'generated',
+        '{}'::jsonb,
+        10.0,
+        '{}'::jsonb,
+        '[]'::jsonb
+      );
+    `);
+    assert(unauthorizedRes.exitCode !== 0, 'Test 31-D: Unauthorized workspace user rejected from mutating captions');
+    assert(unauthorizedRes.stderr.includes('42501') || unauthorizedRes.stderr.includes('FORBIDDEN'), 'Test 31-D: Unauthorized error code is 42501 FORBIDDEN');
+
+    // 31-E: Immutable cue ID rejection at DB layer
+    const mutateCueIdRes = await execPsqlAsync(`
+      UPDATE public.caption_cues
+      SET id = '${ensureValidUuid()}'
+      WHERE id = '${cue1Id}';
+    `);
+    assert(mutateCueIdRes.exitCode !== 0, 'Test 31-E: Direct UPDATE on caption_cues.id rejected by DB trigger');
+    assert(mutateCueIdRes.stderr.includes('IMMUTABLE_FIELD'), 'Test 31-E: Error mentions IMMUTABLE_FIELD');
+
+    // 31-F: Immutable cue track_id rejection
+    const mutateCueTrackRes = await execPsqlAsync(`
+      UPDATE public.caption_cues
+      SET track_id = '${ensureValidUuid()}'
+      WHERE id = '${cue1Id}';
+    `);
+    assert(mutateCueTrackRes.exitCode !== 0, 'Test 31-F: Direct UPDATE on caption_cues.track_id rejected by DB trigger');
+    assert(mutateCueTrackRes.stderr.includes('IMMUTABLE_FIELD'), 'Test 31-F: Error mentions IMMUTABLE_FIELD');
+
+    // 31-G: Immutable cue sequence rejection
+    const mutateCueSeqRes = await execPsqlAsync(`
+      UPDATE public.caption_cues
+      SET sequence = 999
+      WHERE id = '${cue1Id}';
+    `);
+    assert(mutateCueSeqRes.exitCode !== 0, 'Test 31-G: Direct UPDATE on caption_cues.sequence rejected by DB trigger');
+    assert(mutateCueSeqRes.stderr.includes('IMMUTABLE_FIELD'), 'Test 31-G: Error mentions IMMUTABLE_FIELD');
+
+    // 31-H: Immutable word ID rejection
+    const mutateWordIdRes = await execPsqlAsync(`
+      UPDATE public.caption_words
+      SET id = '${ensureValidUuid()}'
+      WHERE id = '${word1Id}';
+    `);
+    assert(mutateWordIdRes.exitCode !== 0, 'Test 31-H: Direct UPDATE on caption_words.id rejected by DB trigger');
+    assert(mutateWordIdRes.stderr.includes('IMMUTABLE_FIELD'), 'Test 31-H: Error mentions IMMUTABLE_FIELD');
+
+    // 31-I: Immutable word cue_id rejection
+    const mutateWordCueRes = await execPsqlAsync(`
+      UPDATE public.caption_words
+      SET cue_id = '${ensureValidUuid()}'
+      WHERE id = '${word1Id}';
+    `);
+    assert(mutateWordCueRes.exitCode !== 0, 'Test 31-I: Direct UPDATE on caption_words.cue_id rejected by DB trigger');
+    assert(mutateWordCueRes.stderr.includes('IMMUTABLE_FIELD'), 'Test 31-I: Error mentions IMMUTABLE_FIELD');
+
+    // 31-J: Immutable word track_id rejection
+    const mutateWordTrackRes = await execPsqlAsync(`
+      UPDATE public.caption_words
+      SET track_id = '${ensureValidUuid()}'
+      WHERE id = '${word1Id}';
+    `);
+    assert(mutateWordTrackRes.exitCode !== 0, 'Test 31-J: Direct UPDATE on caption_words.track_id rejected by DB trigger');
+    assert(mutateWordTrackRes.stderr.includes('IMMUTABLE_FIELD'), 'Test 31-J: Error mentions IMMUTABLE_FIELD');
+
+    // 31-K: Immutable word_index rejection
+    const mutateWordIdxRes = await execPsqlAsync(`
+      UPDATE public.caption_words
+      SET word_index = 888
+      WHERE id = '${word1Id}';
+    `);
+    assert(mutateWordIdxRes.exitCode !== 0, 'Test 31-K: Direct UPDATE on caption_words.word_index rejected by DB trigger');
+    assert(mutateWordIdxRes.stderr.includes('IMMUTABLE_FIELD'), 'Test 31-K: Error mentions IMMUTABLE_FIELD');
+
+    // 31-V: Transaction rollback on invalid child row (no partial caption track or cue row remains)
+    const rollbackTrackId = ensureValidUuid();
+    const rollbackCueId = ensureValidUuid();
+    const rollbackRes = await execPsqlAsync(`
+      SELECT public.save_caption_track_atomic(
+        '${projectAId}',
+        '${ownerUserId}',
+        '${rollbackTrackId}',
+        '${transcriptAId}',
+        '${mediaAId}',
+        'en',
+        NULL,
+        'generated',
+        '{}'::jsonb,
+        10.0,
+        '{}'::jsonb,
+        '[{"id":"${rollbackCueId}","sequence":1,"start":1.0,"end":2.0,"text":"Rollback Cue","words":[{"wordIndex":0,"word":" ","start":1.0,"end":1.5}]}]'::jsonb
+      );
+    `);
+    assert(rollbackRes.exitCode !== 0, 'Test 31-V1: RPC fails on invalid child word');
+    const remainingTracks = runPsql(`
+      SELECT count(*) FROM public.caption_tracks WHERE id = '${rollbackTrackId}';
+    `).trim();
+    assert(Number(remainingTracks) === 0, 'Test 31-V2: Entire transaction rolls back; no caption_tracks row remains');
+    const remainingCues = runPsql(`
+      SELECT count(*) FROM public.caption_cues WHERE id = '${rollbackCueId}';
+    `).trim();
+    assert(Number(remainingCues) === 0, 'Test 31-V3: Entire transaction rolls back; no caption_cues row remains');
+
     console.log('\n====================================================');
     console.log(`📊 PHASE 7 POSTGRESQL GATE SUMMARY: ${passed} PASSED, ${failed} FAILED`);
     console.log('====================================================\n');

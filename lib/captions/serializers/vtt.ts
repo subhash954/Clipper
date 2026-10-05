@@ -1,4 +1,5 @@
 import { CaptionCue } from '../types';
+import { validateCanonicalCuesForSerialization } from './common';
 
 /**
  * Formats seconds into WebVTT timestamp format: HH:MM:SS.mmm
@@ -38,36 +39,21 @@ export function generateWebVtt(cues: CaptionCue[], options?: VttSerializeOptions
   const { includeCueId = true } = options || {};
 
   if (!Array.isArray(cues)) {
-    throw new Error('Cues must be an array');
+    throw new RangeError('Cues must be an array');
   }
 
   if (cues.length === 0) {
     return 'WEBVTT\n';
   }
 
-  // Pre-validate all cues strictly before serializing
-  for (let i = 0; i < cues.length; i++) {
-    const cue = cues[i];
-    if (!cue) {
-      throw new Error(`Cue at index ${i} is missing or null`);
-    }
-    if (typeof cue.start !== 'number' || isNaN(cue.start) || !isFinite(cue.start) || cue.start < 0) {
-      throw new RangeError(`Cue at index ${i} has invalid start timestamp: ${cue.start}`);
-    }
-    if (typeof cue.end !== 'number' || isNaN(cue.end) || !isFinite(cue.end) || cue.end <= cue.start) {
-      throw new RangeError(`Cue at index ${i} has invalid end timestamp: ${cue.end} (start: ${cue.start})`);
-    }
-    if (typeof cue.text !== 'string' || cue.text.trim().length === 0) {
-      throw new Error(`Cue at index ${i} has empty text`);
-    }
-  }
+  // Pre-validate all cues strictly before serializing without silent reordering
+  validateCanonicalCuesForSerialization(cues, 'WebVTT');
 
-  const sorted = [...cues].sort((a, b) => a.start - b.start || a.sequence - b.sequence);
   const blocks: string[] = ['WEBVTT\n'];
 
-  for (let i = 0; i < sorted.length; i++) {
-    const cue = sorted[i];
-    const seq = i + 1;
+  for (let i = 0; i < cues.length; i++) {
+    const cue = cues[i];
+    const seq = cue.sequence ?? i + 1;
     const startStr = formatVttTimestamp(cue.start);
     const endStr = formatVttTimestamp(cue.end);
     const text = cue.text.trim();

@@ -29,7 +29,7 @@ export function validateCaptionCues(
 
   if (cues.length === 0) {
     if (!allowEmpty) {
-      return { valid: true, errors: [] };
+      return { valid: false, errors: ['Caption cues array cannot be empty.'] };
     }
     return { valid: true, errors: [] };
   }
@@ -119,8 +119,8 @@ export function validateCaptionCues(
 
         if (typeof w.end !== 'number' || isNaN(w.end) || !isFinite(w.end)) {
           errors.push(`${wordPrefix} Invalid end timestamp (${w.end}).`);
-        } else if (w.end < w.start) {
-          errors.push(`${wordPrefix} Word end (${w.end}) < start (${w.start}).`);
+        } else if (w.end <= w.start) {
+          errors.push(`${wordPrefix} Word end (${w.end}) <= start (${w.start}). Zero or negative duration is prohibited.`);
         }
 
         // Word must be contained within cue boundaries

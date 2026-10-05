@@ -1,6 +1,7 @@
 import { getStorage } from '../storage';
 import { ClipperError } from '../errors';
-import { SubtitleStyle, SubtitleLanguage } from '../types';
+import { SubtitleStyle, SubtitleLanguage, Project } from '../types';
+import { supabase, isSupabaseConfigured } from '../supabase';
 import {
   CaptionTrack,
   CaptionCue,
@@ -37,6 +38,46 @@ export interface UpdateCueParams {
 }
 
 export class CaptionService {
+  private async checkProjectAccess(
+    project: Project,
+    userId?: string,
+    requiredRole: 'editor' | 'viewer' = 'editor'
+  ): Promise<void> {
+    if (!userId) return;
+    if (project.userId === userId) return;
+
+    if (isSupabaseConfigured()) {
+      const { data: userProfile } = await supabase
+        .from('profiles')
+        .select('role')
+        .eq('id', userId)
+        .maybeSingle();
+
+      if (userProfile?.role === 'admin') return;
+      if (userProfile?.role === 'viewer' && requiredRole === 'editor') {
+        throw new ClipperError('FORBIDDEN', `Viewer is not permitted to mutate captions on project ${project.id}`, 403);
+      }
+
+      if (project.workspaceId) {
+        const { data: member } = await supabase
+          .from('organization_members')
+          .select('role, status')
+          .eq('workspace_id', project.workspaceId)
+          .eq('user_id', userId)
+          .eq('status', 'active')
+          .maybeSingle();
+
+        if (member) {
+          const role = member.role.toLowerCase();
+          if (requiredRole === 'viewer') return;
+          if (['owner', 'admin', 'manager', 'editor'].includes(role)) return;
+        }
+      }
+    }
+
+    throw new ClipperError('FORBIDDEN', `Access denied: you do not have permission for project ${project.id}`, 403);
+  }
+
   /**
    * Generates a canonical caption track from the authoritative transcript of a project.
    */
@@ -58,14 +99,12 @@ export class CaptionService {
 
     const storage = getStorage();
 
-    // 1. Verify Project and Ownership
+    // 1. Verify Project and Ownership/RBAC
     const project = await storage.getProject(projectId);
     if (!project || project.deletedAt) {
       throw new ClipperError('NOT_FOUND', `Project ${projectId} not found`, 404);
     }
-    if (project.userId && project.userId !== userId) {
-      throw new ClipperError('FORBIDDEN', `Access denied: you do not own project ${projectId}`, 403);
-    }
+    await this.checkProjectAccess(project, userId, 'editor');
 
     // 2. Idempotency Check: if already exists and not forced, return existing
     if (!forceRegenerate && storage.getCaptionTrack) {
@@ -191,9 +230,7 @@ export class CaptionService {
     if (!project || project.deletedAt) {
       throw new ClipperError('NOT_FOUND', `Project ${projectId} not found`, 404);
     }
-    if (userId && project.userId && project.userId !== userId) {
-      throw new ClipperError('FORBIDDEN', `Access denied: you do not own project ${projectId}`, 403);
-    }
+    await this.checkProjectAccess(project, userId, 'viewer');
 
     if (storage.getCaptionTrack) {
       return await storage.getCaptionTrack(projectId, version);
@@ -252,9 +289,7 @@ export class CaptionService {
     if (!project || project.deletedAt) {
       throw new ClipperError('NOT_FOUND', `Project ${projectId} not found`, 404);
     }
-    if (project.userId && project.userId !== userId) {
-      throw new ClipperError('FORBIDDEN', `Access denied: you do not own project ${projectId}`, 403);
-    }
+    await this.checkProjectAccess(project, userId, 'editor');
 
     if (!storage.getCaptionTrack || !storage.saveCaptionTrack) {
       throw new ClipperError('STORAGE_UNAVAILABLE', 'Caption storage is not available', 500);
@@ -317,6 +352,20 @@ export class CaptionService {
       }
     }
 
+    let finalWords = updates.words !== undefined ? updates.words : originalCue.words;
+    let timingPrecision = updates.timingPrecision || originalCue.timingPrecision;
+    if (updates.text !== undefined && updates.words === undefined) {
+      // If user modified cue text without supplying new word-level timings,
+      // invalidate stale words and truthfully degrade to cue-level precision
+      const wordsJoined = (originalCue.words || []).map((w) => w.word.trim()).join(' ');
+      const wordTokens = wordsJoined.replace(/[^\p{L}\p{N}]/gu, '');
+      const cueTokens = updates.text.trim().replace(/[^\p{L}\p{N}]/gu, '');
+      if (wordTokens !== cueTokens) {
+        finalWords = [];
+        timingPrecision = 'approximate_cue';
+      }
+    }
+
     const updatedCue: CaptionCue = {
       ...originalCue,
       ...updates,
@@ -324,6 +373,8 @@ export class CaptionService {
       end: newEnd,
       id: originalCue.id,
       sequence: originalCue.sequence,
+      words: finalWords,
+      timingPrecision,
       source: 'edited',
       updatedAt: new Date().toISOString(),
     };
@@ -343,12 +394,11 @@ export class CaptionService {
       );
     }
 
-    // Allocate next version to preserve immutable version history
-    const nextVersion = (currentTrack.version || 1) + 1;
+    // Allocate next version atomically via database storage engine to eliminate concurrency races
     const newEditedTrack: CaptionTrack = {
       ...currentTrack,
       id: crypto.randomUUID(),
-      version: nextVersion,
+      version: undefined,
       source: 'edited',
       cues: updatedCues,
       cuesCount: updatedCues.length,
@@ -379,6 +429,19 @@ export class CaptionService {
         'NOT_FOUND',
         `No caption track found${trackId ? ` with trackId ${trackId}` : ` for project ${projectId}`}`,
         404
+      );
+    }
+
+    // Strictly validate canonical track cues before export without silent repair or reordering
+    const validation = validateCaptionCues(track.cues, {
+      mediaDuration: track.durationSeconds,
+      allowEmpty: true,
+    });
+    if (!validation.valid) {
+      throw new ClipperError(
+        'VALIDATION_ERROR',
+        `Corrupted caption track cues cannot be exported: ${validation.errors.join('; ')}`,
+        400
       );
     }
 

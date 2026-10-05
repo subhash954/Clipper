@@ -116,10 +116,10 @@ export function segmentTranscriptIntoCues(params: SegmentTranscriptParams): Capt
         `Word at index ${i} has end timestamp ${w.end} <= start timestamp ${w.start}`
       );
     }
-    if (mediaDuration !== undefined && w.start > mediaDuration) {
+    if (mediaDuration !== undefined && w.end > mediaDuration) {
       throw new ClipperError(
         'VALIDATION_ERROR',
-        `Word at index ${i} start ${w.start} exceeds media duration ${mediaDuration}`
+        `Word at index ${i} end ${w.end} exceeds media duration ${mediaDuration}`
       );
     }
     if (i > 0) {
@@ -157,192 +157,182 @@ export function segmentTranscriptIntoCues(params: SegmentTranscriptParams): Capt
 
   const cues: CaptionCue[] = [];
   let currentChunk: typeof validWords = [];
-  let chunkStart = validWords[0].start;
-  let currentSpeaker = validWords[0].speaker;
-  let accumulatedChars = 0;
+
+  const emitChunk = (chunk: typeof validWords, nextWordStart?: number) => {
+    if (chunk.length === 0) return;
+    const cueSeq = cues.length + 1;
+    const chunkStart = chunk[0].start;
+    const lastWordInChunk = chunk[chunk.length - 1];
+    let cueEnd = lastWordInChunk.end;
+
+    // Handle minimum cue duration if gap allows, without exceeding next word start or media duration
+    const cueDuration = cueEnd - chunkStart;
+    if (cueDuration < config.minCueDurationSeconds) {
+      let maxAllowedEnd = cueEnd;
+      if (nextWordStart !== undefined) {
+        maxAllowedEnd = Math.max(cueEnd, nextWordStart - config.minGapBetweenCuesSeconds);
+      } else if (typeof mediaDuration === 'number' && isFinite(mediaDuration) && mediaDuration > 0) {
+        maxAllowedEnd = mediaDuration;
+      }
+
+      const targetEnd = chunkStart + config.minCueDurationSeconds;
+      cueEnd = Math.min(targetEnd, maxAllowedEnd);
+      if (cueEnd < lastWordInChunk.end) {
+        cueEnd = lastWordInChunk.end;
+      }
+    }
+
+    if (typeof mediaDuration === 'number' && isFinite(mediaDuration) && mediaDuration > 0) {
+      if (chunkStart >= mediaDuration) {
+        return;
+      }
+      if (cueEnd > mediaDuration) {
+        cueEnd = mediaDuration;
+      }
+    }
+
+    // Format cue text
+    const cueText = chunk.map((cw) => cw.word.trim()).join(' ');
+
+    // Build CaptionWords with preserved timing and emphasis
+    let dominantEmphasis: CaptionEmphasisStyle | undefined;
+    const captionWords: CaptionWord[] = chunk.map((cw, cwIdx) => {
+      const wordKey = `${cw.start.toFixed(2)}:${cw.end.toFixed(2)}`;
+      const matchedEmp = emphasisLookup.get(wordKey);
+
+      let isHighlighted = false;
+      let emphasisStyle: CaptionEmphasisStyle | undefined;
+
+      if (matchedEmp) {
+        isHighlighted = true;
+        emphasisStyle = matchedEmp.style as CaptionEmphasisStyle;
+        if (!dominantEmphasis) {
+          dominantEmphasis = emphasisStyle;
+        }
+      }
+
+      return {
+        wordIndex: cwIdx,
+        word: cw.word,
+        start: cw.start,
+        end: cw.end,
+        confidence: cw.confidence,
+        speaker: cw.speaker,
+        highlighted: isHighlighted,
+        emphasisStyle,
+      };
+    });
+
+    const cueSeed = `${projectId}:${cueSeq}:${chunkStart.toFixed(3)}:${cueEnd.toFixed(3)}:${cueText}`;
+    const cueId = generateDeterministicUuid(cueSeed);
+
+    cues.push({
+      id: cueId,
+      projectId,
+      transcriptId,
+      sequence: cueSeq,
+      start: Number(chunkStart.toFixed(3)),
+      end: Number(cueEnd.toFixed(3)),
+      text: cueText,
+      words: captionWords,
+      speakerId: chunk[0].speaker !== undefined ? chunk[0].speaker : undefined,
+      emphasis: dominantEmphasis,
+      language,
+      timingPrecision,
+      source: 'generated',
+      createdAt: params.timestamp || '1970-01-01T00:00:00.000Z',
+      updatedAt: params.timestamp || '1970-01-01T00:00:00.000Z',
+    });
+  };
 
   for (let i = 0; i < validWords.length; i++) {
     const wordObj = validWords[i];
-    const isFirstWordInChunk = currentChunk.length === 0;
-    const isLastWordOverall = i === validWords.length - 1;
-    const nextWord = !isLastWordOverall ? validWords[i + 1] : null;
 
-    if (isFirstWordInChunk) {
-      chunkStart = wordObj.start;
-      currentSpeaker = wordObj.speaker;
-      accumulatedChars = 0;
+    if (currentChunk.length === 0) {
+      currentChunk.push(wordObj);
+      continue;
     }
 
-    currentChunk.push(wordObj);
-    const wordClean = wordObj.word.trim();
-    accumulatedChars += getUnicodeCharacterCount(wordClean) + (isFirstWordInChunk ? 0 : 1);
+    const lastWord = currentChunk[currentChunk.length - 1];
+    const chunkStart = currentChunk[0].start;
+    const currentDuration = lastWord.end - chunkStart;
+    const wordClean = lastWord.word.trim();
 
-    const currentDuration = wordObj.end - chunkStart;
-    const currentCps = currentDuration > 0 ? accumulatedChars / currentDuration : 0;
-
-    // Check boundary conditions for splitting
     let shouldBreak = false;
 
-    if (isLastWordOverall) {
+    // 1. Speaker change
+    if (
+      config.respectSpeakerChanges &&
+      lastWord.speaker !== undefined &&
+      wordObj.speaker !== undefined &&
+      lastWord.speaker !== wordObj.speaker
+    ) {
       shouldBreak = true;
-    } else if (nextWord) {
-      // 1. Speaker change
-      if (
-        config.respectSpeakerChanges &&
-        wordObj.speaker !== undefined &&
-        nextWord.speaker !== undefined &&
-        wordObj.speaker !== nextWord.speaker
-      ) {
-        shouldBreak = true;
-      }
+    }
 
-      // 2. Natural pause threshold
-      const pauseAfter = nextWord.start - wordObj.end;
+    // 2. Natural pause threshold
+    if (!shouldBreak) {
+      const pauseAfter = wordObj.start - lastWord.end;
       if (pauseAfter >= config.pauseThresholdSeconds) {
         shouldBreak = true;
       }
+    }
 
-      // 3. Terminal punctuation (. ! ? ।)
-      if (config.respectPunctuation && TERMINAL_PUNCTUATION_REGEX.test(wordClean)) {
+    // 3. Terminal punctuation (. ! ? ।) on last word
+    if (!shouldBreak && config.respectPunctuation && TERMINAL_PUNCTUATION_REGEX.test(wordClean)) {
+      shouldBreak = true;
+    }
+
+    // 4. Maximum words reached in current chunk
+    if (!shouldBreak && currentChunk.length >= config.maxWordsPerCue) {
+      shouldBreak = true;
+    }
+
+    // 5. Maximum duration would be exceeded by candidate
+    const candidateDuration = wordObj.end - chunkStart;
+    if (!shouldBreak && candidateDuration > config.maxCueDurationSeconds) {
+      shouldBreak = true;
+    }
+
+    // 6. Character limit would be exceeded by candidate
+    const currentChars = currentChunk.reduce(
+      (acc, w, idx) => acc + getUnicodeCharacterCount(w.word.trim()) + (idx > 0 ? 1 : 0),
+      0
+    );
+    const candidateChars = currentChars + 1 + getUnicodeCharacterCount(wordObj.word.trim());
+    const maxAllowedChars = config.maxCharsPerLine * config.maxLinesPerCue;
+    if (!shouldBreak && candidateChars > maxAllowedChars) {
+      shouldBreak = true;
+    }
+
+    // 7. Secondary clause break if above min words
+    if (
+      !shouldBreak &&
+      currentChunk.length >= config.minWordsPerCue &&
+      CLAUSE_PUNCTUATION_REGEX.test(wordClean) &&
+      (currentDuration >= config.minCueDurationSeconds || currentChunk.length >= 4)
+    ) {
+      shouldBreak = true;
+    }
+
+    // 8. CPS reading speed threshold: true candidate lookahead
+    if (!shouldBreak) {
+      const candidateCps = candidateDuration > 0 ? candidateChars / candidateDuration : 0;
+      if (candidateCps > config.maxCps) {
         shouldBreak = true;
-      }
-
-      // 4. Maximum words reached
-      if (currentChunk.length >= config.maxWordsPerCue) {
-        shouldBreak = true;
-      }
-
-      // 5. Maximum duration reached or next word would exceed max duration
-      const nextWordDuration = nextWord ? nextWord.end - chunkStart : currentDuration;
-      if (currentDuration >= config.maxCueDurationSeconds || (nextWord && nextWordDuration > config.maxCueDurationSeconds)) {
-        shouldBreak = true;
-      }
-
-      // 6. Character limit reached or next word would exceed limit (lines * charsPerLine)
-      const maxAllowedChars = config.maxCharsPerLine * config.maxLinesPerCue;
-      const nextWordChars = 1 + getUnicodeCharacterCount(nextWord.word.trim());
-      if (accumulatedChars >= maxAllowedChars || accumulatedChars + nextWordChars > maxAllowedChars) {
-        shouldBreak = true;
-      }
-
-      // 7. Secondary clause break if above min words
-      if (
-        !shouldBreak &&
-        currentChunk.length >= config.minWordsPerCue &&
-        CLAUSE_PUNCTUATION_REGEX.test(wordClean) &&
-        (currentDuration >= config.minCueDurationSeconds || currentChunk.length >= 4)
-      ) {
-        shouldBreak = true;
-      }
-
-      // 8. CPS reading speed threshold: lookahead candidate testing
-      if (!shouldBreak && nextWord) {
-        const nextWordClean = nextWord.word.trim();
-        const nextWordChars = 1 + getUnicodeCharacterCount(nextWordClean);
-        const candidateChars = accumulatedChars + nextWordChars;
-        const candidateDuration = nextWord.end - chunkStart;
-        const candidateCps = candidateDuration > 0 ? candidateChars / candidateDuration : 0;
-
-        if (currentChunk.length >= 1 && (candidateCps > config.maxCps || currentCps > config.maxCps)) {
-          shouldBreak = true;
-        }
       }
     }
 
-    if (shouldBreak && currentChunk.length > 0) {
-      const cueSeq = cues.length + 1;
-      const lastWordInChunk = currentChunk[currentChunk.length - 1];
-      let cueEnd = lastWordInChunk.end;
-
-      // Handle minimum cue duration if gap allows, without exceeding next word start or media duration
-      const cueDuration = cueEnd - chunkStart;
-      if (cueDuration < config.minCueDurationSeconds) {
-        let maxAllowedEnd = cueEnd;
-        if (nextWord) {
-          maxAllowedEnd = Math.max(cueEnd, nextWord.start - config.minGapBetweenCuesSeconds);
-        } else if (typeof mediaDuration === 'number' && isFinite(mediaDuration) && mediaDuration > 0) {
-          maxAllowedEnd = mediaDuration;
-        } else {
-          // Do NOT fabricate cue duration when mediaDuration is omitted and no next word exists
-          maxAllowedEnd = cueEnd;
-        }
-
-        const targetEnd = chunkStart + config.minCueDurationSeconds;
-        cueEnd = Math.min(targetEnd, maxAllowedEnd);
-        if (cueEnd < lastWordInChunk.end) {
-          cueEnd = lastWordInChunk.end;
-        }
-      }
-
-      // Clamping to media duration if given
-      if (typeof mediaDuration === 'number' && isFinite(mediaDuration) && mediaDuration > 0) {
-        if (chunkStart > mediaDuration) {
-          // If the entire cue is beyond media duration, skip
-          currentChunk = [];
-          continue;
-        }
-        if (cueEnd > mediaDuration) {
-          cueEnd = mediaDuration;
-        }
-      }
-
-      // Format cue text
-      const cueText = currentChunk.map((cw) => cw.word.trim()).join(' ');
-
-      // Build CaptionWords with preserved timing and emphasis
-      let dominantEmphasis: CaptionEmphasisStyle | undefined;
-      const captionWords: CaptionWord[] = currentChunk.map((cw, cwIdx) => {
-        const wordKey = `${cw.start.toFixed(2)}:${cw.end.toFixed(2)}`;
-        const matchedEmp = emphasisLookup.get(wordKey);
-
-        let isHighlighted = false;
-        let emphasisStyle: CaptionEmphasisStyle | undefined;
-
-        if (matchedEmp) {
-          isHighlighted = true;
-          emphasisStyle = matchedEmp.style as CaptionEmphasisStyle;
-          if (!dominantEmphasis) {
-            dominantEmphasis = emphasisStyle;
-          }
-        }
-
-        const capWord: CaptionWord = {
-          wordIndex: cwIdx,
-          word: cw.word,
-          start: cw.start,
-          end: cw.end,
-          confidence: cw.confidence,
-          speaker: cw.speaker,
-          highlighted: isHighlighted,
-          emphasisStyle,
-        };
-
-        return capWord;
-      });
-
-      const cueSeed = `${projectId}:${cueSeq}:${chunkStart.toFixed(3)}:${cueEnd.toFixed(3)}:${cueText}`;
-      const cueId = generateDeterministicUuid(cueSeed);
-
-      cues.push({
-        id: cueId,
-        projectId,
-        transcriptId,
-        sequence: cueSeq,
-        start: Number(chunkStart.toFixed(3)),
-        end: Number(cueEnd.toFixed(3)),
-        text: cueText,
-        words: captionWords,
-        speakerId: currentSpeaker !== undefined ? currentSpeaker : undefined,
-        emphasis: dominantEmphasis,
-        language,
-        timingPrecision,
-        source: 'generated',
-        createdAt: params.timestamp || '1970-01-01T00:00:00.000Z',
-        updatedAt: params.timestamp || '1970-01-01T00:00:00.000Z',
-      });
-
-      currentChunk = [];
+    if (shouldBreak) {
+      emitChunk(currentChunk, wordObj.start);
+      currentChunk = [wordObj];
+    } else {
+      currentChunk.push(wordObj);
     }
+  }
+
+  if (currentChunk.length > 0) {
+    emitChunk(currentChunk);
   }
 
   return cues;

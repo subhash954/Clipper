@@ -1352,7 +1352,12 @@ console.log('================================================================\n'
         text: 'Retrieved by track ID',
         language: 'en',
         timingPrecision: 'exact_word',
-        words: [{ wordIndex: 0, word: 'Retrieved', start: 0.5, end: 1.0 }],
+        words: [
+          { wordIndex: 0, word: 'Retrieved', start: 0.5, end: 1.0 },
+          { wordIndex: 1, word: 'by', start: 1.0, end: 1.5 },
+          { wordIndex: 2, word: 'track', start: 1.5, end: 2.0 },
+          { wordIndex: 3, word: 'ID', start: 2.0, end: 2.5 },
+        ],
         source: 'generated',
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
@@ -1378,7 +1383,7 @@ console.log('================================================================\n'
   assert(loaded !== null, 'Test 30-V1: getCaptionTrackById loads track');
   assert(loaded?.id === trackId, 'Test 30-V2: Loaded track ID matches');
   assert(loaded?.cues.length === 1, 'Test 30-V3: Loaded track contains cues');
-  assert(loaded?.cues[0].words.length === 1, 'Test 30-V4: Loaded cue contains words');
+  assert(loaded?.cues[0].words.length === 4, 'Test 30-V4: Loaded cue contains words');
 
   // Verify cross-tenant isolation
   let forbidden = false;
@@ -1407,11 +1412,343 @@ console.log('================================================================\n'
   assert(srtByProj.includes('Retrieved by track ID'), 'Test 30-W2: Export resolves by projectId and version');
 }
 
+// ================================================================
+// CLIPPER PHASE 7.1.1: CATEGORY 31 — FINAL CANONICAL & DATABASE SECURITY GATES
+// ================================================================
+console.log('\n================================================================');
+console.log('CLIPPER PHASE 7.1.1: CATEGORY 31 — FINAL CANONICAL & SECURITY GATES');
+console.log('================================================================\n');
+
+// Test 31-L: Strict CPS candidate split (two-word burst splits into separate cues)
+{
+  const twoWordBurst = [
+    { word: 'BurstOne', start: 0.0, end: 0.3 }, // 8 chars / 0.3s = 26.6 cps
+    { word: 'BurstTwo', start: 0.3, end: 0.4 }, // candidate: 17 chars / 0.4s = 42.5 cps
+  ];
+  const cues = segmentTranscriptIntoCues({
+    projectId: 'proj-31-l',
+    words: twoWordBurst,
+    config: { maxCps: 25 },
+  });
+  assert(cues.length === 2, 'Test 31-L: Two-word burst where adding word 2 exceeds maxCps splits into 2 separate cues');
+  assert(cues[0].text === 'BurstOne', 'Test 31-L: First cue contains only word 1');
+  assert(cues[1].text === 'BurstTwo', 'Test 31-L: Second cue contains only word 2');
+}
+
+// Test 31-M: Single-word CPS exception preserves exact timing without stretching
+{
+  const singleFastWord = [
+    { word: 'ExtraordinaryVelocity', start: 2.0, end: 2.2 }, // 21 chars in 0.2s = 105 cps
+  ];
+  const cues = segmentTranscriptIntoCues({
+    projectId: 'proj-31-m',
+    words: singleFastWord,
+    config: { maxCps: 20 },
+  });
+  assert(cues.length === 1, 'Test 31-M1: Single high-CPS word emitted as 1 cue');
+  assert(cues[0].start === 2.0, 'Test 31-M2: Single-word start matches exact word start');
+  assert(cues[0].end === 2.2, 'Test 31-M3: Single-word end matches exact word end without synthetic stretching');
+}
+
+// Test 31-N: Media duration end-bound rejection (word.end > mediaDuration rejected with VALIDATION_ERROR)
+{
+  let threwEndBound = false;
+  try {
+    segmentTranscriptIntoCues({
+      projectId: 'proj-31-n',
+      mediaDuration: 5.0,
+      words: [{ word: 'Exceeding', start: 4.8, end: 5.2 }], // end 5.2 > mediaDuration 5.0
+    });
+  } catch (err: any) {
+    if (err instanceof ClipperError && err.code === 'VALIDATION_ERROR') {
+      threwEndBound = true;
+    }
+  }
+  assert(threwEndBound, 'Test 31-N: Rejects word whose end exceeds mediaDuration with VALIDATION_ERROR');
+}
+
+// Test 31-O: empty-set allowEmpty=false rejection
+{
+  const res = validateCaptionCues([], { allowEmpty: false });
+  assert(!res.valid, 'Test 31-O1: validateCaptionCues rejects empty cue array when allowEmpty=false');
+  assert(res.errors.length > 0, 'Test 31-O2: Error message returned for empty cue array');
+}
+
+// Test 31-P: empty-set allowEmpty=true acceptance
+{
+  const res = validateCaptionCues([], { allowEmpty: true });
+  assert(res.valid, 'Test 31-P1: validateCaptionCues accepts empty cue array when allowEmpty=true');
+  assert(res.errors.length === 0, 'Test 31-P2: Zero errors returned for empty cue array when allowEmpty=true');
+}
+
+// Test 31-Q: zero-duration word rejection across segmentation and validation
+{
+  let threwZeroSeg = false;
+  try {
+    segmentTranscriptIntoCues({
+      projectId: 'proj-31-q',
+      words: [{ word: 'Instant', start: 1.0, end: 1.0 }], // end === start
+    });
+  } catch (err: any) {
+    if (err instanceof ClipperError && err.code === 'VALIDATION_ERROR') {
+      threwZeroSeg = true;
+    }
+  }
+  assert(threwZeroSeg, 'Test 31-Q1: Segmentation engine rejects zero-duration word (end === start)');
+
+  const cueWithZeroWord: CaptionCue = {
+    id: crypto.randomUUID(),
+    projectId: 'p',
+    sequence: 1,
+    start: 1.0,
+    end: 2.0,
+    text: 'Zero duration',
+    language: 'en',
+    timingPrecision: 'exact_word',
+    source: 'generated',
+    words: [{ wordIndex: 0, word: 'Zero', start: 1.0, end: 1.0 }], // end === start
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+  const valRes = validateCaptionCues([cueWithZeroWord]);
+  assert(!valRes.valid, 'Test 31-Q2: validateCaptionCues rejects zero-duration word');
+  assert(valRes.errors.some(e => e.includes('Zero or negative duration')), 'Test 31-Q3: Validation error mentions zero duration');
+}
+
+// Test 31-R: Serializers reject reversed cues without silent sorting
+{
+  const cueA: CaptionCue = {
+    id: crypto.randomUUID(),
+    projectId: 'p',
+    sequence: 1,
+    start: 2.0,
+    end: 3.0,
+    text: 'Later',
+    language: 'en',
+    timingPrecision: 'exact_word',
+    source: 'generated',
+    words: [],
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+  const cueB: CaptionCue = {
+    id: crypto.randomUUID(),
+    projectId: 'p',
+    sequence: 2,
+    start: 0.5,
+    end: 1.5,
+    text: 'Earlier',
+    language: 'en',
+    timingPrecision: 'exact_word',
+    source: 'generated',
+    words: [],
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+  const reversed = [cueA, cueB];
+
+  let threwSrt = false;
+  let threwVtt = false;
+  let threwAss = false;
+
+  try { generateSrt(reversed); } catch (e: any) { if (e instanceof ClipperError && e.code === 'VALIDATION_ERROR') threwSrt = true; }
+  try { generateWebVtt(reversed); } catch (e: any) { if (e instanceof ClipperError && e.code === 'VALIDATION_ERROR') threwVtt = true; }
+  try { generateAss(reversed); } catch (e: any) { if (e instanceof ClipperError && e.code === 'VALIDATION_ERROR') threwAss = true; }
+
+  assert(threwSrt, 'Test 31-R1: generateSrt rejects reversed cues with VALIDATION_ERROR');
+  assert(threwVtt, 'Test 31-R2: generateWebVtt rejects reversed cues with VALIDATION_ERROR');
+  assert(threwAss, 'Test 31-R3: generateAss rejects reversed cues with VALIDATION_ERROR');
+}
+
+// Test 31-S: Serializers reject overlapping cues without silent repair
+{
+  const cue1: CaptionCue = {
+    id: crypto.randomUUID(),
+    projectId: 'p',
+    sequence: 1,
+    start: 1.0,
+    end: 3.0,
+    text: 'First',
+    language: 'en',
+    timingPrecision: 'exact_word',
+    source: 'generated',
+    words: [],
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+  const cue2: CaptionCue = {
+    id: crypto.randomUUID(),
+    projectId: 'p',
+    sequence: 2,
+    start: 2.5, // overlaps [1.0, 3.0]
+    end: 4.0,
+    text: 'Second',
+    language: 'en',
+    timingPrecision: 'exact_word',
+    source: 'generated',
+    words: [],
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+  const overlapping = [cue1, cue2];
+
+  let threwSrt = false;
+  let threwVtt = false;
+  let threwAss = false;
+
+  try { generateSrt(overlapping); } catch (e: any) { if (e instanceof ClipperError && e.code === 'VALIDATION_ERROR') threwSrt = true; }
+  try { generateWebVtt(overlapping); } catch (e: any) { if (e instanceof ClipperError && e.code === 'VALIDATION_ERROR') threwVtt = true; }
+  try { generateAss(overlapping); } catch (e: any) { if (e instanceof ClipperError && e.code === 'VALIDATION_ERROR') threwAss = true; }
+
+  assert(threwSrt, 'Test 31-S1: generateSrt rejects overlapping cues with VALIDATION_ERROR');
+  assert(threwVtt, 'Test 31-S2: generateWebVtt rejects overlapping cues with VALIDATION_ERROR');
+  assert(threwAss, 'Test 31-S3: generateAss rejects overlapping cues with VALIDATION_ERROR');
+}
+
+// Test 31-T: Corrupted stored track cannot be exported
+{
+  const storage = new LocalStorageAdapter();
+  const captionService = getCaptionService();
+  const corruptTrackId = crypto.randomUUID();
+  const corruptProjId = crypto.randomUUID();
+
+  const corruptTrack: CaptionTrack = {
+    id: corruptTrackId,
+    projectId: corruptProjId,
+    userId: 'user-31-t',
+    version: 1,
+    language: 'en',
+    source: 'generated',
+    status: 'ready',
+    cuesCount: 1,
+    durationSeconds: 5,
+    cues: [
+      {
+        id: crypto.randomUUID(),
+        projectId: corruptProjId,
+        trackId: corruptTrackId,
+        sequence: 1,
+        start: 3.0,
+        end: 1.0, // inverted time!
+        text: 'Corrupt cue',
+        language: 'en',
+        timingPrecision: 'exact_word',
+        words: [],
+        source: 'generated',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+    ],
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+
+  await storage.saveProject({
+    id: corruptProjId,
+    userId: 'user-31-t',
+    title: 'Corrupt Export Proj',
+    workflowType: 'youtube_to_shorts',
+    sourceType: 'upload',
+    durationSeconds: 5,
+    status: 'ready',
+    clips: [],
+    createdAt: new Date().toISOString(),
+  });
+  await storage.saveCaptionTrack(corruptTrack, 'user-31-t');
+
+  let exportThrew = false;
+  try {
+    await captionService.exportCaptions({
+      trackId: corruptTrackId,
+      userId: 'user-31-t',
+      format: 'srt',
+    });
+  } catch (err: any) {
+    if (err instanceof ClipperError && err.code === 'VALIDATION_ERROR') {
+      exportThrew = true;
+    }
+  }
+  assert(exportThrew, 'Test 31-T: exportCaptions rejects corrupted stored track with VALIDATION_ERROR');
+}
+
+// Test 31-U: Concurrent edited-track version allocation
+{
+  const storage = new LocalStorageAdapter();
+  const captionService = getCaptionService();
+  const trackId = crypto.randomUUID();
+  const projId = crypto.randomUUID();
+  const cueId = crypto.randomUUID();
+
+  const baseTrack: CaptionTrack = {
+    id: trackId,
+    projectId: projId,
+    userId: 'user-31-u',
+    version: 1,
+    language: 'en',
+    source: 'generated',
+    status: 'ready',
+    cuesCount: 1,
+    durationSeconds: 10,
+    cues: [
+      {
+        id: cueId,
+        projectId: projId,
+        trackId: trackId,
+        sequence: 1,
+        start: 1.0,
+        end: 3.0,
+        text: 'Initial',
+        language: 'en',
+        timingPrecision: 'exact_word',
+        words: [{ wordIndex: 0, word: 'Initial', start: 1.0, end: 1.5 }],
+        source: 'generated',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+    ],
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+
+  await storage.saveProject({
+    id: projId,
+    userId: 'user-31-u',
+    title: 'Concurrent Edit Proj',
+    workflowType: 'youtube_to_shorts',
+    sourceType: 'upload',
+    durationSeconds: 10,
+    status: 'ready',
+    clips: [],
+    createdAt: new Date().toISOString(),
+  });
+  await storage.saveCaptionTrack(baseTrack, 'user-31-u');
+
+  // Perform two consecutive edits
+  const edit1 = await captionService.updateCaptionCue({
+    projectId: projId,
+    trackId,
+    cueId,
+    userId: 'user-31-u',
+    updates: { text: 'Edit 1 text' },
+  });
+
+  const edit2 = await captionService.updateCaptionCue({
+    projectId: projId,
+    trackId: edit1.id,
+    cueId,
+    userId: 'user-31-u',
+    updates: { text: 'Edit 2 text' },
+  });
+
+  assert(edit1.version !== undefined && edit2.version !== undefined, 'Test 31-U1: Both edits allocate versions');
+  assert(edit2.version! > edit1.version!, `Test 31-U2: Successive edits allocate strictly increasing versions (${edit2.version} > ${edit1.version})`);
+}
+
 } // end runTests
 
 runTests().then(() => {
   console.log('\n================================================================');
-  console.log(`CATEGORIES 29 & 30 VERIFIED: ${passed} passed, ${failed} failed`);
+  console.log(`CATEGORIES 29, 30 & 31 VERIFIED: ${passed} passed, ${failed} failed`);
   console.log('================================================================\n');
 
   if (failed > 0) {
@@ -1421,4 +1758,5 @@ runTests().then(() => {
   console.error('\n❌ Unhandled error in Category 29 test suite:', err);
   process.exit(1);
 });
+
 

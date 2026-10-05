@@ -313,6 +313,8 @@ SECURITY DEFINER
 SET search_path = public, pg_catalog
 AS $$
 DECLARE
+  v_auth_uid UUID;
+  v_effective_user_id UUID;
   v_project RECORD;
   v_user_profile RECORD;
   v_is_authorized BOOLEAN := FALSE;
@@ -339,42 +341,62 @@ BEGIN
       USING ERRCODE = 'P0002';
   END IF;
 
-  -- 2. Validate authorization
-  IF p_user_id IS NOT NULL THEN
+  -- 2. Validate authorization and fail-closed identity boundary
+  v_auth_uid := auth.uid();
+
+  IF v_auth_uid IS NOT NULL THEN
+    -- In authenticated user context, never trust client-supplied p_user_id claiming another user
+    IF p_user_id IS NOT NULL AND p_user_id IS DISTINCT FROM v_auth_uid THEN
+      RAISE EXCEPTION 'FORBIDDEN: Impersonation not permitted. Claimed user % does not match authenticated user %',
+        p_user_id, v_auth_uid
+        USING ERRCODE = '42501';
+    END IF;
+    v_effective_user_id := v_auth_uid;
+  ELSE
+    -- Server-side / internal / direct psql context
+    IF p_user_id IS NOT NULL THEN
+      v_effective_user_id := p_user_id;
+    ELSE
+      v_effective_user_id := NULL;
+    END IF;
+  END IF;
+
+  IF v_effective_user_id IS NOT NULL THEN
     SELECT id, role INTO v_user_profile
     FROM public.profiles
-    WHERE id = p_user_id;
+    WHERE id = v_effective_user_id;
 
     IF NOT FOUND THEN
-      IF v_project.user_id != p_user_id THEN
-        RAISE EXCEPTION 'FORBIDDEN: User % is not authorized to edit project %', p_user_id, p_project_id
-          USING ERRCODE = '42501';
-      END IF;
-    ELSE
-      IF v_user_profile.role = 'viewer' THEN
-        RAISE EXCEPTION 'FORBIDDEN: Viewer % is not permitted to mutate captions', p_user_id
-          USING ERRCODE = '42501';
-      END IF;
-
-      IF v_user_profile.role = 'admin' THEN
-        v_is_authorized := TRUE;
-      ELSIF v_project.user_id = p_user_id AND v_user_profile.role IN ('owner', 'editor') THEN
-        v_is_authorized := TRUE;
-      ELSIF v_project.workspace_id IS NOT NULL THEN
-        SELECT EXISTS (
-          SELECT 1 FROM public.organization_members om
-          WHERE om.workspace_id = v_project.workspace_id
-            AND om.user_id = p_user_id
-            AND UPPER(om.role) IN ('OWNER', 'ADMIN', 'MANAGER', 'EDITOR')
-            AND om.status = 'active'
-        ) INTO v_is_authorized;
-      END IF;
-
-      IF NOT v_is_authorized AND v_project.user_id != p_user_id THEN
-        RAISE EXCEPTION 'FORBIDDEN: User % is not authorized to edit project %', p_user_id, p_project_id
-          USING ERRCODE = '42501';
-      END IF;
+      RAISE EXCEPTION 'FORBIDDEN: User % does not exist', v_effective_user_id
+        USING ERRCODE = '42501';
     END IF;
+
+    IF v_user_profile.role = 'viewer' THEN
+      RAISE EXCEPTION 'FORBIDDEN: Viewer % is not permitted to mutate captions', v_effective_user_id
+        USING ERRCODE = '42501';
+    END IF;
+
+    IF v_user_profile.role = 'admin' THEN
+      v_is_authorized := TRUE;
+    ELSIF v_project.user_id = v_effective_user_id AND v_user_profile.role IN ('owner', 'editor') THEN
+      v_is_authorized := TRUE;
+    ELSIF v_project.workspace_id IS NOT NULL THEN
+      SELECT EXISTS (
+        SELECT 1 FROM public.organization_members om
+        WHERE om.workspace_id = v_project.workspace_id
+          AND om.user_id = v_effective_user_id
+          AND UPPER(om.role) IN ('OWNER', 'ADMIN', 'MANAGER', 'EDITOR')
+          AND om.status = 'active'
+      ) INTO v_is_authorized;
+    END IF;
+
+    IF NOT v_is_authorized THEN
+      RAISE EXCEPTION 'FORBIDDEN: User % is not authorized to edit project %', v_effective_user_id, p_project_id
+        USING ERRCODE = '42501';
+    END IF;
+  ELSE
+    RAISE EXCEPTION 'FORBIDDEN: Authentication required to save caption track'
+      USING ERRCODE = '42501';
   END IF;
 
   -- 3. Validate Transcript Relationship (Cross-Project Rejection)
@@ -431,7 +453,7 @@ BEGIN
     version, language, source, status, style, cues_count,
     duration, metadata, created_at, updated_at
   ) VALUES (
-    v_track_id, p_project_id, p_transcript_id, p_media_asset_id, COALESCE(p_user_id, v_project.user_id),
+    v_track_id, p_project_id, p_transcript_id, p_media_asset_id, v_effective_user_id,
     v_version, COALESCE(p_language, 'en'), COALESCE(p_source, 'generated'), 'ready',
     COALESCE(p_style, '{}'::jsonb), v_cues_count, p_duration,
     COALESCE(p_metadata, '{}'::jsonb), NOW(), NOW()
@@ -550,3 +572,84 @@ BEGIN
   RETURN v_result;
 END;
 $$;
+
+-- 11. Strict Execution Privileges for SECURITY DEFINER RPC
+REVOKE EXECUTE ON FUNCTION public.save_caption_track_atomic FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.save_caption_track_atomic TO authenticated, service_role;
+
+-- 12. Immutability Protections for Canonical Captions
+CREATE OR REPLACE FUNCTION public.prevent_caption_track_immutability_violation()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  IF NEW.id IS DISTINCT FROM OLD.id THEN
+    RAISE EXCEPTION 'IMMUTABLE_FIELD: caption_tracks.id cannot be modified' USING ERRCODE = '42501';
+  END IF;
+  IF NEW.project_id IS DISTINCT FROM OLD.project_id THEN
+    RAISE EXCEPTION 'IMMUTABLE_FIELD: caption_tracks.project_id cannot be modified' USING ERRCODE = '42501';
+  END IF;
+  IF NEW.version IS DISTINCT FROM OLD.version THEN
+    RAISE EXCEPTION 'IMMUTABLE_FIELD: caption_tracks.version cannot be modified' USING ERRCODE = '42501';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_caption_tracks_immutable ON public.caption_tracks;
+CREATE TRIGGER trg_caption_tracks_immutable
+BEFORE UPDATE ON public.caption_tracks
+FOR EACH ROW
+EXECUTE FUNCTION public.prevent_caption_track_immutability_violation();
+
+CREATE OR REPLACE FUNCTION public.prevent_caption_cue_immutability_violation()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  IF NEW.id IS DISTINCT FROM OLD.id THEN
+    RAISE EXCEPTION 'IMMUTABLE_FIELD: caption_cues.id cannot be modified' USING ERRCODE = '42501';
+  END IF;
+  IF NEW.track_id IS DISTINCT FROM OLD.track_id THEN
+    RAISE EXCEPTION 'IMMUTABLE_FIELD: caption_cues.track_id cannot be modified' USING ERRCODE = '42501';
+  END IF;
+  IF NEW.sequence IS DISTINCT FROM OLD.sequence THEN
+    RAISE EXCEPTION 'IMMUTABLE_FIELD: caption_cues.sequence cannot be modified' USING ERRCODE = '42501';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_caption_cues_immutable ON public.caption_cues;
+CREATE TRIGGER trg_caption_cues_immutable
+BEFORE UPDATE ON public.caption_cues
+FOR EACH ROW
+EXECUTE FUNCTION public.prevent_caption_cue_immutability_violation();
+
+CREATE OR REPLACE FUNCTION public.prevent_caption_word_immutability_violation()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  IF NEW.id IS DISTINCT FROM OLD.id THEN
+    RAISE EXCEPTION 'IMMUTABLE_FIELD: caption_words.id cannot be modified' USING ERRCODE = '42501';
+  END IF;
+  IF NEW.cue_id IS DISTINCT FROM OLD.cue_id THEN
+    RAISE EXCEPTION 'IMMUTABLE_FIELD: caption_words.cue_id cannot be modified' USING ERRCODE = '42501';
+  END IF;
+  IF NEW.track_id IS DISTINCT FROM OLD.track_id THEN
+    RAISE EXCEPTION 'IMMUTABLE_FIELD: caption_words.track_id cannot be modified' USING ERRCODE = '42501';
+  END IF;
+  IF NEW.word_index IS DISTINCT FROM OLD.word_index THEN
+    RAISE EXCEPTION 'IMMUTABLE_FIELD: caption_words.word_index cannot be modified' USING ERRCODE = '42501';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_caption_words_immutable ON public.caption_words;
+CREATE TRIGGER trg_caption_words_immutable
+BEFORE UPDATE ON public.caption_words
+FOR EACH ROW
+EXECUTE FUNCTION public.prevent_caption_word_immutability_violation();
+
