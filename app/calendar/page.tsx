@@ -26,6 +26,11 @@ export default function ContentCalendarPage() {
   const [newDate, setNewDate] = useState<string>(new Date(Date.now() + 86400000).toISOString().slice(0, 16));
   const [newCampaign, setNewCampaign] = useState('Product Launch 2026');
   const [newPillar, setNewPillar] = useState('Education');
+  const [isMounted, setIsMounted] = useState(false);
+
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
 
   const loadCalendar = async () => {
     try {
@@ -155,10 +160,10 @@ export default function ContentCalendarPage() {
                 <div className="flex items-center gap-4">
                   <div className="w-12 h-12 rounded-xl bg-red-50 border border-red-200 flex flex-col items-center justify-center text-red-600 shrink-0">
                     <span className="text-[10px] font-black uppercase">
-                      {new Date(item.scheduledAt).toLocaleDateString(undefined, { month: 'short' })}
+                      {isMounted ? new Date(item.scheduledAt).toLocaleDateString(undefined, { month: 'short' }) : item.scheduledAt.slice(5, 7)}
                     </span>
                     <span className="text-base font-black leading-none">
-                      {new Date(item.scheduledAt).getDate()}
+                      {item.scheduledAt ? new Date(item.scheduledAt).getUTCDate() : '--'}
                     </span>
                   </div>
 
@@ -178,7 +183,7 @@ export default function ContentCalendarPage() {
                     </p>
                     <p className="text-[11px] text-slate-500 flex items-center gap-1 mt-0.5">
                       <Clock className="w-3 h-3 text-slate-400" />
-                      <span>{new Date(item.scheduledAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                      <span>{isMounted ? new Date(item.scheduledAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : item.scheduledAt.slice(11, 16)}</span>
                     </p>
                   </div>
                 </div>

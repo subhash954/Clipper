@@ -402,7 +402,7 @@ export default function AnalyticsPage() {
                   </div>
                   {learnedWeights && (
                     <span className="text-xs text-slate-400">
-                      Last Updated: {new Date(learnedWeights.lastTrainedAt).toLocaleTimeString()}
+                      Last Updated: {learnedWeights.lastTrainedAt ? new Date(learnedWeights.lastTrainedAt).toISOString().slice(11, 19) + ' UTC' : 'N/A'}
                     </span>
                   )}
                 </div>
@@ -520,7 +520,7 @@ export default function AnalyticsPage() {
                           <td className="px-6 py-4 text-xs">{snap.comments.toLocaleString()}</td>
                           <td className="px-6 py-4 text-xs">{snap.shares.toLocaleString()}</td>
                           <td className="px-6 py-4 text-xs text-slate-400">
-                            {new Date(snap.capturedAt).toLocaleString()}
+                            {snap.capturedAt ? new Date(snap.capturedAt).toISOString().replace('T', ' ').slice(0, 19) : 'N/A'}
                           </td>
                         </tr>
                       ))}

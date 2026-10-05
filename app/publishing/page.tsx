@@ -42,6 +42,11 @@ export default function PublishingPage() {
   const [notifications, setNotifications] = useState<InAppNotification[]>([]);
   const [loading, setLoading] = useState(true);
   const [actionInProgress, setActionInProgress] = useState<string | null>(null);
+  const [isMounted, setIsMounted] = useState(false);
+
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
 
   // Modals & Inspection State
   const [inspectChecklistJob, setInspectChecklistJob] = useState<{ job: PublishJob; checklist: PublishingChecklist } | null>(null);
@@ -387,7 +392,7 @@ export default function PublishingPage() {
                               <span className="font-medium text-slate-700">{getPlatformLabel(job.platform)}</span>
                             </td>
                             <td className="px-6 py-4">
-                              <div className="text-slate-900">{new Date(job.scheduledAt).toLocaleString()}</div>
+                              <div className="text-slate-900">{isMounted ? new Date(job.scheduledAt).toLocaleString() : job.scheduledAt.slice(0, 16).replace('T', ' ')}</div>
                               <div className="text-xs text-slate-400">{job.scheduledTimezone}</div>
                             </td>
                             <td className="px-6 py-4">
@@ -497,7 +502,7 @@ export default function PublishingPage() {
                             </div>
                             <div className="flex justify-between">
                               <span className="text-slate-500">Expires At:</span>
-                              <span className="text-slate-600">{new Date(conn.tokenExpiresAt).toLocaleDateString()}</span>
+                              <span className="text-slate-600">{conn.tokenExpiresAt ? new Date(conn.tokenExpiresAt).toISOString().split('T')[0] : 'N/A'}</span>
                             </div>
                             <div className="flex justify-between">
                               <span className="text-slate-500">Scopes:</span>
@@ -694,7 +699,7 @@ export default function PublishingPage() {
                             )}
                           </div>
                           <p className="text-xs text-slate-600">{notif.message}</p>
-                          <span className="text-[10px] text-slate-400">{new Date(notif.createdAt).toLocaleTimeString()}</span>
+                          <span className="text-[10px] text-slate-400">{isMounted ? new Date(notif.createdAt).toLocaleTimeString() : notif.createdAt.slice(11, 19)}</span>
                         </div>
                         {!notif.read && (
                           <button

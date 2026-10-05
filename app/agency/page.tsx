@@ -558,7 +558,7 @@ export default function AgencyPage() {
                   </span>
                   <h2 className="text-xl font-extrabold text-white mt-1 capitalize">{subscription.planId} Tier</h2>
                   <p className="text-xs text-slate-300 mt-1">
-                    Status: <strong className="text-emerald-400">{subscription.status.toUpperCase()}</strong> &bull; Period renewal: {new Date(subscription.currentPeriodEnd).toLocaleDateString()}
+                    Status: <strong className="text-emerald-400">{subscription.status.toUpperCase()}</strong> &bull; Period renewal: {subscription.currentPeriodEnd ? new Date(subscription.currentPeriodEnd).toISOString().split('T')[0] : 'N/A'}
                   </p>
                 </div>
 
@@ -635,7 +635,7 @@ export default function AgencyPage() {
                         <span className="font-mono text-slate-400 text-[10px]">{k.keyPrefix}...</span>
                       </div>
                       <p className="text-[11px] text-slate-400 mt-1">
-                        Permissions: {k.permissions.join(', ')} &bull; Created: {new Date(k.createdAt).toLocaleDateString()}
+                        Permissions: {k.permissions.join(', ')} &bull; Created: {k.createdAt ? new Date(k.createdAt).toISOString().split('T')[0] : 'N/A'}
                       </p>
                     </div>
 
@@ -774,7 +774,7 @@ export default function AgencyPage() {
                     {auditLogs.map(log => (
                       <tr key={log.id} className="hover:bg-slate-800/40">
                         <td className="py-2.5 px-4 text-slate-400 font-mono text-[11px]">
-                          {new Date(log.timestamp).toLocaleString()}
+                          {log.timestamp ? new Date(log.timestamp).toISOString().replace('T', ' ').slice(0, 19) : 'N/A'}
                         </td>
                         <td className="py-2.5 px-4 text-white font-medium">{log.actorEmail}</td>
                         <td className="py-2.5 px-4 font-mono text-indigo-400">{log.action}</td>

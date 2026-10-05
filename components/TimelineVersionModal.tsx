@@ -222,7 +222,7 @@ export const TimelineVersionModal: React.FC<TimelineVersionModalProps> = ({
                       </div>
                       <div className="flex items-center gap-1.5 text-[10px] text-slate-400">
                         <Clock className="w-3 h-3" />
-                        <span>{new Date(ver.createdAt).toLocaleString()}</span>
+                        <span>{ver.createdAt ? new Date(ver.createdAt).toISOString().replace('T', ' ').slice(0, 16) : 'N/A'}</span>
                         <span>•</span>
                         <span>{ver.renderSpec?.tracks?.length || 0} tracks</span>
                         <span>•</span>
